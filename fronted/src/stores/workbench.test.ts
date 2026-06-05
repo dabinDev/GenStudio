@@ -50,4 +50,100 @@ describe("useWorkbenchStore", () => {
     expect(store.state.modelSettings[builtinId]).toBeUndefined();
     expect(store.state.modelSettings[customId]).toBeUndefined();
   });
+
+  it("preserves fetched model choices when updating a saved model setting", async () => {
+    const { useWorkbenchStore } = await import("./workbench");
+    const store = useWorkbenchStore();
+    const modelId = BUILTIN_MODELS[0].id;
+
+    store.updateModelSetting(modelId, {
+      baseUrl: "https://token.example.com",
+      apiKey: "test-key",
+      modelNameOverride: "gpt-4.1",
+      availableModels: ["gpt-4o", "gpt-4.1"],
+    });
+    store.updateModelSetting(modelId, {
+      baseUrl: "https://token.example.com/v2",
+    });
+
+    expect(store.state.modelSettings[modelId]).toMatchObject({
+      baseUrl: "https://token.example.com/v2",
+      apiKey: "test-key",
+      modelNameOverride: "gpt-4.1",
+      availableModels: ["gpt-4o", "gpt-4.1"],
+    });
+  });
+
+  it("maps server models to selectable primary sub-model choices", async () => {
+    const { useWorkbenchStore } = await import("./workbench");
+    const store = useWorkbenchStore();
+
+    store.applyServerModels([
+      {
+        id: "mdl-server",
+        name: "GPT Gateway",
+        vendor: "OpenAI",
+        capability: "text",
+        adapter: "text-chat",
+        description: "服务端托管模型",
+        apiKeyId: "key-server",
+        baseUrl: "https://token.example.com",
+        primarySubModelId: "sub-gpt-4o",
+        primaryModelName: "gpt-4o",
+        subModels: [
+          {
+            id: "sub-gpt-4o",
+            modelName: "gpt-4o",
+            displayName: "gpt-4o",
+            capability: "text",
+            adapter: "text-chat",
+            isPrimary: true,
+            status: "active",
+          },
+          {
+            id: "sub-gpt-4.1",
+            modelName: "gpt-4.1",
+            displayName: "gpt-4.1",
+            capability: "text",
+            adapter: "text-chat",
+            isPrimary: false,
+            status: "active",
+          },
+        ],
+      },
+    ]);
+
+    expect(store.models.value).toHaveLength(1);
+    expect(store.models.value[0]).toMatchObject({
+      id: "mdl-server",
+      serverManaged: true,
+      model: "gpt-4o",
+      primarySubModelId: "sub-gpt-4o",
+    });
+    expect(store.state.modelSettings["mdl-server"]).toMatchObject({
+      baseUrl: "https://token.example.com",
+      apiKey: "",
+      modelNameOverride: "gpt-4o",
+      availableModels: ["gpt-4o", "gpt-4.1"],
+    });
+  });
+
+  it("stays in server-managed mode even when the signed-in user has no models", async () => {
+    const { useWorkbenchStore } = await import("./workbench");
+    const store = useWorkbenchStore();
+
+    store.addCustomModel({
+      id: "local-only-model",
+      name: "Local Only",
+      vendor: "Local",
+      capability: "text",
+      adapter: "text-chat",
+      model: "local-model",
+      description: "Should not appear after server sync",
+    });
+
+    store.applyServerModels([]);
+
+    expect(store.models.value).toEqual([]);
+  });
 });

@@ -1,7 +1,13 @@
 import { computed, reactive, watch } from "vue";
 
 import { BUILTIN_MODELS } from "../catalog";
-import type { Capability, HistoryEntry, ModelDefinition, ModelSettingsRecord } from "../types";
+import type {
+  Capability,
+  HistoryEntry,
+  ModelDefinition,
+  ModelSettingsRecord,
+  ServerModelDefinition,
+} from "../types";
 import { safeJsonParse } from "../utils";
 
 const SETTINGS_STORAGE_KEY = "creative-pannel:model-settings:v1";
@@ -18,6 +24,8 @@ const state = reactive({
     localStorage.getItem(CUSTOM_MODELS_STORAGE_KEY),
     [],
   ).filter((item) => !item.builtin),
+  serverModels: [] as ModelDefinition[],
+  serverSynced: false,
   removedModelIds: safeJsonParse<string[]>(
     localStorage.getItem(REMOVED_MODELS_STORAGE_KEY),
     [],
@@ -51,9 +59,37 @@ watch(
 
 export function useWorkbenchStore() {
   const models = computed(() => {
+    if (state.serverSynced) {
+      return state.serverModels;
+    }
     const removedIds = new Set(state.removedModelIds);
     return [...BUILTIN_MODELS, ...state.customModels].filter((model) => !removedIds.has(model.id));
   });
+
+  function applyServerModels(items: ServerModelDefinition[]) {
+    state.serverSynced = true;
+    state.serverModels = items.map((item) => ({
+      id: item.id,
+      name: item.name,
+      vendor: item.vendor,
+      capability: item.capability,
+      adapter: item.adapter,
+      model: item.primaryModelName || item.subModels[0]?.modelName || item.id,
+      description: item.description,
+      builtin: false,
+      serverManaged: true,
+      primarySubModelId: item.primarySubModelId,
+      subModels: item.subModels,
+    }));
+    items.forEach((item) => {
+      state.modelSettings[item.id] = {
+        baseUrl: item.baseUrl,
+        apiKey: "",
+        modelNameOverride: item.primaryModelName,
+        availableModels: item.subModels.map((subModel) => subModel.modelName),
+      };
+    });
+  }
 
   function updateModelSetting(
     modelId: string,
@@ -63,6 +99,7 @@ export function useWorkbenchStore() {
       baseUrl: state.modelSettings[modelId]?.baseUrl || "",
       apiKey: state.modelSettings[modelId]?.apiKey || "",
       modelNameOverride: state.modelSettings[modelId]?.modelNameOverride || "",
+      availableModels: state.modelSettings[modelId]?.availableModels || [],
       ...patch,
     };
   }
@@ -115,6 +152,7 @@ export function useWorkbenchStore() {
   return {
     state,
     models,
+    applyServerModels,
     updateModelSetting,
     clearModelSetting,
     addCustomModel,

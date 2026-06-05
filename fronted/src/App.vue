@@ -10,19 +10,46 @@ import {
   getAdapterOptions,
   getCapabilityDefaultAdapter,
 } from "./catalog";
-import { postProxy, uploadAsset } from "./api";
+import {
+  ApiRequestError,
+  createServerModel,
+  deleteServerModel,
+  fetchConversation,
+  fetchConversations,
+  fetchServerModels,
+  postProxy,
+  postProxyWithSignal,
+  setServerPrimaryModel,
+  syncServerModel,
+  updateServerModel,
+  uploadAsset,
+} from "./api";
+import { useAuthStore } from "./stores/auth";
 import { useWorkbenchStore } from "./stores/workbench";
 import type {
   Adapter,
   Capability,
+  ConversationAsset,
+  ConversationDefinition,
+  ConversationMessage,
   ModelDefinition,
   ModelSetting,
   PromptTemplate,
+  SubModelDefinition,
   UploadedAsset,
 } from "./types";
-import { combinePrompt, createLocalId, resolveModelName, shortText } from "./utils";
+import {
+  combinePrompt,
+  createLocalId,
+  findPromptBeforeMessage,
+  getModelIdentifierError,
+  pickPrimaryModel,
+  renderMarkdownPreview,
+  resolveModelName,
+  shortText,
+} from "./utils";
 
-type ViewName = "text" | "images" | "videos" | "settings";
+type ViewName = "text" | "images" | "videos" | "settings" | "profile";
 type SidebarFilter = Capability | "all";
 type VideoMode = "text" | "reference" | "start-end";
 type DialogMode = "create" | "edit";
@@ -30,18 +57,24 @@ type DialogMode = "create" | "edit";
 interface ImageResult {
   images: Array<{ src: string; revisedPrompt?: string }>;
   raw: Record<string, unknown>;
+  conversation?: ConversationDefinition;
+  assistantMessage?: ConversationMessage;
 }
 
 interface TextResult {
   content: string;
   usage?: Record<string, unknown>;
   raw: Record<string, unknown>;
+  conversation?: ConversationDefinition;
+  assistantMessage?: ConversationMessage;
 }
 
 interface VideoCreateResult {
   taskId: string;
   status: string;
   raw: Record<string, unknown>;
+  conversation?: ConversationDefinition;
+  assistantMessage?: ConversationMessage;
 }
 
 interface VideoQueryResult {
@@ -51,6 +84,8 @@ interface VideoQueryResult {
   videoUrl: string | null;
   thumbnailUrl: string | null;
   raw: Record<string, unknown>;
+  conversation?: ConversationDefinition;
+  assistantMessage?: ConversationMessage;
 }
 
 interface AvailableModelsResult {
@@ -84,6 +119,7 @@ interface ConfigDraft {
   baseUrl: string;
   apiKey: string;
   modelNameOverride: string;
+  availableModels: string[];
 }
 
 const UNIFIED_ADAPTERS: Adapter[] = [
@@ -94,6 +130,7 @@ const UNIFIED_ADAPTERS: Adapter[] = [
 ];
 
 const store = useWorkbenchStore();
+const auth = useAuthStore();
 const view = ref<ViewName>(getViewFromHash());
 const sidebarFilter = ref<SidebarFilter>("all");
 
@@ -163,6 +200,17 @@ const settingsState = reactive({
   testState: {} as Record<string, ActionState<TestRequestResult>>,
 });
 
+const conversationState = reactive({
+  listOpen: false,
+  loading: false,
+  error: "",
+  conversations: [] as ConversationDefinition[],
+  current: null as ConversationDefinition | null,
+  activeRequest: null as AbortController | null,
+  streamingMessageId: "",
+  streamingContent: "",
+});
+
 const activeCapability = computed<Capability | null>(() => {
   if (view.value === "images") return "image";
   if (view.value === "videos") return "video";
@@ -206,7 +254,7 @@ const selectedSettingsModels = computed(() =>
 const configuredCount = computed(() =>
   store.models.value.filter((model) => {
     const setting = getSetting(model.id);
-    return setting.baseUrl.trim() && setting.apiKey.trim();
+    return isModelConfigured(model, setting);
   }).length,
 );
 
@@ -220,7 +268,22 @@ const partialSettingsSelected = computed(
     settingsState.selectedIds.length < store.models.value.length,
 );
 
-onMounted(() => {
+const visibleConversations = computed(() => {
+  if (!activeCapability.value) return conversationState.conversations;
+  return conversationState.conversations.filter((item) => item.capability === activeCapability.value);
+});
+
+const currentMessages = computed(() => conversationState.current?.messages || []);
+
+const currentModelLabel = computed(() => {
+  const model = activeModel.value;
+  const setting = activeSetting.value;
+  if (!model || !setting) return "未选择模型";
+  return `${model.name} / ${resolveModelName(model, setting)}`;
+});
+
+onMounted(async () => {
+  await initializeSession();
   syncInitialModels();
   window.addEventListener("hashchange", () => {
     view.value = getViewFromHash();
@@ -235,7 +298,7 @@ watch(
 
 function getViewFromHash(): ViewName {
   const hash = window.location.hash.replace(/^#\/?/, "");
-  if (hash === "images" || hash === "videos" || hash === "settings" || hash === "text") {
+  if (hash === "images" || hash === "videos" || hash === "settings" || hash === "profile" || hash === "text") {
     return hash;
   }
   return "images";
@@ -258,12 +321,243 @@ function syncSelectedModel(modelId: typeof textModelId, models: ModelDefinition[
   }
 }
 
+async function refreshConversations() {
+  if (!auth.state.user) {
+    conversationState.conversations = [];
+    conversationState.current = null;
+    return;
+  }
+  conversationState.loading = true;
+  conversationState.error = "";
+  try {
+    conversationState.conversations = await fetchConversations();
+  } catch (error) {
+    conversationState.error = error instanceof Error ? error.message : "读取历史记录失败。";
+  } finally {
+    conversationState.loading = false;
+  }
+}
+
+async function openConversation(conversationId: string) {
+  if (!auth.state.user) return;
+  conversationState.loading = true;
+  conversationState.error = "";
+  try {
+    const conversation = await fetchConversation(conversationId);
+    setCurrentConversation(conversation);
+    navigate(capabilityToView(conversation.capability));
+    selectConversationModel(conversation);
+    conversationState.listOpen = false;
+  } catch (error) {
+    conversationState.error = error instanceof Error ? error.message : "打开历史记录失败。";
+  } finally {
+    conversationState.loading = false;
+  }
+}
+
+function setCurrentConversation(conversation?: ConversationDefinition | null) {
+  if (!conversation) return;
+  conversationState.current = conversation;
+  upsertConversationSummary(conversation);
+}
+
+function upsertConversationSummary(conversation: ConversationDefinition) {
+  const summary = { ...conversation, messages: [] };
+  const index = conversationState.conversations.findIndex((item) => item.id === conversation.id);
+  if (index >= 0) {
+    conversationState.conversations[index] = summary;
+    return;
+  }
+  conversationState.conversations = [summary, ...conversationState.conversations];
+}
+
+function capabilityToView(capability: Capability): ViewName {
+  if (capability === "text") return "text";
+  if (capability === "video") return "videos";
+  return "images";
+}
+
+function startNewConversation(nextView: ViewName = view.value) {
+  stopActiveRequest();
+  conversationState.current = null;
+  conversationState.streamingMessageId = "";
+  conversationState.streamingContent = "";
+  textState.result = null;
+  imageState.result = null;
+  videoState.createResult = null;
+  videoState.taskResult = null;
+  if (nextView === "settings" || nextView === "profile") {
+    navigate("images");
+  }
+}
+
+async function toggleHistoryDrawer() {
+  if (!conversationState.listOpen) {
+    await refreshConversations();
+  }
+  conversationState.listOpen = !conversationState.listOpen;
+}
+
+function selectConversationModel(conversation: ConversationDefinition) {
+  if (!conversation.modelGroupId) return;
+  const model = store.models.value.find((item) => item.id === conversation.modelGroupId);
+  if (model) selectModel(model);
+}
+
+function updateConversationFromUnknown(payload: unknown) {
+  if (!payload || typeof payload !== "object") return;
+  const maybeConversation = (payload as { conversation?: ConversationDefinition }).conversation;
+  if (maybeConversation?.id) {
+    setCurrentConversation(maybeConversation);
+  }
+}
+
+function handleRequestError(error: unknown, fallbackMessage: string): string {
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return "请求已暂停。";
+  }
+  if (error instanceof ApiRequestError) {
+    updateConversationFromUnknown(error.detail);
+    return error.message || fallbackMessage;
+  }
+  return error instanceof Error ? error.message : fallbackMessage;
+}
+
+function createRequestController(): AbortController {
+  stopActiveRequest();
+  const controller = new AbortController();
+  conversationState.activeRequest = controller;
+  return controller;
+}
+
+function clearRequestController(controller: AbortController) {
+  if (conversationState.activeRequest === controller) {
+    conversationState.activeRequest = null;
+  }
+}
+
+function stopActiveRequest() {
+  conversationState.activeRequest?.abort();
+  conversationState.activeRequest = null;
+}
+
+function previewMessageContent(message: ConversationMessage): string {
+  if (message.id === conversationState.streamingMessageId && conversationState.streamingContent) {
+    return conversationState.streamingContent;
+  }
+  return message.content;
+}
+
+function markdownPreview(value: string): string {
+  return renderMarkdownPreview(value || "");
+}
+
+function messageStatusLabel(message: ConversationMessage): string {
+  if (message.status === "processing") return "生成中";
+  if (message.status === "error") return "失败";
+  return "完成";
+}
+
+function formatConversationTime(value: string): string {
+  const time = new Date(value);
+  if (Number.isNaN(time.getTime())) return "";
+  return time.toLocaleString("zh-CN", { hour12: false });
+}
+
+function useGeneratedAsset(asset: ConversationAsset) {
+  const reference: UploadedAsset = {
+    id: asset.id,
+    fileName: asset.url.split("/").pop() || "generated-image.png",
+    publicUrl: asset.url,
+    contentType: asset.assetType === "video" ? "video/mp4" : "image/png",
+    localPreviewUrl: asset.thumbnailUrl || asset.url,
+  };
+  if (asset.assetType === "image") {
+    imageState.references = [reference, ...imageState.references].slice(0, 14);
+    imageState.prompt = imageState.prompt.trim()
+      ? imageState.prompt
+      : "请基于引用图片继续编辑，保持主体一致，输出一个新的创意版本。";
+    navigate("images");
+  }
+}
+
+async function retryMessage(message: ConversationMessage) {
+  const prompt = findPromptBeforeMessage(currentMessages.value, message.id);
+  if (!prompt) return;
+  if (message.capability === "text") {
+    textState.prompt = prompt;
+    navigate("text");
+    await handleTextSubmit();
+  }
+  if (message.capability === "image") {
+    imageState.prompt = prompt;
+    navigate("images");
+    await handleImageSubmit();
+  }
+  if (message.capability === "video") {
+    videoState.prompt = prompt;
+    navigate("videos");
+    await handleVideoCreate();
+  }
+}
+
+function taskIdFromConversation(): string {
+  const processing = [...currentMessages.value].reverse().find(
+    (message) => message.capability === "video" && message.status === "processing" && message.content.trim(),
+  );
+  return processing?.content.trim() || videoState.createResult?.taskId || "";
+}
+
+function simulateStreamingPreview(message?: ConversationMessage) {
+  if (!message?.content) return;
+  conversationState.streamingMessageId = message.id;
+  conversationState.streamingContent = "";
+  const content = message.content;
+  let index = 0;
+  const step = Math.max(1, Math.ceil(content.length / 36));
+  const timer = window.setInterval(() => {
+    index = Math.min(content.length, index + step);
+    conversationState.streamingContent = content.slice(0, index);
+    if (index >= content.length) {
+      window.clearInterval(timer);
+      window.setTimeout(() => {
+        if (conversationState.streamingMessageId === message.id) {
+          conversationState.streamingMessageId = "";
+          conversationState.streamingContent = "";
+        }
+      }, 160);
+    }
+  }, 24);
+}
+
+async function initializeSession() {
+  await auth.loadCurrentUser();
+  if (auth.state.user) {
+    await refreshServerModels();
+    await refreshConversations();
+  }
+}
+
+async function refreshServerModels() {
+  const models = await fetchServerModels();
+  store.applyServerModels(models);
+}
+
+async function handleDevLogin() {
+  await auth.loginForDevelopment();
+  if (auth.state.user) {
+    await refreshServerModels();
+    await refreshConversations();
+  }
+}
+
 function getSetting(modelId: string): ModelSetting {
   return (
     store.state.modelSettings[modelId] || {
       baseUrl: "",
       apiKey: "",
       modelNameOverride: "",
+      availableModels: [],
     }
   );
 }
@@ -303,6 +597,55 @@ function parseJsonInput(value: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
+function isModelConfigured(model: ModelDefinition, setting: ModelSetting): boolean {
+  return model.serverManaged ? Boolean(model.primarySubModelId) : Boolean(setting.baseUrl.trim() && setting.apiKey.trim());
+}
+
+function getPrimarySubModel(model: ModelDefinition): SubModelDefinition | null {
+  if (!model.serverManaged) return null;
+  return (
+    model.subModels?.find((item) => item.id === model.primarySubModelId) ||
+    model.subModels?.find((item) => item.isPrimary) ||
+    model.subModels?.[0] ||
+    null
+  );
+}
+
+function buildModelProxyPayload(
+  model: ModelDefinition,
+  setting: ModelSetting,
+  extras: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const primarySubModel = getPrimarySubModel(model);
+  if (model.serverManaged && primarySubModel) {
+    return {
+      subModelId: primarySubModel.id,
+      ...extras,
+    };
+  }
+  return {
+    config: { baseUrl: setting.baseUrl, apiKey: setting.apiKey },
+    capability: model.capability,
+    adapter: model.adapter,
+    model: resolveModelName(model, setting),
+    ...extras,
+  };
+}
+
+function conversationIdFor(capability: Capability): string {
+  return conversationState.current?.capability === capability ? conversationState.current.id : "";
+}
+
+function getModelReadyError(model: ModelDefinition, setting: ModelSetting): string {
+  if (model.serverManaged) {
+    return getPrimarySubModel(model) ? "" : "当前服务端模型还没有可用的主模型，请先获取模型列表并选择主模型。";
+  }
+  if (!setting.baseUrl.trim() || !setting.apiKey.trim()) {
+    return "当前模型尚未配置 baseURL 或 API Key。";
+  }
+  return "";
+}
+
 async function handleTextSubmit() {
   const model = activeModel.value;
   const setting = activeSetting.value;
@@ -313,18 +656,19 @@ async function handleTextSubmit() {
     textState.error = "请先输入文案需求。";
     return;
   }
-  if (!setting.baseUrl.trim() || !setting.apiKey.trim()) {
-    textState.error = "当前模型尚未配置 baseURL 或 API Key。";
+  const readyError = getModelReadyError(model, setting);
+  if (readyError) {
+    textState.error = readyError;
     return;
   }
 
   textState.loading = true;
   textState.error = "";
+  const controller = createRequestController();
   try {
     const extra = parseJsonInput(textState.extraJson);
-    const response = await postProxy<TextResult>("/api/proxy/text", {
-      config: { baseUrl: setting.baseUrl, apiKey: setting.apiKey },
-      model: resolveModelName(model, setting),
+    const response = await postProxyWithSignal<TextResult>("/api/proxy/text", buildModelProxyPayload(model, setting, {
+      conversationId: conversationIdFor("text"),
       requestBody: {
         messages: [
           textState.systemPrompt.trim()
@@ -337,8 +681,10 @@ async function handleTextSubmit() {
         max_tokens: Number(textState.maxTokens) || undefined,
         ...extra,
       },
-    });
+    }), controller.signal);
     textState.result = response;
+    setCurrentConversation(response.conversation);
+    simulateStreamingPreview(response.assistantMessage);
     store.addHistory({
       id: createLocalId("history"),
       capability: "text",
@@ -350,8 +696,9 @@ async function handleTextSubmit() {
       summary: shortText(response.content || "已返回响应"),
     });
   } catch (error) {
-    textState.error = error instanceof Error ? error.message : "文案生成失败。";
+    textState.error = handleRequestError(error, "文案生成失败。");
   } finally {
+    clearRequestController(controller);
     textState.loading = false;
   }
 }
@@ -385,18 +732,19 @@ async function handleImageSubmit() {
     imageState.error = "请先输入图片需求。";
     return;
   }
-  if (!setting.baseUrl.trim() || !setting.apiKey.trim()) {
-    imageState.error = "当前模型尚未配置 baseURL 或 API Key。";
+  const readyError = getModelReadyError(model, setting);
+  if (readyError) {
+    imageState.error = readyError;
     return;
   }
 
   imageState.loading = true;
   imageState.error = "";
+  const controller = createRequestController();
   try {
     const extra = parseJsonInput(imageState.extraJson);
-    imageState.result = await postProxy<ImageResult>("/api/proxy/image", {
-      config: { baseUrl: setting.baseUrl, apiKey: setting.apiKey },
-      model: resolveModelName(model, setting),
+    imageState.result = await postProxyWithSignal<ImageResult>("/api/proxy/image", buildModelProxyPayload(model, setting, {
+      conversationId: conversationIdFor("image"),
       requestBody: {
         prompt: finalPrompt,
         n: Number(imageState.count) || 1,
@@ -408,10 +756,12 @@ async function handleImageSubmit() {
         image: imageState.references.map((item) => item.publicUrl),
         ...extra,
       },
-    });
+    }), controller.signal);
+    setCurrentConversation(imageState.result.conversation);
   } catch (error) {
-    imageState.error = error instanceof Error ? error.message : "图片生成失败。";
+    imageState.error = handleRequestError(error, "图片生成失败。");
   } finally {
+    clearRequestController(controller);
     imageState.loading = false;
   }
 }
@@ -540,8 +890,9 @@ async function handleVideoCreate() {
     videoState.error = "请先输入视频需求。";
     return;
   }
-  if (!setting.baseUrl.trim() || !setting.apiKey.trim()) {
-    videoState.error = "当前模型尚未配置 baseURL 或 API Key。";
+  const readyError = getModelReadyError(model, setting);
+  if (readyError) {
+    videoState.error = readyError;
     return;
   }
   if (supportsUnifiedAdapter(model.adapter) && videoState.unifiedImages.length < getUnifiedImageLimit(videoState.mode)) {
@@ -560,20 +911,23 @@ async function handleVideoCreate() {
   videoState.loading = true;
   videoState.error = "";
   videoState.taskResult = null;
+  const controller = createRequestController();
   try {
     const extra = parseJsonInput(videoState.extraJson);
     const requestBody = buildVideoRequestBody(model, resolveModelName(model, setting), finalPrompt, extra);
-    videoState.createResult = await postProxy<VideoCreateResult>("/api/proxy/video/create", {
-      config: { baseUrl: setting.baseUrl, apiKey: setting.apiKey },
+    videoState.createResult = await postProxyWithSignal<VideoCreateResult>("/api/proxy/video/create", buildModelProxyPayload(model, setting, {
       adapter: model.adapter,
+      conversationId: conversationIdFor("video"),
       requestBody,
-    });
+    }), controller.signal);
+    setCurrentConversation(videoState.createResult.conversation);
     if (videoState.autoPoll) {
       await handleVideoQuery(videoState.createResult.taskId);
     }
   } catch (error) {
-    videoState.error = error instanceof Error ? error.message : "视频任务提交失败。";
+    videoState.error = handleRequestError(error, "视频任务提交失败。");
   } finally {
+    clearRequestController(controller);
     videoState.loading = false;
   }
 }
@@ -581,7 +935,7 @@ async function handleVideoCreate() {
 async function handleVideoQuery(taskIdArg?: string) {
   const model = activeModel.value;
   const setting = activeSetting.value;
-  const taskId = taskIdArg || videoState.createResult?.taskId;
+  const taskId = taskIdArg || taskIdFromConversation();
   if (!model || !setting || !taskId) {
     videoState.error = "暂无可查询的任务 ID。";
     return;
@@ -589,15 +943,18 @@ async function handleVideoQuery(taskIdArg?: string) {
 
   videoState.querying = true;
   videoState.error = "";
+  const controller = createRequestController();
   try {
-    videoState.taskResult = await postProxy<VideoQueryResult>("/api/proxy/video/query", {
-      config: { baseUrl: setting.baseUrl, apiKey: setting.apiKey },
+    videoState.taskResult = await postProxyWithSignal<VideoQueryResult>("/api/proxy/video/query", buildModelProxyPayload(model, setting, {
       adapter: model.adapter,
+      conversationId: conversationIdFor("video"),
       taskId,
-    });
+    }), controller.signal);
+    setCurrentConversation(videoState.taskResult.conversation);
   } catch (error) {
-    videoState.error = error instanceof Error ? error.message : "任务查询失败。";
+    videoState.error = handleRequestError(error, "任务查询失败。");
   } finally {
+    clearRequestController(controller);
     videoState.querying = false;
   }
 }
@@ -618,6 +975,7 @@ function createEmptyDraft(): ConfigDraft {
     baseUrl: "",
     apiKey: "",
     modelNameOverride: "",
+    availableModels: [],
   };
 }
 
@@ -634,6 +992,7 @@ function createDraftFromModel(model: ModelDefinition): ConfigDraft {
     baseUrl: setting.baseUrl,
     apiKey: setting.apiKey,
     modelNameOverride: setting.modelNameOverride,
+    availableModels: setting.availableModels || [],
   };
 }
 
@@ -642,6 +1001,7 @@ function getDraftSetting(): ModelSetting {
     baseUrl: settingsState.draft.baseUrl,
     apiKey: settingsState.draft.apiKey,
     modelNameOverride: settingsState.draft.modelNameOverride,
+    availableModels: settingsState.draft.availableModels,
   };
 }
 
@@ -665,12 +1025,56 @@ function getDraftModelName(draft: ConfigDraft): string {
 }
 
 function canSaveDraft(): boolean {
-  return Boolean(settingsState.draft.name.trim() && getDraftModelName(settingsState.draft));
+  return Boolean(
+    settingsState.draft.name.trim() &&
+      getDraftModelName(settingsState.draft) &&
+      (!auth.state.user || settingsState.dialogMode === "edit" || settingsState.draft.apiKey.trim()) &&
+      (!auth.state.user || settingsState.draft.baseUrl.trim()) &&
+      !getModelIdentifierError(settingsState.draft.model) &&
+      !getModelIdentifierError(settingsState.draft.modelNameOverride),
+  );
 }
 
-function selectDraftModelId(modelId: string) {
-  settingsState.draft.model = modelId;
-  settingsState.draft.modelNameOverride = modelId;
+function getAvailableModels(model: ModelDefinition): string[] {
+  const latestModels = settingsState.modelListState[model.id]?.result?.models || [];
+  if (latestModels.length) return latestModels;
+  if (model.subModels?.length) return model.subModels.map((item) => item.modelName);
+  return getSetting(model.id).availableModels || [];
+}
+
+async function setPrimaryModel(modelId: string, model: ModelDefinition, setting: ModelSetting) {
+  if (model.serverManaged) {
+    const target = model.subModels?.find((item) => item.modelName === modelId || item.id === modelId);
+    if (!target) {
+      settingsState.modelListState[model.id] = { ...createIdleState<AvailableModelsResult>(), error: "未找到对应的服务端子模型。" };
+      return;
+    }
+    settingsState.modelListState[model.id] = { ...createIdleState<AvailableModelsResult>(), loading: true };
+    try {
+      await setServerPrimaryModel(model.id, target.id);
+      await refreshServerModels();
+      settingsState.modelListState[model.id] = {
+        loading: false,
+        error: "",
+        result: {
+          models: getAvailableModels(model),
+          durationMs: 0,
+          raw: {},
+        },
+      };
+    } catch (error) {
+      settingsState.modelListState[model.id] = {
+        loading: false,
+        error: error instanceof Error ? error.message : "设置主模型失败。",
+        result: null,
+      };
+    }
+    return;
+  }
+  store.updateModelSetting(model.id, {
+    ...setting,
+    modelNameOverride: modelId,
+  });
 }
 
 function openCreateDialog() {
@@ -685,10 +1089,48 @@ function openEditDialog(model: ModelDefinition) {
   settingsState.dialogOpen = true;
 }
 
-function saveDialog() {
+async function saveDialog() {
   const draft = settingsState.draft;
   const modelName = getDraftModelName(draft);
-  if (!draft.name.trim() || !modelName) return;
+  if (
+    !draft.name.trim() ||
+    !modelName ||
+    getModelIdentifierError(draft.model) ||
+    getModelIdentifierError(draft.modelNameOverride)
+  ) {
+    return;
+  }
+  if (auth.state.user) {
+    const payload = {
+      name: draft.name.trim(),
+      vendor: draft.vendor.trim() || "自定义",
+      capability: draft.capability,
+      adapter: draft.adapter,
+      description: draft.description.trim() || "用户自定义模型",
+      baseUrl: draft.baseUrl.trim(),
+      apiKey: draft.apiKey.trim(),
+      primaryModelName: modelName,
+      availableModelNames: draft.availableModels.length ? draft.availableModels : [modelName],
+    };
+    settingsState.testState[draft.id] = { ...createIdleState<TestRequestResult>(), loading: true };
+    try {
+      if (settingsState.dialogMode === "create") {
+        await createServerModel(payload);
+      } else {
+        await updateServerModel(draft.id, payload);
+      }
+      await refreshServerModels();
+      settingsState.testState[draft.id] = { ...createIdleState<TestRequestResult>() };
+      settingsState.dialogOpen = false;
+    } catch (error) {
+      settingsState.testState[draft.id] = {
+        loading: false,
+        error: error instanceof Error ? error.message : "保存模型失败。",
+        result: null,
+      };
+    }
+    return;
+  }
   if (settingsState.dialogMode === "create") {
     store.addCustomModel({
       id: draft.id,
@@ -716,24 +1158,61 @@ function saveDialog() {
     baseUrl: draft.baseUrl.trim(),
     apiKey: draft.apiKey.trim(),
     modelNameOverride: draft.modelNameOverride.trim(),
+    availableModels: draft.availableModels,
   });
   settingsState.dialogOpen = false;
 }
 
 async function fetchModelList(model: ModelDefinition, setting: ModelSetting) {
+  if (model.serverManaged) {
+    settingsState.modelListState[model.id] = { ...createIdleState<AvailableModelsResult>(), loading: true };
+    try {
+      const result = await syncServerModel(model.id);
+      await refreshServerModels();
+      settingsState.modelListState[model.id] = {
+        loading: false,
+        error: "",
+        result: {
+          models: result.models,
+          durationMs: result.durationMs,
+          raw: {},
+        },
+      };
+    } catch (error) {
+      settingsState.modelListState[model.id] = {
+        loading: false,
+        error: error instanceof Error ? error.message : "获取可用模型失败。",
+        result: null,
+      };
+    }
+    return;
+  }
   if (!setting.baseUrl.trim() || !setting.apiKey.trim()) {
     settingsState.modelListState[model.id] = { ...createIdleState<AvailableModelsResult>(), error: "请先填写 baseURL 和 API Key。" };
     return;
   }
   settingsState.modelListState[model.id] = { ...createIdleState<AvailableModelsResult>(), loading: true };
   try {
+    const result = await postProxy<AvailableModelsResult>("/api/proxy/models", {
+      config: { baseUrl: setting.baseUrl, apiKey: setting.apiKey },
+    });
+    const primaryModel = pickPrimaryModel(result.models, setting.modelNameOverride || model.model);
     settingsState.modelListState[model.id] = {
       loading: false,
       error: "",
-      result: await postProxy<AvailableModelsResult>("/api/proxy/models", {
-        config: { baseUrl: setting.baseUrl, apiKey: setting.apiKey },
-      }),
+      result,
     };
+    if (model.id === settingsState.draft.id) {
+      settingsState.draft.availableModels = result.models;
+      settingsState.draft.model = primaryModel;
+      settingsState.draft.modelNameOverride = primaryModel;
+      return;
+    }
+    store.updateModelSetting(model.id, {
+      ...setting,
+      availableModels: result.models,
+      modelNameOverride: primaryModel,
+    });
   } catch (error) {
     settingsState.modelListState[model.id] = {
       loading: false,
@@ -744,21 +1223,24 @@ async function fetchModelList(model: ModelDefinition, setting: ModelSetting) {
 }
 
 async function testModel(model: ModelDefinition, setting: ModelSetting) {
-  if (!setting.baseUrl.trim() || !setting.apiKey.trim()) {
-    settingsState.testState[model.id] = { ...createIdleState<TestRequestResult>(), error: "请先填写 baseURL 和 API Key。" };
+  const readyError = getModelReadyError(model, setting);
+  if (readyError) {
+    settingsState.testState[model.id] = { ...createIdleState<TestRequestResult>(), error: readyError };
     return;
+  }
+  if (!model.serverManaged) {
+    const modelIdentifierError = getModelIdentifierError(resolveModelName(model, setting));
+    if (modelIdentifierError) {
+      settingsState.testState[model.id] = { ...createIdleState<TestRequestResult>(), error: modelIdentifierError };
+      return;
+    }
   }
   settingsState.testState[model.id] = { ...createIdleState<TestRequestResult>(), loading: true };
   try {
     settingsState.testState[model.id] = {
       loading: false,
       error: "",
-      result: await postProxy<TestRequestResult>("/api/proxy/test", {
-        config: { baseUrl: setting.baseUrl, apiKey: setting.apiKey },
-        capability: model.capability,
-        adapter: model.adapter,
-        model: resolveModelName(model, setting),
-      }),
+      result: await postProxy<TestRequestResult>("/api/proxy/test", buildModelProxyPayload(model, setting)),
     };
   } catch (error) {
     settingsState.testState[model.id] = {
@@ -784,21 +1266,37 @@ async function batchTest() {
     selectedSettingsModels.value
       .filter((model) => {
         const setting = getSetting(model.id);
-        return setting.baseUrl.trim() && setting.apiKey.trim();
+        return isModelConfigured(model, setting);
       })
       .map((model) => testModel(model, getSetting(model.id))),
   );
 }
 
-function removeModelFromWorkbench(modelId: string) {
-  store.removeModel(modelId);
+async function removeModelFromWorkbench(modelId: string) {
+  const model = store.models.value.find((item) => item.id === modelId);
+  if (model?.serverManaged) {
+    settingsState.testState[modelId] = { ...createIdleState<TestRequestResult>(), loading: true };
+    try {
+      await deleteServerModel(modelId);
+      await refreshServerModels();
+    } catch (error) {
+      settingsState.testState[modelId] = {
+        loading: false,
+        error: error instanceof Error ? error.message : "删除模型失败。",
+        result: null,
+      };
+      return;
+    }
+  } else {
+    store.removeModel(modelId);
+  }
   settingsState.selectedIds = settingsState.selectedIds.filter((selectedId) => selectedId !== modelId);
   delete settingsState.modelListState[modelId];
   delete settingsState.testState[modelId];
 }
 
-function batchDelete() {
-  selectedSettingsModels.value.forEach((model) => removeModelFromWorkbench(model.id));
+async function batchDelete() {
+  await Promise.allSettled(selectedSettingsModels.value.map((model) => removeModelFromWorkbench(model.id)));
   settingsState.selectedIds = [];
 }
 </script>
@@ -817,7 +1315,7 @@ function batchDelete() {
       <div class="category-tabs">
         <div class="primary-selector">
           <button class="primary-item primary-item-active">大模型</button>
-          <button class="primary-item" disabled>智能体</button>
+          <button class="primary-item" @click="navigate('profile')">个人信息</button>
         </div>
         <div class="secondary-selector">
           <button
@@ -867,50 +1365,101 @@ function batchDelete() {
       </div>
 
       <div class="sidebar-account">
-        <div class="account-avatar">S</div>
+        <div class="account-avatar">{{ auth.state.user?.nickname?.slice(0, 1) || "S" }}</div>
         <div class="account-copy">
-          <strong>本地调试台</strong>
-          <span>在线</span>
+          <strong>{{ auth.state.user?.nickname || "未登录" }}</strong>
+          <span>{{ auth.state.user ? auth.state.user.email || "已通过官网授权" : auth.state.loading ? "登录状态读取中" : "可使用官网授权登录" }}</span>
         </div>
-        <button class="account-recharge" @click="navigate('settings')">设置</button>
+        <button v-if="auth.state.user" class="account-recharge" @click="navigate('profile')">我的</button>
+        <button v-else class="account-recharge" :disabled="auth.state.loading" @click="handleDevLogin">开发登录</button>
       </div>
     </aside>
 
     <main class="main">
       <div class="workspace-topbar">
         <div class="workspace-topbar-actions">
-          <button @click="view === 'settings' ? navigate('images') : undefined">+ 新建对话</button>
-          <button class="button-secondary">历史记录</button>
+          <button @click="startNewConversation()">+ 新建对话</button>
+          <button class="button-secondary" @click="toggleHistoryDrawer">历史记录</button>
+          <button v-if="conversationState.activeRequest" class="button-danger" @click="stopActiveRequest">暂停</button>
         </div>
         <div class="workspace-topbar-actions">
+          <span class="topbar-model-label">{{ currentModelLabel }}</span>
           <button class="topbar-icon-button" @click="navigate('settings')">设置</button>
+          <button class="topbar-icon-button" @click="navigate('profile')">个人</button>
         </div>
       </div>
 
-      <section v-if="view !== 'settings'" class="studio-panel">
+      <section v-if="view !== 'settings' && view !== 'profile'" class="studio-panel">
         <div class="studio-canvas">
-          <div v-if="view === 'images' && imageState.result" class="media-grid studio-media-grid">
-            <article v-for="(image, index) in imageState.result.images" :key="`${image.src}-${index}`" class="result-card">
-              <img :src="image.src" :alt="`生成结果 ${index + 1}`" />
-              <p v-if="image.revisedPrompt" class="muted">{{ image.revisedPrompt }}</p>
+          <aside v-if="conversationState.listOpen" class="history-drawer">
+            <div class="history-drawer-head">
+              <strong>历史记录</strong>
+              <button class="button-secondary icon-button" @click="conversationState.listOpen = false">关闭</button>
+            </div>
+            <div v-if="conversationState.error" class="inline-message inline-danger">{{ conversationState.error }}</div>
+            <button
+              v-for="conversation in visibleConversations"
+              :key="conversation.id"
+              :class="['history-item', conversationState.current?.id === conversation.id ? 'history-item-active' : '']"
+              @click="openConversation(conversation.id)"
+            >
+              <strong>{{ conversation.title }}</strong>
+              <span>{{ CAPABILITY_LABELS[conversation.capability] }} · {{ formatConversationTime(conversation.updatedAt) }}</span>
+            </button>
+            <p v-if="!visibleConversations.length" class="muted">当前类型还没有历史记录。</p>
+          </aside>
+
+          <div v-if="currentMessages.length" class="conversation-timeline">
+            <header class="conversation-header">
+              <div>
+                <p class="eyebrow">{{ activeCapability ? CAPABILITY_LABELS[activeCapability] : "Conversation" }}</p>
+                <h2>{{ conversationState.current?.title || "新对话" }}</h2>
+              </div>
+              <div class="conversation-header-actions">
+                <span class="badge">{{ currentMessages.length }} 条消息</span>
+                <span class="badge">{{ conversationState.current?.status || "active" }}</span>
+              </div>
+            </header>
+
+            <article
+              v-for="message in currentMessages"
+              :key="message.id"
+              :class="['message-card', `message-${message.role}`, `message-status-${message.status}`]"
+            >
+              <div class="message-meta">
+                <span>{{ message.role === "user" ? "你" : "模型" }}</span>
+                <span>{{ messageStatusLabel(message) }}</span>
+                <span>{{ formatConversationTime(message.createdAt) }}</span>
+              </div>
+              <div v-if="message.status === 'error'" class="message-error">
+                <span>{{ message.errorMessage || "请求失败" }}</span>
+                <button v-if="message.canRetry" class="retry-button" title="重新发送" @click="retryMessage(message)">↻</button>
+              </div>
+              <div
+                v-else-if="message.content && message.capability === 'text'"
+                class="markdown-preview"
+                v-html="markdownPreview(previewMessageContent(message))"
+              />
+              <p v-else-if="message.content" class="message-content">{{ message.content }}</p>
+              <div v-if="message.status === 'processing'" class="long-loading">
+                <span class="loader-dot" />
+                <span>视频任务运行中，可以稍后重新进入历史记录继续查询。</span>
+                <button class="button-secondary" @click="() => handleVideoQuery(message.content)">查询进度</button>
+              </div>
+              <div v-if="message.assets.length" class="message-assets">
+                <article v-for="asset in message.assets" :key="asset.id" class="message-asset-card">
+                  <img v-if="asset.assetType === 'image'" :src="asset.url" alt="生成图片" />
+                  <video v-else-if="asset.assetType === 'video'" :src="asset.url" :poster="asset.thumbnailUrl || undefined" controls playsinline preload="metadata" />
+                  <div class="asset-actions">
+                    <a class="button-link" :href="asset.url" target="_blank" rel="noreferrer">查看</a>
+                    <button v-if="asset.assetType === 'image'" class="button-secondary" @click="useGeneratedAsset(asset)">引用编辑</button>
+                    <a class="button-secondary" :href="asset.url" download target="_blank" rel="noreferrer">保存</a>
+                  </div>
+                </article>
+              </div>
             </article>
           </div>
-          <article v-else-if="view === 'text' && textState.result" class="result-text studio-result">
-            {{ textState.result.content }}
-          </article>
-          <div v-else-if="view === 'videos' && videoState.taskResult?.videoUrl" class="video-stage">
-            <video :src="videoState.taskResult.videoUrl" controls playsinline preload="metadata" />
-            <a class="button-link" :href="videoState.taskResult.videoUrl" target="_blank" rel="noreferrer">打开视频地址</a>
-          </div>
-          <div v-else-if="view === 'videos' && videoState.createResult" class="task-canvas">
-            <span class="badge badge-accent">任务已提交</span>
-            <h3>{{ videoState.createResult.taskId }}</h3>
-            <div class="task-metrics">
-              <span>提交状态：{{ videoState.createResult.status }}</span>
-              <span>查询状态：{{ videoState.taskResult?.status || "等待查询" }}</span>
-              <span>进度：{{ videoState.taskResult?.progress ?? "-" }}</span>
-            </div>
-          </div>
+
           <div v-else class="empty-canvas">
             <div class="empty-canvas-card">
               <div class="hero-model-mark">
@@ -937,7 +1486,7 @@ function batchDelete() {
         <div class="composer-card">
           <div class="composer-topline">
             <button class="gameplay-btn">玩法说明</button>
-            <span>{{ !activeSetting?.baseUrl || !activeSetting?.apiKey ? "模型待配置" : "模型已就绪" }}</span>
+            <span>{{ activeModel && activeSetting && isModelConfigured(activeModel, activeSetting) ? "模型已就绪" : "模型待配置" }}</span>
           </div>
 
           <div class="composer-toolbar">
@@ -1044,12 +1593,59 @@ function batchDelete() {
         </div>
       </section>
 
+      <section v-else-if="view === 'profile'" class="settings-page profile-page">
+        <section class="settings-hero profile-hero">
+          <div>
+            <p class="eyebrow">Profile</p>
+            <h2>个人信息</h2>
+            <p class="muted">当前账号的密钥、模型、子模型和创作历史都会按用户隔离保存。</p>
+          </div>
+          <div class="profile-card">
+            <div class="profile-avatar">{{ auth.state.user?.nickname?.slice(0, 1) || "G" }}</div>
+            <strong>{{ auth.state.user?.nickname || "未登录用户" }}</strong>
+            <span>{{ auth.state.user?.email || "请通过官网授权或本地模拟登录" }}</span>
+          </div>
+        </section>
+
+        <section class="settings-list-panel profile-grid">
+          <article class="profile-stat">
+            <span>用户 ID</span>
+            <strong>{{ auth.state.user?.externalUserId || "-" }}</strong>
+          </article>
+          <article class="profile-stat">
+            <span>已保存模型</span>
+            <strong>{{ store.models.value.length }}</strong>
+          </article>
+          <article class="profile-stat">
+            <span>已配置模型</span>
+            <strong>{{ configuredCount }}</strong>
+          </article>
+          <article class="profile-stat">
+            <span>历史对话</span>
+            <strong>{{ conversationState.conversations.length }}</strong>
+          </article>
+        </section>
+
+        <section class="settings-list-panel profile-actions">
+          <div>
+            <h3>官网授权回跳</h3>
+            <p class="muted">正式环境使用官网生成的短期 code 访问 /auth/callback?code=xxx；本地测试可用 dev:alice、dev:bob、dev:carol 模拟三个用户。</p>
+          </div>
+          <div class="settings-row-actions">
+            <a class="button-link" href="/auth/callback?code=dev:alice">模拟 Alice</a>
+            <a class="button-link" href="/auth/callback?code=dev:bob">模拟 Bob</a>
+            <a class="button-link" href="/auth/callback?code=dev:carol">模拟 Carol</a>
+            <button class="button-secondary" @click="refreshConversations">刷新历史</button>
+          </div>
+        </section>
+      </section>
+
       <section v-else class="settings-page">
         <section class="settings-hero">
           <div>
             <p class="eyebrow">Model Settings</p>
             <h2>模型配置</h2>
-            <p class="muted">使用列表管理每个模型的 baseURL、API Key 和连通状态。配置会缓存在当前浏览器。</p>
+            <p class="muted">{{ auth.state.user ? "配置会保存到 GenStudio 数据库，密钥只由后端调用。" : "未登录时配置会缓存在当前浏览器，登录后可保存到数据库。" }}</p>
           </div>
           <div class="settings-hero-stats">
             <span class="badge">{{ store.models.value.length }} 个模型</span>
@@ -1081,13 +1677,14 @@ function batchDelete() {
               <div class="settings-model-name">
                 <strong>{{ model.name }}</strong>
                 <span>{{ CAPABILITY_LABELS[model.capability] }} · {{ model.vendor }}</span>
+                <span>主模型：{{ resolveModelName(model, getSetting(model.id)) }}</span>
               </div>
               <div class="settings-url">{{ getSetting(model.id).baseUrl || "-" }}</div>
               <div>
                 <span v-if="settingsState.testState[model.id]?.loading" class="badge badge-warn">测试中</span>
                 <span v-else-if="settingsState.testState[model.id]?.result" class="badge badge-success">已连接 {{ settingsState.testState[model.id].result?.durationMs }}ms</span>
                 <span v-else-if="settingsState.testState[model.id]?.error" class="badge badge-danger">连接失败</span>
-                <span v-else-if="!getSetting(model.id).baseUrl || !getSetting(model.id).apiKey" class="badge badge-warn">待配置</span>
+                <span v-else-if="!isModelConfigured(model, getSetting(model.id))" class="badge badge-warn">待配置</span>
                 <span v-else class="badge">待测试</span>
               </div>
               <div class="settings-row-actions">
@@ -1098,21 +1695,26 @@ function batchDelete() {
               </div>
               <div v-if="settingsState.modelListState[model.id]?.error" class="settings-row-detail inline-message inline-danger">{{ settingsState.modelListState[model.id].error }}</div>
               <div v-if="settingsState.testState[model.id]?.error" class="settings-row-detail inline-message inline-danger">{{ settingsState.testState[model.id].error }}</div>
-              <div v-if="settingsState.modelListState[model.id]?.result" class="settings-row-detail settings-model-list-result">
+              <div v-if="settingsState.modelListState[model.id]?.result || getAvailableModels(model).length" class="settings-row-detail settings-model-list-result">
                 <div class="status-row">
-                  <span class="badge badge-success">已获取 {{ settingsState.modelListState[model.id].result?.models.length }} 个模型</span>
-                  <span class="history-time">{{ settingsState.modelListState[model.id].result?.durationMs }}ms</span>
+                  <span class="badge badge-success">已获取 {{ getAvailableModels(model).length }} 个模型</span>
+                  <span v-if="settingsState.modelListState[model.id]?.result" class="history-time">{{ settingsState.modelListState[model.id].result?.durationMs }}ms</span>
                 </div>
-                <div class="available-model-list">
-                  <button
-                    v-for="modelId in settingsState.modelListState[model.id].result?.models.slice(0, 24)"
-                    :key="modelId"
-                    class="chip-button model-id-chip"
-                    @click="store.updateModelSetting(model.id, { modelNameOverride: modelId })"
+                <label class="model-select-field">
+                  <span>主模型</span>
+                  <select
+                    :value="resolveModelName(model, getSetting(model.id))"
+                    @change="(event) => setPrimaryModel((event.target as HTMLSelectElement).value, model, getSetting(model.id))"
                   >
-                    {{ modelId }}
-                  </button>
-                </div>
+                    <option
+                      v-for="modelId in getAvailableModels(model)"
+                      :key="modelId"
+                      :value="modelId"
+                    >
+                      {{ modelId }}
+                    </option>
+                  </select>
+                </label>
               </div>
             </article>
           </div>
@@ -1130,21 +1732,30 @@ function batchDelete() {
               <label class="field"><span>厂商</span><input v-model="settingsState.draft.vendor" /></label>
               <label class="field"><span>能力类型</span><select v-model="settingsState.draft.capability" @change="settingsState.draft.adapter = getCapabilityDefaultAdapter(settingsState.draft.capability)"><option value="text">文案创作</option><option value="image">图片创作</option><option value="video">视频创作</option></select></label>
               <label class="field field-full"><span>适配器</span><select v-model="settingsState.draft.adapter"><option v-for="adapter in getAdapterOptions(settingsState.draft.capability)" :key="adapter" :value="adapter">{{ ADAPTER_LABELS[adapter] }}</option></select></label>
-              <label class="field field-full"><span>模型标识</span><input v-model="settingsState.draft.model" /></label>
+              <label class="field field-full"><span>模型标识</span><input v-model="settingsState.draft.model" placeholder="例如：gpt-4o" /></label>
               <label class="field field-full"><span>baseURL</span><input v-model="settingsState.draft.baseUrl" placeholder="例如：https://ai.ai666.net" /></label>
               <label class="field field-full"><span>API Key</span><input v-model="settingsState.draft.apiKey" type="password" /></label>
-              <label class="field field-full"><span>模型标识覆盖</span><input v-model="settingsState.draft.modelNameOverride" /></label>
+              <label v-if="settingsState.draft.availableModels.length" class="field field-full">
+                <span>主模型</span>
+                <select v-model="settingsState.draft.modelNameOverride" @change="settingsState.draft.model = settingsState.draft.modelNameOverride">
+                  <option
+                    v-for="modelId in settingsState.draft.availableModels"
+                    :key="modelId"
+                    :value="modelId"
+                  >
+                    {{ modelId }}
+                  </option>
+                </select>
+              </label>
+              <label v-else class="field field-full"><span>主模型覆盖</span><input v-model="settingsState.draft.modelNameOverride" placeholder="获取模型列表后可从下拉选择" /></label>
             </div>
+            <div v-if="getModelIdentifierError(settingsState.draft.model)" class="inline-message inline-danger">{{ getModelIdentifierError(settingsState.draft.model) }}</div>
+            <div v-if="getModelIdentifierError(settingsState.draft.modelNameOverride)" class="inline-message inline-danger">{{ getModelIdentifierError(settingsState.draft.modelNameOverride) }}</div>
+            <div v-if="auth.state.user && settingsState.dialogMode === 'create' && (!settingsState.draft.baseUrl.trim() || !settingsState.draft.apiKey.trim())" class="inline-message inline-danger">登录后保存到数据库时需要填写 baseURL 和 API Key。</div>
             <div v-if="settingsState.modelListState[settingsState.draft.id]?.result" class="settings-dialog-models">
-              <div class="available-model-list">
-                <button
-                  v-for="modelId in settingsState.modelListState[settingsState.draft.id].result?.models.slice(0, 18)"
-                  :key="modelId"
-                  class="chip-button model-id-chip"
-                  @click="selectDraftModelId(modelId)"
-                >
-                  {{ modelId }}
-                </button>
+              <div class="status-row">
+                <span class="badge badge-success">已获取 {{ settingsState.draft.availableModels.length }} 个模型</span>
+                <span class="history-time">保存后会使用当前主模型创作</span>
               </div>
             </div>
             <div class="settings-dialog-actions">

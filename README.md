@@ -25,6 +25,24 @@ python -m pip install -r requirements.txt
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
+## MySQL 与登录
+
+本地 MySQL 使用 Docker：
+
+```bash
+docker compose up -d mysql
+```
+
+默认库名为 `genstudio`，连接串见 `server/.env.example`。首次启动后端时会自动创建用户、会话、密钥、模型、子模型和调用记录表。
+
+官网授权采用短期授权码：
+
+```text
+/auth/callback?code=xxx
+```
+
+后端会用 `OFFICIAL_AUTH_EXCHANGE_URL` 将 code 换成用户信息，并写入 `genstudio_session` Cookie。本地开发可调用 `POST /api/auth/dev-login` 创建测试登录态。
+
 健康检查：
 
 ```text

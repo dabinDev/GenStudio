@@ -1221,6 +1221,111 @@ a {
   letter-spacing: -0.03em;
 }
 
+.wizard-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.wizard-step {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-height: 72px;
+  padding: 10px;
+  border: 1px solid rgba(183, 199, 210, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.wizard-step > span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  color: var(--muted-strong);
+  background: rgba(148, 163, 184, 0.12);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.wizard-step strong,
+.wizard-step small {
+  display: block;
+}
+
+.wizard-step small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.wizard-step-active {
+  border-color: rgba(41, 195, 187, 0.4);
+  background: rgba(41, 195, 187, 0.1);
+}
+
+.wizard-step-complete > span {
+  color: #061310;
+  background: linear-gradient(135deg, #29c3bb, #7dcc16);
+}
+
+.settings-dialog-sections {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-dialog-section {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.42fr) minmax(0, 1fr);
+  gap: 14px;
+  padding: 12px;
+  border: 1px solid rgba(183, 199, 210, 0.1);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.14);
+}
+
+.section-copy {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+}
+
+.section-copy span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.settings-dialog-review {
+  align-items: start;
+}
+
+.review-grid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px 12px;
+  padding: 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.review-grid span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.review-grid strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
@@ -1322,6 +1427,11 @@ a {
 
   .settings-table-row {
     grid-template-columns: 34px 1fr;
+  }
+
+  .wizard-steps,
+  .settings-dialog-section {
+    grid-template-columns: 1fr;
   }
 
   .settings-row-actions,

@@ -48,6 +48,13 @@ import {
   resolveModelName,
   shortText,
 } from "./utils";
+import {
+  applyFetchedModelsToDraft,
+  canSaveModelDraft,
+  getModelWizardProgress,
+  getModelWizardStep,
+  resolveDraftPrimaryModel,
+} from "./modelWizard";
 
 type ViewName = "text" | "images" | "videos" | "settings" | "profile";
 type SidebarFilter = Capability | "all";
@@ -281,6 +288,9 @@ const currentModelLabel = computed(() => {
   if (!model || !setting) return "未选择模型";
   return `${model.name} / ${resolveModelName(model, setting)}`;
 });
+
+const modelWizardProgress = computed(() => getModelWizardProgress(settingsState.draft));
+const modelWizardStep = computed(() => getModelWizardStep(settingsState.draft));
 
 onMounted(async () => {
   await initializeSession();
@@ -1021,17 +1031,14 @@ function getDraftModel(): ModelDefinition {
 }
 
 function getDraftModelName(draft: ConfigDraft): string {
-  return draft.model.trim() || draft.modelNameOverride.trim();
+  return resolveDraftPrimaryModel(draft);
 }
 
 function canSaveDraft(): boolean {
-  return Boolean(
-    settingsState.draft.name.trim() &&
-      getDraftModelName(settingsState.draft) &&
-      (!auth.state.user || settingsState.dialogMode === "edit" || settingsState.draft.apiKey.trim()) &&
-      (!auth.state.user || settingsState.draft.baseUrl.trim()) &&
-      !getModelIdentifierError(settingsState.draft.model) &&
-      !getModelIdentifierError(settingsState.draft.modelNameOverride),
+  return canSaveModelDraft(
+    settingsState.draft,
+    getDraftSetting(),
+    Boolean(auth.state.user && settingsState.dialogMode === "create"),
   );
 }
 
@@ -1196,16 +1203,16 @@ async function fetchModelList(model: ModelDefinition, setting: ModelSetting) {
     const result = await postProxy<AvailableModelsResult>("/api/proxy/models", {
       config: { baseUrl: setting.baseUrl, apiKey: setting.apiKey },
     });
-    const primaryModel = pickPrimaryModel(result.models, setting.modelNameOverride || model.model);
+    const isDraftModel = model.id === settingsState.draft.id;
+    const updatedDraft = isDraftModel ? applyFetchedModelsToDraft(settingsState.draft, result.models) : null;
+    const primaryModel = updatedDraft?.modelNameOverride || pickPrimaryModel(result.models, setting.modelNameOverride || model.model);
     settingsState.modelListState[model.id] = {
       loading: false,
       error: "",
       result,
     };
-    if (model.id === settingsState.draft.id) {
-      settingsState.draft.availableModels = result.models;
-      settingsState.draft.model = primaryModel;
-      settingsState.draft.modelNameOverride = primaryModel;
+    if (updatedDraft) {
+      settingsState.draft = updatedDraft;
       return;
     }
     store.updateModelSetting(model.id, {
@@ -1726,28 +1733,71 @@ async function batchDelete() {
               <div><p class="eyebrow">Model Config</p><h3>{{ settingsState.dialogMode === "create" ? "添加模型" : "模型配置" }}</h3></div>
               <button class="button-secondary icon-button" @click="settingsState.dialogOpen = false">关闭</button>
             </div>
-            <div class="form-grid settings-dialog-grid">
-              <label class="field"><span>名称</span><input v-model="settingsState.draft.name" /></label>
-              <label class="field"><span>备注</span><input v-model="settingsState.draft.description" /></label>
-              <label class="field"><span>厂商</span><input v-model="settingsState.draft.vendor" /></label>
-              <label class="field"><span>能力类型</span><select v-model="settingsState.draft.capability" @change="settingsState.draft.adapter = getCapabilityDefaultAdapter(settingsState.draft.capability)"><option value="text">文案创作</option><option value="image">图片创作</option><option value="video">视频创作</option></select></label>
-              <label class="field field-full"><span>适配器</span><select v-model="settingsState.draft.adapter"><option v-for="adapter in getAdapterOptions(settingsState.draft.capability)" :key="adapter" :value="adapter">{{ ADAPTER_LABELS[adapter] }}</option></select></label>
-              <label class="field field-full"><span>模型标识</span><input v-model="settingsState.draft.model" placeholder="例如：gpt-4o" /></label>
-              <label class="field field-full"><span>baseURL</span><input v-model="settingsState.draft.baseUrl" placeholder="例如：https://ai.ai666.net" /></label>
-              <label class="field field-full"><span>API Key</span><input v-model="settingsState.draft.apiKey" type="password" /></label>
-              <label v-if="settingsState.draft.availableModels.length" class="field field-full">
-                <span>主模型</span>
-                <select v-model="settingsState.draft.modelNameOverride" @change="settingsState.draft.model = settingsState.draft.modelNameOverride">
-                  <option
-                    v-for="modelId in settingsState.draft.availableModels"
-                    :key="modelId"
-                    :value="modelId"
-                  >
-                    {{ modelId }}
-                  </option>
-                </select>
-              </label>
-              <label v-else class="field field-full"><span>主模型覆盖</span><input v-model="settingsState.draft.modelNameOverride" placeholder="获取模型列表后可从下拉选择" /></label>
+            <div class="wizard-steps">
+              <article
+                v-for="step in modelWizardProgress"
+                :key="step.step"
+                :class="['wizard-step', step.step === modelWizardStep ? 'wizard-step-active' : '', step.complete ? 'wizard-step-complete' : '']"
+              >
+                <span>{{ step.index }}</span>
+                <div>
+                  <strong>{{ step.label }}</strong>
+                  <small>{{ step.description }}</small>
+                </div>
+              </article>
+            </div>
+
+            <div class="settings-dialog-sections">
+              <section class="settings-dialog-section">
+                <div class="section-copy">
+                  <strong>1. 连接密钥</strong>
+                  <span>先确认这个配置属于哪类创作能力，以及后端应该用哪个请求地址和密钥。</span>
+                </div>
+                <div class="form-grid settings-dialog-grid">
+                  <label class="field"><span>名称</span><input v-model="settingsState.draft.name" /></label>
+                  <label class="field"><span>备注</span><input v-model="settingsState.draft.description" /></label>
+                  <label class="field"><span>厂商</span><input v-model="settingsState.draft.vendor" /></label>
+                  <label class="field"><span>能力类型</span><select v-model="settingsState.draft.capability" @change="settingsState.draft.adapter = getCapabilityDefaultAdapter(settingsState.draft.capability)"><option value="text">文案创作</option><option value="image">图片创作</option><option value="video">视频创作</option></select></label>
+                  <label class="field field-full"><span>适配器</span><select v-model="settingsState.draft.adapter"><option v-for="adapter in getAdapterOptions(settingsState.draft.capability)" :key="adapter" :value="adapter">{{ ADAPTER_LABELS[adapter] }}</option></select></label>
+                  <label class="field field-full"><span>baseURL</span><input v-model="settingsState.draft.baseUrl" placeholder="例如：https://ai.ai666.net" /></label>
+                  <label class="field field-full"><span>API Key</span><input v-model="settingsState.draft.apiKey" type="password" /></label>
+                </div>
+              </section>
+
+              <section class="settings-dialog-section">
+                <div class="section-copy">
+                  <strong>2. 获取模型并选择主模型</strong>
+                  <span>一个密钥可能返回多个模型，保存后创作会优先使用这里选中的主模型。</span>
+                </div>
+                <div class="form-grid settings-dialog-grid">
+                  <label class="field field-full"><span>模型标识</span><input v-model="settingsState.draft.model" placeholder="例如：gpt-4o" /></label>
+                  <label v-if="settingsState.draft.availableModels.length" class="field field-full">
+                    <span>主模型</span>
+                    <select v-model="settingsState.draft.modelNameOverride" @change="settingsState.draft.model = settingsState.draft.modelNameOverride">
+                      <option
+                        v-for="modelId in settingsState.draft.availableModels"
+                        :key="modelId"
+                        :value="modelId"
+                      >
+                        {{ modelId }}
+                      </option>
+                    </select>
+                  </label>
+                  <label v-else class="field field-full"><span>主模型覆盖</span><input v-model="settingsState.draft.modelNameOverride" placeholder="获取模型列表后可从下拉选择" /></label>
+                </div>
+              </section>
+
+              <section class="settings-dialog-section settings-dialog-review">
+                <div class="section-copy">
+                  <strong>3. 保存确认</strong>
+                  <span>当前主模型：{{ getDraftModelName(settingsState.draft) || "尚未选择" }}</span>
+                </div>
+                <div class="review-grid">
+                  <span>能力</span><strong>{{ CAPABILITY_LABELS[settingsState.draft.capability] }}</strong>
+                  <span>适配器</span><strong>{{ ADAPTER_LABELS[settingsState.draft.adapter] }}</strong>
+                  <span>模型数量</span><strong>{{ settingsState.draft.availableModels.length || 1 }}</strong>
+                </div>
+              </section>
             </div>
             <div v-if="getModelIdentifierError(settingsState.draft.model)" class="inline-message inline-danger">{{ getModelIdentifierError(settingsState.draft.model) }}</div>
             <div v-if="getModelIdentifierError(settingsState.draft.modelNameOverride)" class="inline-message inline-danger">{{ getModelIdentifierError(settingsState.draft.modelNameOverride) }}</div>

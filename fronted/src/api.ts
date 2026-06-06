@@ -1,4 +1,5 @@
 import type { ConversationDefinition, ServerModelDefinition, UploadedAsset, UserProfile } from "./types";
+import { isProductionRuntime } from "./env";
 
 const CSRF_SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const AUTH_CSRF_EXEMPT_ENDPOINTS = new Set(["/api/auth/login", "/api/auth/register", "/api/auth/dev-login"]);
@@ -225,7 +226,11 @@ export async function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
-export function shouldFallbackToLocalReference(error: unknown): boolean {
+export function shouldFallbackToLocalReference(
+  error: unknown,
+  runtime: { mode?: string; env?: string } = {},
+): boolean {
+  if (isProductionRuntime(runtime.mode, runtime.env)) return false;
   if (!(error instanceof ApiRequestError)) return false;
   if (error.status === 404 || error.status === 405 || error.status >= 500) return true;
   const message = error.message.toLowerCase();

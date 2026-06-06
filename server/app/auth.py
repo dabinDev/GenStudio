@@ -52,14 +52,18 @@ def create_session(db: Session, response: Response, user: User) -> str:
     token = create_session_token()
     expires_at = utcnow() + timedelta(days=settings.session_ttl_days)
     db.add(SessionRecord(user_id=user.id, token_hash=hash_token(token), expires_at=expires_at))
+    cookie_kwargs: dict[str, Any] = {}
+    if settings.cookie_domain:
+        cookie_kwargs["domain"] = settings.cookie_domain
     response.set_cookie(
         key=settings.session_cookie_name,
         value=token,
         httponly=True,
         secure=settings.cookie_secure,
-        samesite="lax",
+        samesite=settings.cookie_samesite,
         max_age=settings.session_ttl_days * 24 * 60 * 60,
         path="/",
+        **cookie_kwargs,
     )
     return token
 
@@ -76,7 +80,16 @@ def get_session_record(request: Request, db: Session, settings: Settings) -> tup
 
 def clear_session_cookie(response: Response) -> None:
     settings = get_settings()
-    response.delete_cookie(settings.session_cookie_name, path="/")
+    cookie_kwargs: dict[str, Any] = {}
+    if settings.cookie_domain:
+        cookie_kwargs["domain"] = settings.cookie_domain
+    response.delete_cookie(
+        settings.session_cookie_name,
+        path="/",
+        samesite=settings.cookie_samesite,
+        secure=settings.cookie_secure,
+        **cookie_kwargs,
+    )
 
 
 def clear_session(request: Request, response: Response, db: Session, settings: Settings) -> None:
@@ -241,6 +254,8 @@ def update_user_profile(user: User, payload: ProfileUpdateRequest) -> User:
 
 
 async def exchange_official_code(code: str, settings: Settings) -> dict[str, Any]:
+    if code.startswith("dev:") and not settings.enable_dev_login:
+        raise HTTPException(status_code=404, detail={"message": "开发登录未启用。"})
     if code.startswith("dev:") and not settings.official_auth_exchange_url:
         slug = code.removeprefix("dev:").strip() or "user"
         return {

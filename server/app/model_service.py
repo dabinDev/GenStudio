@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session, selectinload
 
 from app.db_models import ApiKey, CallLog, ModelGroup, SubModel, User
-from app.proxy_utils import parse_model_ids
+from app.proxy_utils import filter_model_ids_for_capability, parse_model_ids
 from app.schemas import ApiKeyOut, CallLogOut, ModelCreate, ModelOut, ModelUpdate, SubModelOut, SyncModelsResult
 from app.security import decrypt_secret, encrypt_secret
 
@@ -318,7 +318,7 @@ def serialize_call_log(item: CallLog) -> CallLogOut:
 
 
 def sync_models_from_raw(db: Session, model: ModelGroup, raw: dict[str, Any], duration_ms: int) -> SyncModelsResult:
-    model_names = parse_model_ids(raw)
+    model_names = filter_model_ids_for_capability(parse_model_ids(raw), model.capability)
     current = next((item.model_name for item in model.sub_models if item.id == model.primary_sub_model_id), "")
     primary = current if current in model_names else model_names[0] if model_names else current
     upsert_fetched_sub_models(db, model, model_names, primary)

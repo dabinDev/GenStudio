@@ -7,10 +7,12 @@ from pathlib import Path
 import time
 from uuid import uuid4
 from typing import Any
+from urllib.parse import quote, urlparse
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.auth import (
@@ -72,7 +74,9 @@ from app.proxy_utils import (
     resolve_video_query_path,
     upstream_error,
     validate_config,
+    filter_model_ids_for_capability,
 )
+from app.rate_limit import InMemoryRateLimiter, check_rate_limit
 from app.schemas import (
     ConversationCreate,
     DevLoginRequest,
@@ -83,10 +87,43 @@ from app.schemas import (
     RegisterRequest,
 )
 from app.security import decrypt_secret
+from app.storage import create_presigned_put_url
 
 app = FastAPI(title="GenStudio Server")
 GENERATED_ASSET_DIR = Path(__file__).resolve().parents[2] / "generated_assets"
 GENERATED_ASSET_DIR.mkdir(parents=True, exist_ok=True)
+FRONTEND_ROUTES = {"auth", "auth-error", "text", "images", "videos", "settings", "profile"}
+rate_limiter = InMemoryRateLimiter()
+
+
+def safe_frontend_hash_path(value: str, fallback: str = "#/settings") -> str:
+    candidate = (value or "").strip()
+    if not candidate:
+        return fallback
+    parsed = urlparse(candidate)
+    if parsed.scheme or parsed.netloc or candidate.startswith("//"):
+        return fallback
+    if candidate.startswith("/#/"):
+        candidate = candidate[1:]
+    elif candidate.startswith("#/"):
+        candidate = candidate
+    elif candidate.startswith("/"):
+        candidate = f"#{candidate}"
+    else:
+        candidate = f"#/{candidate.lstrip('#/')}"
+    route = candidate.removeprefix("#/").split("?", 1)[0].strip("/")
+    if route not in FRONTEND_ROUTES:
+        return fallback
+    return candidate
+
+
+def frontend_redirect_url(settings: Settings, hash_path: str = "#/settings") -> str:
+    return f"{settings.frontend_url.rstrip('/')}/{safe_frontend_hash_path(hash_path)}"
+
+
+def auth_error_redirect_url(settings: Settings, message: str) -> str:
+    safe_message = quote(message[:160] or "授权登录失败，请返回官网重新进入。")
+    return frontend_redirect_url(settings, f"#/auth-error?message={safe_message}")
 
 
 def extract_video_prompt(request_body: dict[str, Any]) -> str:
@@ -139,12 +176,7 @@ def extract_images_from_response(raw: dict[str, Any]) -> tuple[list[dict[str, An
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://127.0.0.1:5173",
-        "http://localhost:5173",
-        "http://127.0.0.1:3001",
-        "http://localhost:3001",
-    ],
+    allow_origins=get_settings().cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -153,13 +185,24 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup() -> None:
-    if get_settings().auto_create_tables:
+    settings = get_settings()
+    settings.validate_startup()
+    if settings.auto_create_tables:
         init_db()
 
 
 @app.get("/api/health")
-async def health() -> dict[str, str]:
-    return {"status": "ok"}
+async def health(db: Session = Depends(get_db), settings: Settings = Depends(get_settings)) -> dict[str, str]:
+    database_status = "ok"
+    try:
+        db.execute(text("select 1"))
+    except Exception:
+        database_status = "error"
+    return {
+        "status": "ok" if database_status == "ok" else "degraded",
+        "database": database_status,
+        "storage": "configured" if settings.object_storage_enabled else "not_configured",
+    }
 
 
 @app.get("/api/assets/generated/{file_name}")
@@ -189,9 +232,18 @@ async def auth_csrf(
 @app.post("/api/auth/register")
 async def auth_register(
     payload: RegisterRequest,
+    request: Request,
     response: Response,
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
+    check_rate_limit(
+        limiter=rate_limiter,
+        request=request,
+        settings=settings,
+        bucket="auth",
+        limit=settings.rate_limit_login_per_window,
+    )
     user = register_local_user(db, payload)
     db.flush()
     create_session(db, response, user)
@@ -202,10 +254,18 @@ async def auth_register(
 @app.post("/api/auth/login")
 async def auth_login(
     payload: LoginRequest,
+    request: Request,
     response: Response,
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
+    check_rate_limit(
+        limiter=rate_limiter,
+        request=request,
+        settings=settings,
+        bucket="auth",
+        limit=settings.rate_limit_login_per_window,
+    )
     user = authenticate_local_user(db, payload, settings)
     db.flush()
     create_session(db, response, user)
@@ -215,11 +275,19 @@ async def auth_login(
 
 @app.get("/api/auth/callback")
 async def auth_callback(
+    request: Request,
     response: Response,
     code: str = Query(...),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
+    check_rate_limit(
+        limiter=rate_limiter,
+        request=request,
+        settings=settings,
+        bucket="auth-callback",
+        limit=settings.rate_limit_login_per_window,
+    )
     profile = await exchange_official_code(code, settings)
     user = upsert_user(db, **profile)
     db.flush()
@@ -230,27 +298,51 @@ async def auth_callback(
 
 @app.get("/auth/callback")
 async def public_auth_callback(
+    request: Request,
     code: str = Query(...),
+    next_url: str = Query("", alias="next"),
+    state: str = Query(""),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> RedirectResponse:
-    redirect_url = f"{settings.frontend_url.rstrip('/')}/#/settings"
-    response = RedirectResponse(redirect_url, status_code=307)
-    profile = await exchange_official_code(code, settings)
-    user = upsert_user(db, **profile)
-    db.flush()
-    create_session(db, response, user)
-    db.commit()
+    check_rate_limit(
+        limiter=rate_limiter,
+        request=request,
+        settings=settings,
+        bucket="auth-callback",
+        limit=settings.rate_limit_login_per_window,
+    )
+    redirect_target = safe_frontend_hash_path(next_url or state or "#/settings")
+    response = RedirectResponse(frontend_redirect_url(settings, redirect_target), status_code=307)
+    try:
+        profile = await exchange_official_code(code, settings)
+        user = upsert_user(db, **profile)
+        db.flush()
+        create_session(db, response, user)
+        db.commit()
+    except HTTPException as exc:
+        db.rollback()
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
+        message = str(detail.get("message") or "授权登录失败，请返回官网重新进入。")
+        return RedirectResponse(auth_error_redirect_url(settings, message), status_code=307)
     return response
 
 
 @app.post("/api/auth/dev-login")
 async def auth_dev_login(
     payload: DevLoginRequest,
+    request: Request,
     response: Response,
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
+    check_rate_limit(
+        limiter=rate_limiter,
+        request=request,
+        settings=settings,
+        bucket="auth",
+        limit=settings.rate_limit_login_per_window,
+    )
     if not settings.enable_dev_login:
         raise HTTPException(status_code=404, detail={"message": "开发登录未启用。"})
     user = upsert_user(
@@ -391,6 +483,37 @@ async def call_logs(
     return {"calls": [serialize_call_log(item).model_dump() for item in rows]}
 
 
+@app.get("/api/calls/summary")
+async def call_logs_summary(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    rows = db.query(CallLog).filter(CallLog.user_id == current_user.id).all()
+    summary: dict[str, Any] = {
+        "total": len(rows),
+        "success": 0,
+        "error": 0,
+        "failureRate": 0,
+        "byCapability": {},
+    }
+    for row in rows:
+        status_key = "success" if row.status == "success" else "error"
+        summary[status_key] += 1
+        capability = row.capability or "unknown"
+        bucket = summary["byCapability"].setdefault(
+            capability,
+            {"total": 0, "success": 0, "error": 0, "failureRate": 0},
+        )
+        bucket["total"] += 1
+        bucket[status_key] += 1
+    if summary["total"]:
+        summary["failureRate"] = round(summary["error"] / summary["total"], 4)
+    for bucket in summary["byCapability"].values():
+        if bucket["total"]:
+            bucket["failureRate"] = round(bucket["error"] / bucket["total"], 4)
+    return {"summary": summary}
+
+
 @app.get("/api/conversations")
 async def conversations(
     current_user: User = Depends(get_current_user),
@@ -426,7 +549,18 @@ async def conversation_detail(
 
 
 @app.post("/api/proxy/models")
-async def proxy_models(payload: dict[str, Any]) -> dict[str, Any]:
+async def proxy_models(
+    payload: dict[str, Any],
+    request: Request,
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    check_rate_limit(
+        limiter=rate_limiter,
+        request=request,
+        settings=settings,
+        bucket="models",
+        limit=settings.rate_limit_model_test_per_window,
+    )
     base_url, api_key = validate_config(payload.get("config"))
     target_url = resolve_url(base_url, "/v1/models")
     started_at = time.perf_counter()
@@ -437,7 +571,7 @@ async def proxy_models(payload: dict[str, Any]) -> dict[str, Any]:
         raise upstream_error(raw, "获取模型列表失败。", response.status_code)
 
     return {
-        "models": parse_model_ids(raw),
+        "models": filter_model_ids_for_capability(parse_model_ids(raw), str(payload.get("capability") or "")),
         "durationMs": duration_ms,
         "raw": raw,
     }
@@ -446,10 +580,20 @@ async def proxy_models(payload: dict[str, Any]) -> dict[str, Any]:
 @app.post("/api/proxy/test")
 async def proxy_test(
     payload: dict[str, Any],
+    request: Request,
     current_user: User | None = Depends(get_optional_current_user),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
     _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
+    check_rate_limit(
+        limiter=rate_limiter,
+        request=request,
+        settings=settings,
+        bucket="model-test",
+        limit=settings.rate_limit_model_test_per_window,
+        user_id=current_user.id if current_user else "",
+    )
     if payload.get("subModelId") and not current_user:
         raise HTTPException(status_code=401, detail={"message": "请先登录。"})
     if payload.get("subModelId") and current_user:
@@ -500,10 +644,20 @@ async def proxy_test(
 @app.post("/api/proxy/text")
 async def proxy_text(
     payload: dict[str, Any],
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User | None = Depends(get_optional_current_user),
+    settings: Settings = Depends(get_settings),
     _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
+    check_rate_limit(
+        limiter=rate_limiter,
+        request=request,
+        settings=settings,
+        bucket="generation-text",
+        limit=settings.rate_limit_generation_per_window,
+        user_id=current_user.id if current_user else "",
+    )
     model_group = sub_model = None
     conversation = None
     user_prompt = ""
@@ -643,10 +797,20 @@ async def proxy_text(
 @app.post("/api/proxy/image")
 async def proxy_image(
     payload: dict[str, Any],
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User | None = Depends(get_optional_current_user),
+    settings: Settings = Depends(get_settings),
     _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
+    check_rate_limit(
+        limiter=rate_limiter,
+        request=request,
+        settings=settings,
+        bucket="generation-image",
+        limit=settings.rate_limit_generation_per_window,
+        user_id=current_user.id if current_user else "",
+    )
     model_group = sub_model = None
     conversation = None
     if payload.get("subModelId") and not current_user:
@@ -784,10 +948,20 @@ async def proxy_image(
 @app.post("/api/proxy/video/create")
 async def proxy_video_create(
     payload: dict[str, Any],
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User | None = Depends(get_optional_current_user),
+    settings: Settings = Depends(get_settings),
     _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
+    check_rate_limit(
+        limiter=rate_limiter,
+        request=request,
+        settings=settings,
+        bucket="generation-video",
+        limit=settings.rate_limit_generation_per_window,
+        user_id=current_user.id if current_user else "",
+    )
     model_group = sub_model = None
     conversation = None
     if payload.get("subModelId") and not current_user:
@@ -920,12 +1094,23 @@ async def proxy_video_create(
 @app.post("/api/proxy/video/query")
 async def proxy_video_query(
     payload: dict[str, Any],
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User | None = Depends(get_optional_current_user),
+    settings: Settings = Depends(get_settings),
     _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
+    check_rate_limit(
+        limiter=rate_limiter,
+        request=request,
+        settings=settings,
+        bucket="generation-video-query",
+        limit=settings.rate_limit_generation_per_window,
+        user_id=current_user.id if current_user else "",
+    )
     model_group = None
     sub_model = None
+    conversation_id = str(payload.get("conversationId") or "").strip()
     if payload.get("subModelId") and not current_user:
         raise HTTPException(status_code=401, detail={"message": "请先登录。"})
     if payload.get("subModelId") and current_user:
@@ -942,13 +1127,55 @@ async def proxy_video_query(
         raise HTTPException(status_code=400, detail={"message": "缺少任务 ID。"})
 
     target_url = resolve_url(base_url, resolve_video_query_path(adapter, task_id))
+    started_at = time.perf_counter()
     response, raw = await forward_json("GET", target_url, api_key)
+    duration_ms = elapsed_ms(started_at)
 
     if not response.is_success or not isinstance(raw, dict):
-        raise upstream_error(raw, "任务查询失败。", response.status_code)
+        message = pick_error_message(raw, "任务查询失败。")
+        failed_message = None
+        conversation = None
+        if current_user and model_group and sub_model:
+            if conversation_id:
+                conversation = get_conversation(db, current_user, conversation_id)
+                failed_message = add_message(
+                    db,
+                    conversation,
+                    current_user,
+                    role="assistant",
+                    capability="video",
+                    content=task_id,
+                    status="error",
+                    error_message=message,
+                    can_retry=True,
+                    model_group_id=model_group.id,
+                    sub_model_id=sub_model.id,
+                    request={"taskId": task_id},
+                    response=raw,
+                )
+            record_call_log(
+                db,
+                user=current_user,
+                model_group_id=model_group.id,
+                sub_model_id=sub_model.id,
+                capability="video",
+                endpoint="/api/proxy/video/query",
+                status="error",
+                duration_ms=duration_ms,
+                error_message=message,
+            )
+        detail = upstream_error(raw, "任务查询失败。", response.status_code).detail
+        if conversation and failed_message and current_user:
+            db.commit()
+            refreshed = reload_conversation(db, current_user, conversation.id)
+            detail = {
+                **detail,
+                "conversation": serialize_conversation(refreshed).model_dump(mode="json"),
+                "assistantMessage": serialize_message(failed_message).model_dump(mode="json"),
+            }
+        raise HTTPException(status_code=response.status_code or 500, detail=detail)
 
     result = pick_video_query_payload(raw, task_id)
-    conversation_id = str(payload.get("conversationId") or "").strip()
     if (
         current_user
         and model_group
@@ -984,6 +1211,18 @@ async def proxy_video_query(
         refreshed = reload_conversation(db, current_user, conversation.id)
         result["conversation"] = serialize_conversation(refreshed).model_dump()
         result["assistantMessage"] = serialize_message(assistant_message).model_dump()
+        record_call_log(
+            db,
+            user=current_user,
+            model_group_id=model_group.id,
+            sub_model_id=sub_model.id,
+            capability="video",
+            endpoint="/api/proxy/video/query",
+            status="success",
+            duration_ms=duration_ms,
+            prompt_summary=task_id,
+            usage=None,
+        )
 
     return result
 
@@ -991,12 +1230,32 @@ async def proxy_video_query(
 @app.post("/api/proxy/upload/presign")
 async def proxy_upload_presign(
     payload: dict[str, Any],
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User | None = Depends(get_optional_current_user),
+    settings: Settings = Depends(get_settings),
     _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
+    check_rate_limit(
+        limiter=rate_limiter,
+        request=request,
+        settings=settings,
+        bucket="upload",
+        limit=settings.rate_limit_upload_per_window,
+        user_id=current_user.id if current_user else "",
+    )
     if payload.get("subModelId") and not current_user:
         raise HTTPException(status_code=401, detail={"message": "请先登录。"})
+    file_name = str(payload.get("fileName") or "upload.bin")
+    content_type = str(payload.get("contentType") or "application/octet-stream")
+    if settings.object_storage_enabled:
+        return create_presigned_put_url(
+            settings=settings,
+            file_name=file_name,
+            content_type=content_type,
+            expires_in=900,
+        )
+
     if payload.get("subModelId") and current_user:
         _model_group, _sub_model, api_key_record, api_key = get_sub_model_for_user(db, current_user, str(payload["subModelId"]))
         base_url = api_key_record.base_url
@@ -1004,8 +1263,8 @@ async def proxy_upload_presign(
         base_url, api_key = validate_config(payload.get("config"))
     target_url = resolve_url(base_url, "/api/upload/presign")
     body = {
-        "file_name": payload.get("fileName") or "upload.bin",
-        "content_type": payload.get("contentType") or "application/octet-stream",
+        "file_name": file_name,
+        "content_type": content_type,
         "expires_in": 900,
     }
     response, raw = await forward_json("POST", target_url, api_key, body)

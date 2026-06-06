@@ -25,6 +25,7 @@ from app.main import app  # noqa: E402
 def setup_function() -> None:
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
+    main_module.rate_limiter.clear()
 
 
 def login(client: TestClient, user_id: str) -> None:
@@ -139,6 +140,12 @@ def test_text_proxy_records_successful_conversation_message(monkeypatch) -> None
     assert payload["assistantMessage"]["content"].startswith("# 标题")
     messages = client.get(f"/api/conversations/{payload['conversation']['id']}").json()["conversation"]["messages"]
     assert [message["role"] for message in messages] == ["user", "assistant"]
+
+    summary = client.get("/api/calls/summary")
+    assert summary.status_code == 200
+    assert summary.json()["summary"]["total"] == 1
+    assert summary.json()["summary"]["success"] == 1
+    assert summary.json()["summary"]["byCapability"]["text"]["success"] == 1
 
 
 def test_text_proxy_extracts_content_from_part_array(monkeypatch) -> None:
@@ -456,6 +463,69 @@ def test_video_create_and_query_record_playable_asset(monkeypatch) -> None:
     assert queried.json()["assistantMessage"]["assets"][0]["url"] == "https://cdn.example.com/video.mp4"
 
 
+def test_video_query_validation_messages_are_readable() -> None:
+    client = TestClient(app)
+    login(client, "alice")
+    response = client.post(
+        "/api/proxy/video/query",
+        headers=csrf_headers(client),
+        json={"config": {"baseUrl": "https://token.example.com", "apiKey": "sk-test"}, "taskId": "task-1"},
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"]["message"] == "缺少视频适配器。"
+
+    response = client.post(
+        "/api/proxy/video/query",
+        headers=csrf_headers(client),
+        json={"config": {"baseUrl": "https://token.example.com", "apiKey": "sk-test"}, "adapter": "video-unified-generic"},
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"]["message"] == "缺少任务 ID。"
+
+
+def test_video_query_failure_records_retryable_message(monkeypatch) -> None:
+    async def fake_forward_json(method, url, api_key, body=None):
+        if method == "POST":
+            return httpx.Response(200, json={"id": "task-failed", "status": "processing"}), {
+                "id": "task-failed",
+                "status": "processing",
+            }
+        return httpx.Response(500, json={"error": {"message": "Video provider failed"}}), {
+            "error": {"message": "Video provider failed"}
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+    sub_model_id = create_model(client, "video", "video-unified-generic", "seedance-2.0")
+
+    created = client.post(
+        "/api/proxy/video/create",
+        headers=csrf_headers(client),
+        json={"subModelId": sub_model_id, "requestBody": {"prompt": "failed video"}},
+    )
+    assert created.status_code == 200
+    conversation_id = created.json()["conversation"]["id"]
+
+    queried = client.post(
+        "/api/proxy/video/query",
+        headers=csrf_headers(client),
+        json={
+            "subModelId": sub_model_id,
+            "conversationId": conversation_id,
+            "taskId": "task-failed",
+        },
+    )
+
+    assert queried.status_code == 500
+    detail = queried.json()["detail"]
+    assert detail["message"] == "Video provider failed"
+    assert detail["assistantMessage"]["status"] == "error"
+    assert detail["assistantMessage"]["canRetry"] is True
+    conversation = client.get(f"/api/conversations/{conversation_id}").json()["conversation"]
+    assert conversation["messages"][-1]["errorMessage"] == "Video provider failed"
+
+
 def test_upload_presign_can_use_saved_sub_model_credentials(monkeypatch) -> None:
     async def fake_forward_json(method, url, api_key, body=None):
         assert method == "POST"
@@ -502,6 +572,41 @@ def test_upload_presign_can_use_saved_sub_model_credentials(monkeypatch) -> None
 
     assert response.status_code == 200
     assert response.json()["publicUrl"] == "https://cdn.example.com/reference.png"
+
+
+def test_upload_presign_uses_configured_object_storage(monkeypatch) -> None:
+    async def fail_if_forwarded(method, url, api_key, body=None):
+        raise AssertionError("object storage uploads should not forward to model provider")
+
+    monkeypatch.setattr(main_module, "forward_json", fail_if_forwarded)
+    settings = main_module.get_settings()
+    monkeypatch.setattr(settings, "object_storage_enabled", True)
+    monkeypatch.setattr(settings, "object_storage_endpoint_url", "https://oss.example.com")
+    monkeypatch.setattr(settings, "object_storage_bucket", "genstudio")
+    monkeypatch.setattr(settings, "object_storage_region", "auto")
+    monkeypatch.setattr(settings, "object_storage_access_key_id", "access-key")
+    monkeypatch.setattr(settings, "object_storage_secret_access_key", "secret-key")
+    monkeypatch.setattr(settings, "object_storage_public_base_url", "https://cdn.example.com/genstudio")
+    monkeypatch.setattr(settings, "object_storage_key_prefix", "user-uploads")
+
+    client = TestClient(app)
+    login(client, "alice")
+
+    response = client.post(
+        "/api/proxy/upload/presign",
+        headers=csrf_headers(client),
+        json={"fileName": "reference image.png", "contentType": "image/png"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["method"] == "PUT"
+    assert payload["contentType"] == "image/png"
+    assert payload["objectKey"].startswith("user-uploads/uploads/")
+    assert payload["objectKey"].endswith("reference-image.png")
+    assert payload["publicUrl"].startswith("https://cdn.example.com/genstudio/user-uploads/uploads/")
+    assert payload["uploadUrl"].startswith("https://oss.example.com/genstudio/user-uploads/uploads/")
+    assert "X-Amz-Signature=" in payload["uploadUrl"]
 
 
 def test_seedance_video_prompt_uses_text_content_for_title(monkeypatch) -> None:

@@ -6,6 +6,7 @@ import tempfile
 
 from fastapi.testclient import TestClient
 import httpx
+import pytest
 from sqlalchemy import text
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -18,14 +19,16 @@ os.environ["DATABASE_URL"] = f"sqlite:///{db_path}"
 os.environ["GENSTUDIO_SECRET_KEY"] = "test-secret"
 
 from app.database import Base, SessionLocal, engine  # noqa: E402
+from app.config import Settings  # noqa: E402
 import app.main as main_module  # noqa: E402
 from app.main import app  # noqa: E402
-from app.proxy_utils import build_test_body  # noqa: E402
+from app.proxy_utils import build_test_body, filter_model_ids_for_capability  # noqa: E402
 
 
 def setup_function() -> None:
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
+    main_module.rate_limiter.clear()
 
 
 def csrf_headers(client: TestClient) -> dict[str, str]:
@@ -334,6 +337,82 @@ def test_image_proxy_test_uses_provider_safe_default_size() -> None:
     assert body["size"] == "1024x1024"
 
 
+def test_model_ids_are_filtered_by_requested_capability() -> None:
+    ids = [
+        "gpt-5.5",
+        "gpt-image-2",
+        "doubao-seedance-2-0-260128",
+        "text-embedding-3-small",
+    ]
+
+    assert filter_model_ids_for_capability(ids, "text") == ["gpt-5.5"]
+    assert filter_model_ids_for_capability(ids, "image") == ["gpt-image-2"]
+    assert filter_model_ids_for_capability(ids, "video") == ["doubao-seedance-2-0-260128"]
+
+
+def test_production_settings_reject_insecure_launch_defaults() -> None:
+    settings = Settings(
+        environment="production",
+        secret_key="dev-genstudio-secret-change-me",
+        cookie_secure=False,
+        enable_dev_login=True,
+        auto_create_tables=True,
+        frontend_url="http://127.0.0.1:5173",
+        official_auth_exchange_url="",
+        official_auth_client_secret="",
+        cors_origins=["http://127.0.0.1:5173", "https://studio.cylonai.cn"],
+        object_storage_enabled=False,
+        object_storage_public_base_url="",
+        object_storage_endpoint_url="",
+        object_storage_bucket="",
+        object_storage_access_key_id="",
+        object_storage_secret_access_key="",
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        settings.validate_startup()
+
+    message = str(exc_info.value)
+    assert "GENSTUDIO_SECRET_KEY" in message
+    assert "GENSTUDIO_COOKIE_SECURE" in message
+    assert "GENSTUDIO_ENABLE_DEV_LOGIN" in message
+    assert "GENSTUDIO_AUTO_CREATE_TABLES" in message
+    assert "OFFICIAL_AUTH_EXCHANGE_URL" in message
+    assert "GENSTUDIO_CORS_ORIGINS" in message
+    assert "OBJECT_STORAGE_ENABLED" in message
+    assert "OBJECT_STORAGE_PUBLIC_BASE_URL" in message
+    assert "OBJECT_STORAGE_ENDPOINT_URL" in message
+    assert "OBJECT_STORAGE_BUCKET" in message
+    assert "OBJECT_STORAGE_ACCESS_KEY_ID" in message
+    assert "OBJECT_STORAGE_SECRET_ACCESS_KEY" in message
+
+
+def test_production_settings_accept_hardened_studio_domain_config() -> None:
+    settings = Settings(
+        environment="production",
+        secret_key="prod-secret-" + "x" * 48,
+        cookie_secure=True,
+        enable_dev_login=False,
+        auto_create_tables=False,
+        frontend_url="https://studio.cylonai.cn",
+        official_auth_exchange_url="https://www.cylonai.cn/api/oauth/exchange",
+        official_auth_client_id="genstudio",
+        official_auth_client_secret="official-secret",
+        cors_origins=["https://studio.cylonai.cn"],
+        object_storage_enabled=True,
+        object_storage_public_base_url="https://oss.example.com/genstudio",
+        object_storage_endpoint_url="https://oss.example.com",
+        object_storage_region="auto",
+        object_storage_bucket="genstudio",
+        object_storage_access_key_id="access-key",
+        object_storage_secret_access_key="secret-key",
+    )
+
+    settings.validate_startup()
+    assert settings.is_production is True
+    assert settings.cors_origins == ["https://studio.cylonai.cn"]
+
+
 def test_public_auth_callback_exchanges_code_sets_cookie_and_redirects(monkeypatch) -> None:
     async def fake_exchange(code, settings):
         assert code == "official-code"
@@ -355,6 +434,61 @@ def test_public_auth_callback_exchanges_code_sets_cookie_and_redirects(monkeypat
     assert "genstudio_session=" in response.headers["set-cookie"]
 
 
+def test_public_auth_callback_accepts_safe_next_path(monkeypatch) -> None:
+    async def fake_exchange(code, settings):
+        assert code == "official-code"
+        return {
+            "external_user_id": "official-3",
+            "email": "safe-next@example.com",
+            "phone": "",
+            "nickname": "Safe Next",
+            "avatar_url": "",
+        }
+
+    monkeypatch.setattr(main_module, "exchange_official_code", fake_exchange)
+    client = TestClient(app, follow_redirects=False)
+
+    response = client.get("/auth/callback?code=official-code&next=%2F%23%2Fvideos")
+
+    assert response.status_code == 307
+    assert response.headers["location"] == "http://127.0.0.1:5173/#/videos"
+    assert "genstudio_session=" in response.headers["set-cookie"]
+
+
+def test_public_auth_callback_rejects_external_next_redirect(monkeypatch) -> None:
+    async def fake_exchange(code, settings):
+        return {
+            "external_user_id": "official-4",
+            "email": "unsafe-next@example.com",
+            "phone": "",
+            "nickname": "Unsafe Next",
+            "avatar_url": "",
+        }
+
+    monkeypatch.setattr(main_module, "exchange_official_code", fake_exchange)
+    client = TestClient(app, follow_redirects=False)
+
+    response = client.get("/auth/callback?code=official-code&next=https%3A%2F%2Fevil.example%2F")
+
+    assert response.status_code == 307
+    assert response.headers["location"] == "http://127.0.0.1:5173/#/settings"
+    assert "evil.example" not in response.headers["location"]
+
+
+def test_public_auth_callback_failure_redirects_to_friendly_error_page(monkeypatch) -> None:
+    async def fake_exchange(code, settings):
+        raise main_module.HTTPException(status_code=401, detail={"message": "code 已失效"})
+
+    monkeypatch.setattr(main_module, "exchange_official_code", fake_exchange)
+    client = TestClient(app, follow_redirects=False)
+
+    response = client.get("/auth/callback?code=expired-code")
+
+    assert response.status_code == 307
+    assert response.headers["location"].startswith("http://127.0.0.1:5173/#/auth-error")
+    assert "genstudio_session=" not in response.headers.get("set-cookie", "")
+
+
 def test_public_auth_callback_accepts_local_dev_code_when_official_exchange_is_unconfigured() -> None:
     client = TestClient(app, follow_redirects=False)
 
@@ -368,3 +502,14 @@ def test_public_auth_callback_accepts_local_dev_code_when_official_exchange_is_u
     assert me.status_code == 200
     assert me.json()["user"]["externalUserId"] == "dev-alice"
     assert me.json()["user"]["nickname"] == "alice"
+
+
+def test_dev_auth_code_is_rejected_when_dev_login_is_disabled() -> None:
+    settings = Settings(enable_dev_login=False, official_auth_exchange_url="")
+
+    with pytest.raises(main_module.HTTPException) as exc_info:
+        import anyio
+
+        anyio.run(main_module.exchange_official_code, "dev:alice", settings)
+
+    assert exc_info.value.status_code == 404

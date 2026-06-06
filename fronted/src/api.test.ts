@@ -9,6 +9,14 @@ describe("upload helpers", () => {
     expect(shouldFallbackToLocalReference(new ApiRequestError("Invalid API key", 401))).toBe(false);
     expect(shouldFallbackToLocalReference(new Error("network failed"))).toBe(false);
   });
+
+  it("does not fall back to local references in production", () => {
+    const error = new ApiRequestError("Invalid URL (POST /api/upload/presign)", 500);
+
+    expect(shouldFallbackToLocalReference(error, { mode: "production" })).toBe(false);
+    expect(shouldFallbackToLocalReference(error, { env: "production" })).toBe(false);
+    expect(shouldFallbackToLocalReference(error, { mode: "development" })).toBe(true);
+  });
 });
 
 describe("auth api helpers", () => {

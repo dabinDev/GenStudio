@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import asyncio
 from typing import Any
 from urllib.parse import quote, urljoin, urlparse, urlunparse
 
 import httpx
 from fastapi import HTTPException
+
+from app.config import get_settings
 
 
 def validate_config(config: dict[str, Any] | None) -> tuple[str, str]:
@@ -133,6 +136,33 @@ def parse_model_ids(raw: dict[str, Any]) -> list[str]:
     return [item["id"] for item in data if isinstance(item, dict) and isinstance(item.get("id"), str)]
 
 
+def filter_model_ids_for_capability(model_ids: list[str], capability: str | None) -> list[str]:
+    if not capability:
+        return model_ids
+    lower_capability = capability.lower()
+    image_tokens = ("image", "img", "gpt-image", "seedream", "sdxl", "flux", "dall-e")
+    video_tokens = ("video", "seedance", "veo", "kling", "vidu", "jimeng", "runway", "wan")
+    embedding_tokens = ("embedding", "embed", "rerank")
+
+    def has_any(value: str, tokens: tuple[str, ...]) -> bool:
+        lower = value.lower()
+        return any(token in lower for token in tokens)
+
+    if lower_capability == "image":
+        filtered = [model_id for model_id in model_ids if has_any(model_id, image_tokens)]
+    elif lower_capability == "video":
+        filtered = [model_id for model_id in model_ids if has_any(model_id, video_tokens)]
+    elif lower_capability == "text":
+        filtered = [
+            model_id
+            for model_id in model_ids
+            if not has_any(model_id, image_tokens) and not has_any(model_id, video_tokens) and not has_any(model_id, embedding_tokens)
+        ]
+    else:
+        filtered = model_ids
+    return filtered or model_ids
+
+
 def resolve_test_path(capability: str, adapter: str | None = None) -> str:
     if capability == "text":
         return "/v1/chat/completions"
@@ -254,14 +284,29 @@ async def forward_json(
     api_key: str,
     body: dict[str, Any] | None = None,
 ) -> tuple[httpx.Response, dict[str, Any] | str]:
-    async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
-        response = await client.request(
-            method,
-            url,
-            headers={
-                **auth_headers(api_key),
-                **({"Content-Type": "application/json"} if body is not None else {}),
-            },
-            json=body,
-        )
-    return response, await parse_upstream(response)
+    settings = get_settings()
+    attempts = max(1, settings.upstream_retry_attempts)
+    last_error: httpx.HTTPError | None = None
+    async with httpx.AsyncClient(timeout=settings.request_timeout_seconds, trust_env=False) as client:
+        for attempt in range(attempts):
+            try:
+                response = await client.request(
+                    method,
+                    url,
+                    headers={
+                        **auth_headers(api_key),
+                        **({"Content-Type": "application/json"} if body is not None else {}),
+                    },
+                    json=body,
+                )
+            except httpx.HTTPError as exc:
+                last_error = exc
+                if attempt < attempts - 1:
+                    await asyncio.sleep(0.2 * (attempt + 1))
+                    continue
+                raise
+            if response.status_code >= 500 and attempt < attempts - 1:
+                await asyncio.sleep(0.2 * (attempt + 1))
+                continue
+            return response, await parse_upstream(response)
+    raise last_error or RuntimeError("Upstream request failed.")

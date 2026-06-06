@@ -71,8 +71,9 @@ import {
   getModelWizardStep,
   resolveDraftPrimaryModel,
 } from "./modelWizard";
+import { shouldShowDevAuth } from "./env";
 
-type ViewName = "auth" | "text" | "images" | "videos" | "settings" | "profile";
+type ViewName = "auth" | "auth-error" | "text" | "images" | "videos" | "settings" | "profile";
 type SidebarFilter = Capability | "all";
 type VideoMode = "text" | "reference" | "start-end";
 type DialogMode = "create" | "edit";
@@ -157,6 +158,7 @@ const store = useWorkbenchStore();
 const auth = useAuthStore();
 const view = ref<ViewName>(getViewFromHash());
 const sidebarFilter = ref<SidebarFilter>("all");
+const showDevAuth = shouldShowDevAuth();
 const devAuthCode = ref("dev:alice");
 const authMode = ref<"login" | "register">("login");
 const authForm = reactive({
@@ -174,6 +176,12 @@ const profileForm = reactive({
   avatarUrl: "",
   error: "",
   success: "",
+});
+
+const toastState = reactive({
+  visible: false,
+  message: "",
+  type: "success" as "success" | "error" | "info",
 });
 
 const textModelId = ref("");
@@ -422,8 +430,9 @@ watch(
 
 function getViewFromHash(): ViewName {
   const hash = window.location.hash.replace(/^#\/?/, "");
-  if (hash === "auth" || hash === "images" || hash === "videos" || hash === "settings" || hash === "profile" || hash === "text") {
-    return hash;
+  const route = hash.split("?", 1)[0];
+  if (route === "auth" || route === "auth-error" || route === "images" || route === "videos" || route === "settings" || route === "profile" || route === "text") {
+    return route;
   }
   return "images";
 }
@@ -433,6 +442,23 @@ function navigate(nextView: ViewName) {
   closeModelSelect();
   window.location.hash = `/${nextView}`;
   view.value = nextView;
+}
+
+function authErrorMessage(): string {
+  const query = window.location.hash.split("?", 2)[1] || "";
+  const params = new URLSearchParams(query);
+  return params.get("message") || "授权登录失败，请返回官网重新进入创意工坊。";
+}
+
+function showToast(message: string, type: "success" | "error" | "info" = "success") {
+  toastState.message = message;
+  toastState.type = type;
+  toastState.visible = true;
+  window.setTimeout(() => {
+    if (toastState.message === message) {
+      toastState.visible = false;
+    }
+  }, 2600);
 }
 
 function syncInitialModels() {
@@ -859,8 +885,10 @@ async function handleProfileSave() {
       avatarUrl: profileForm.avatarUrl,
     });
     profileForm.success = "个人信息已保存。";
+    showToast("Profile saved");
   } catch (error) {
     profileForm.error = error instanceof Error ? error.message : "保存个人信息失败。";
+    showToast(profileForm.error, "error");
   }
 }
 
@@ -1511,6 +1539,7 @@ async function setPrimaryModel(modelId: string, model: ModelDefinition, setting:
     try {
       await setServerPrimaryModel(model.id, target.id);
       await refreshServerModels();
+      showToast("Primary model updated");
       settingsState.modelListState[model.id] = {
         loading: false,
         error: "",
@@ -1533,6 +1562,7 @@ async function setPrimaryModel(modelId: string, model: ModelDefinition, setting:
     ...setting,
     modelNameOverride: modelId,
   });
+  showToast("Primary model updated");
 }
 
 function openCreateDialog() {
@@ -1590,12 +1620,14 @@ async function saveDialog() {
       settingsState.testState[draft.id] = { ...createIdleState<TestRequestResult>() };
       closeModelSelect();
       settingsState.dialogOpen = false;
+      showToast("Model saved");
     } catch (error) {
       settingsState.testState[draft.id] = {
         loading: false,
         error: error instanceof Error ? error.message : "保存模型失败。",
         result: null,
       };
+      showToast(settingsState.testState[draft.id].error, "error");
     }
     return;
   }
@@ -1629,6 +1661,7 @@ async function saveDialog() {
     availableModels: draft.availableModels,
   });
   closeModelSelect();
+  showToast("Model saved");
   settingsState.dialogOpen = false;
 }
 
@@ -1647,12 +1680,14 @@ async function fetchModelList(model: ModelDefinition, setting: ModelSetting) {
           raw: {},
         },
       };
+      showToast("Model list updated");
     } catch (error) {
       settingsState.modelListState[model.id] = {
         loading: false,
         error: error instanceof Error ? error.message : "获取可用模型失败。",
         result: null,
       };
+      showToast(settingsState.modelListState[model.id].error, "error");
     }
     return;
   }
@@ -1664,6 +1699,7 @@ async function fetchModelList(model: ModelDefinition, setting: ModelSetting) {
   try {
       const result = await postProxy<AvailableModelsResult>("/api/proxy/models", {
       config: { baseUrl: setting.baseUrl, apiKey: setting.apiKey },
+      capability: model.capability,
     });
     const isDraftModel = model.id === settingsState.draft.id;
     const updatedDraft = isDraftModel ? applyFetchedModelsToDraft(settingsState.draft, result.models) : null;
@@ -1676,6 +1712,7 @@ async function fetchModelList(model: ModelDefinition, setting: ModelSetting) {
     if (updatedDraft) {
       settingsState.draft = updatedDraft;
       syncDraftAutoName();
+      showToast("Model list fetched");
       return;
     }
     store.updateModelSetting(model.id, {
@@ -1683,12 +1720,14 @@ async function fetchModelList(model: ModelDefinition, setting: ModelSetting) {
       availableModels: result.models,
       modelNameOverride: primaryModel,
     });
+    showToast("Model list fetched");
   } catch (error) {
     settingsState.modelListState[model.id] = {
       loading: false,
       error: error instanceof Error ? error.message : "获取可用模型失败。",
       result: null,
     };
+      showToast(settingsState.modelListState[model.id].error, "error");
   }
 }
 
@@ -1712,12 +1751,14 @@ async function testModel(model: ModelDefinition, setting: ModelSetting) {
       error: "",
       result: await postProxy<TestRequestResult>("/api/proxy/test", buildModelProxyPayload(model, setting)),
     };
+    showToast("Test succeeded");
   } catch (error) {
     settingsState.testState[model.id] = {
       loading: false,
       error: error instanceof Error ? error.message : "测试请求失败。",
       result: null,
     };
+      showToast(settingsState.testState[model.id].error, "error");
   }
 }
 
@@ -1851,7 +1892,7 @@ async function batchDelete() {
         </div>
       </div>
 
-      <section v-if="view !== 'auth' && view !== 'settings' && view !== 'profile'" class="studio-panel">
+      <section v-if="view !== 'auth' && view !== 'auth-error' && view !== 'settings' && view !== 'profile'" class="studio-panel">
         <div class="studio-canvas">
           <aside v-if="conversationState.listOpen" class="history-drawer">
             <div class="history-drawer-head">
@@ -1859,6 +1900,7 @@ async function batchDelete() {
               <button class="button-secondary icon-button" @click="conversationState.listOpen = false">关闭</button>
             </div>
             <div v-if="conversationState.error" class="inline-message inline-danger">{{ conversationState.error }}</div>
+            <div v-if="!conversationState.loading && !visibleConversations.length" class="history-empty">No saved conversations yet.</div>
             <button
               v-for="conversation in visibleConversations"
               :key="conversation.id"
@@ -2269,7 +2311,7 @@ async function batchDelete() {
 
             <div v-if="authForm.error || auth.state.error" class="inline-message inline-danger">{{ authForm.error || auth.state.error }}</div>
 
-            <div class="auth-code-block">
+            <div v-if="showDevAuth" class="auth-code-block">
               <div>
                 <strong>官网授权 code</strong>
                 <span>用于官网登录后跳转到子站自动登录。</span>
@@ -2285,6 +2327,25 @@ async function batchDelete() {
                 <button class="button-secondary" type="button" :disabled="auth.state.loading" @click="handleDevLogin">开发登录</button>
               </div>
             </div>
+            <div v-else class="auth-code-block auth-official-only">
+              <div>
+                <strong>Official SSO</strong>
+                <span>Open GenStudio from the official site. The callback URL is /auth/callback?code=xxx.</span>
+              </div>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <section v-else-if="view === 'auth-error'" class="auth-page">
+        <section class="auth-panel auth-error-panel">
+          <div class="auth-copy">
+            <div>
+              <p class="eyebrow">SSO</p>
+              <h2>Authorization failed</h2>
+              <p class="muted">{{ authErrorMessage() }}</p>
+            </div>
+            <button @click="navigate('auth')">Back to login</button>
           </div>
         </section>
       </section>
@@ -2354,7 +2415,7 @@ async function batchDelete() {
           <div v-if="profileForm.success" class="inline-message inline-success">{{ profileForm.success }}</div>
         </section>
 
-        <section class="settings-list-panel profile-actions">
+        <section v-if="showDevAuth" class="settings-list-panel profile-actions">
           <div>
             <h3>官网授权回跳</h3>
             <p class="muted">正式环境使用官网生成的短期 code 访问 /auth/callback?code=xxx；本地测试可输入 dev:alice、dev:bob、dev:carol 模拟多个用户。</p>
@@ -2371,6 +2432,15 @@ async function batchDelete() {
             <button class="button-secondary" @click="devAuthCode = 'dev:bob'">Bob</button>
             <button class="button-secondary" @click="devAuthCode = 'dev:carol'">Carol</button>
             <button class="button-secondary" @click="refreshConversations">刷新历史</button>
+          </div>
+        </section>
+        <section v-else class="settings-list-panel profile-actions">
+          <div>
+            <h3>Official SSO callback</h3>
+            <p class="muted">Production login is created by the official site redirecting to /auth/callback?code=xxx. Manual code entry is disabled outside development.</p>
+          </div>
+          <div class="settings-row-actions">
+            <button class="button-secondary" @click="refreshConversations">Refresh history</button>
           </div>
         </section>
       </section>
@@ -2761,5 +2831,6 @@ async function batchDelete() {
         </section>
       </div>
     </main>
+    <div v-if="toastState.visible" :class="['app-toast', `app-toast-${toastState.type}`]">{{ toastState.message }}</div>
   </div>
 </template>

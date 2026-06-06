@@ -46,11 +46,14 @@ import {
   generatedAssetReferenceFileName,
   getModelIdentifierError,
   getMissingModelMessage,
+  imageGenerationSummary,
+  mediaPreviewActionLabels,
   pickPrimaryModel,
   renderMarkdownPreview,
   resolveModelName,
   shouldResetConversationForModelSwitch,
   shortText,
+  videoGenerationSummary,
 } from "./utils";
 import {
   applyFetchedModelsToDraft,
@@ -67,6 +70,7 @@ type ViewName = "text" | "images" | "videos" | "settings" | "profile";
 type SidebarFilter = Capability | "all";
 type VideoMode = "text" | "reference" | "start-end";
 type DialogMode = "create" | "edit";
+type ComposerPopover = "image-settings" | "image-advanced" | "video-mode" | "video-settings" | "video-advanced" | null;
 
 interface ImageResult {
   images: Array<{ src: string; revisedPrompt?: string }>;
@@ -187,6 +191,7 @@ const videoState = reactive({
   prompt: "",
   aspectRatio: "16:9",
   duration: "5",
+  count: "1",
   size: "720P",
   resolution: "720p",
   audio: false,
@@ -225,6 +230,25 @@ const conversationState = reactive({
   streamingMessageId: "",
   streamingContent: "",
 });
+
+const mediaPreviewState = reactive({
+  asset: null as ConversationAsset | null,
+});
+
+const composerUiState = reactive({
+  popover: null as ComposerPopover,
+});
+
+const IMAGE_RATIO_OPTIONS = ["1:1", "16:9", "9:16", "4:3", "3:4"];
+const IMAGE_RESOLUTION_OPTIONS = ["1k", "2k", "4k"];
+const VIDEO_RATIO_OPTIONS = ["21:9", "3:4", "4:3", "1:1", "16:9", "9:16"];
+const VIDEO_RESOLUTION_OPTIONS = ["480p", "720p", "1080p"];
+const VIDEO_DURATION_OPTIONS = ["4", "5", "8", "10", "12", "15"];
+const VIDEO_MODE_OPTIONS: Array<{ value: VideoMode; label: string }> = [
+  { value: "text", label: "文生视频" },
+  { value: "reference", label: "全能参考" },
+  { value: "start-end", label: "首尾帧" },
+];
 
 const activeCapability = computed<Capability | null>(() => {
   if (view.value === "images") return "image";
@@ -322,6 +346,24 @@ const draftSaveDisabledTitle = computed(() =>
   canSaveDraft() ? "保存模型配置" : `请先填写：${draftMissingFieldsText.value || "必填信息"}`,
 );
 
+const imageControlSummary = computed(() =>
+  imageGenerationSummary({
+    ratio: imageState.ratio,
+    resolution: imageState.resolution,
+    count: imageState.count,
+  }),
+);
+
+const videoControlSummary = computed(() =>
+  videoGenerationSummary({
+    mode: videoState.mode,
+    aspectRatio: videoState.aspectRatio,
+    resolution: videoState.resolution,
+    duration: videoState.duration,
+    count: videoState.count,
+  }),
+);
+
 onMounted(async () => {
   await initializeSession();
   syncInitialModels();
@@ -345,6 +387,7 @@ function getViewFromHash(): ViewName {
 }
 
 function navigate(nextView: ViewName) {
+  closeComposerPopover();
   window.location.hash = `/${nextView}`;
   view.value = nextView;
 }
@@ -417,6 +460,7 @@ function capabilityToView(capability: Capability): ViewName {
 
 function startNewConversation(nextView: ViewName = view.value) {
   stopActiveRequest();
+  closeComposerPopover();
   conversationState.current = null;
   conversationState.streamingMessageId = "";
   conversationState.streamingContent = "";
@@ -427,6 +471,41 @@ function startNewConversation(nextView: ViewName = view.value) {
   if (nextView === "settings" || nextView === "profile") {
     navigate("images");
   }
+}
+
+function toggleComposerPopover(popover: Exclude<ComposerPopover, null>) {
+  composerUiState.popover = composerUiState.popover === popover ? null : popover;
+}
+
+function closeComposerPopover() {
+  composerUiState.popover = null;
+}
+
+function selectVideoMode(mode: VideoMode) {
+  videoState.mode = mode;
+  if (mode === "text") {
+    videoState.unifiedImages = [];
+  }
+  if (supportsUnifiedAdapter(activeModel.value?.adapter) && mode !== "start-end") {
+    videoState.unifiedImages = videoState.unifiedImages.slice(0, getUnifiedImageLimit(mode));
+  }
+  closeComposerPopover();
+}
+
+function videoModeLabel(mode: VideoMode): string {
+  return VIDEO_MODE_OPTIONS.find((item) => item.value === mode)?.label || "文生视频";
+}
+
+function removeImageReference(assetId: string) {
+  imageState.references = imageState.references.filter((asset) => asset.id !== assetId);
+}
+
+function removeUnifiedVideoReference(assetId: string) {
+  videoState.unifiedImages = videoState.unifiedImages.filter((asset) => asset.id !== assetId);
+}
+
+function removeSeedanceReference(assetId: string) {
+  videoState.seedanceReferences = videoState.seedanceReferences.filter((asset) => asset.id !== assetId);
 }
 
 async function toggleHistoryDrawer() {
@@ -502,6 +581,14 @@ function formatConversationTime(value: string): string {
   return time.toLocaleString("zh-CN", { hour12: false });
 }
 
+function openMediaPreview(asset: ConversationAsset) {
+  mediaPreviewState.asset = asset;
+}
+
+function closeMediaPreview() {
+  mediaPreviewState.asset = null;
+}
+
 function useGeneratedAsset(asset: ConversationAsset) {
   const reference: UploadedAsset = {
     id: asset.id,
@@ -517,6 +604,12 @@ function useGeneratedAsset(asset: ConversationAsset) {
       : "请基于引用图片继续编辑，保持主体一致，输出一个新的创意版本。";
     navigate("images");
   }
+}
+
+function editSelectedAsset(asset: ConversationAsset) {
+  useGeneratedAsset(asset);
+  imageState.prompt = "请基于当前选中的图片局部或主体继续编辑，保留关键构图，输出一个新的创意版本。";
+  closeMediaPreview();
 }
 
 async function retryMessage(message: ConversationMessage) {
@@ -1571,11 +1664,14 @@ async function batchDelete() {
               </div>
               <div v-if="message.assets.length" class="message-assets">
                 <article v-for="asset in message.assets" :key="asset.id" class="message-asset-card">
-                  <img v-if="asset.assetType === 'image'" :src="asset.url" alt="生成图片" />
+                  <button v-if="asset.assetType === 'image'" class="asset-preview-trigger" @click="openMediaPreview(asset)">
+                    <img :src="asset.url" alt="生成图片" />
+                  </button>
                   <video v-else-if="asset.assetType === 'video'" :src="asset.url" :poster="asset.thumbnailUrl || undefined" controls playsinline preload="metadata" />
                   <div class="asset-actions">
-                    <a class="button-link" :href="asset.url" target="_blank" rel="noreferrer">查看</a>
+                    <button class="button-link" @click="openMediaPreview(asset)">查看</button>
                     <button v-if="asset.assetType === 'image'" class="button-secondary" @click="useGeneratedAsset(asset)">引用编辑</button>
+                    <button v-if="asset.assetType === 'image'" class="button-secondary" @click="editSelectedAsset(asset)">选取编辑</button>
                     <a class="button-secondary" :href="asset.url" download target="_blank" rel="noreferrer">保存</a>
                   </div>
                 </article>
@@ -1651,34 +1747,88 @@ async function batchDelete() {
               </label>
               <textarea v-model="imageState.prompt" class="composer-input" placeholder="描述你想要生成的图片内容，支持上传参考图片进行图生图，最多14张" />
             </div>
+            <div v-if="imageState.references.length" class="reference-strip">
+              <article v-for="asset in imageState.references" :key="asset.id" class="reference-thumb">
+                <img :src="asset.localPreviewUrl" :alt="asset.fileName" />
+                <button title="移除参考图" @click="removeImageReference(asset.id)">×</button>
+              </article>
+            </div>
             <div class="composer-footer-bar">
-              <div class="composer-quick-fields composer-quick-fields-wide">
+              <div class="composer-quick-fields composer-quick-fields-wide composer-control-cluster">
                 <label class="composer-keyword-compact"><span>关键词</span><input v-model="imageState.keywords" placeholder="玻璃感、青柠色" /></label>
-                <label><span>数量</span><input v-model="imageState.count" /></label>
-                <label><span>尺寸</span><input v-model="imageState.size" /></label>
-                <label><span>比例</span><select v-model="imageState.ratio"><option>1:1</option><option>16:9</option><option>9:16</option><option>4:3</option><option>3:4</option></select></label>
-                <label><span>分辨率</span><select v-model="imageState.resolution"><option>1k</option><option>2k</option><option>4k</option></select></label>
-                <label><span>质量</span><select v-model="imageState.quality"><option value="auto">价格优先</option><option value="standard">标准</option><option value="hd">高清优先</option></select></label>
+                <div class="composer-popover-anchor">
+                  <button
+                    :class="['composer-pill', composerUiState.popover === 'image-settings' ? 'composer-pill-active' : '']"
+                    :aria-expanded="composerUiState.popover === 'image-settings'"
+                    @click="toggleComposerPopover('image-settings')"
+                  >
+                    {{ imageControlSummary }}
+                  </button>
+                  <section v-if="composerUiState.popover === 'image-settings'" class="composer-popover image-options-popover">
+                    <div class="popover-title-row"><strong>图片参数</strong><button class="button-link" @click="closeComposerPopover">关闭</button></div>
+                    <div class="popover-section">
+                      <span>图片比例</span>
+                      <div class="segmented-grid">
+                        <button
+                          v-for="ratio in IMAGE_RATIO_OPTIONS"
+                          :key="ratio"
+                          :class="['segmented-option', imageState.ratio === ratio ? 'segmented-option-active' : '']"
+                          @click="imageState.ratio = ratio"
+                        >
+                          {{ ratio }}
+                        </button>
+                      </div>
+                    </div>
+                    <div class="popover-section">
+                      <span>分辨率</span>
+                      <div class="segmented-grid segmented-grid-compact">
+                        <button
+                          v-for="resolution in IMAGE_RESOLUTION_OPTIONS"
+                          :key="resolution"
+                          :class="['segmented-option', imageState.resolution === resolution ? 'segmented-option-active' : '']"
+                          @click="imageState.resolution = resolution"
+                        >
+                          {{ resolution }}
+                        </button>
+                      </div>
+                    </div>
+                    <div class="popover-section popover-two-col">
+                      <label><span>生成数量</span><input v-model="imageState.count" type="number" min="1" max="4" /></label>
+                      <label><span>尺寸</span><input v-model="imageState.size" placeholder="1024x1024" /></label>
+                    </div>
+                  </section>
+                </div>
+                <div class="composer-popover-anchor">
+                  <button
+                    :class="['composer-pill', composerUiState.popover === 'image-advanced' ? 'composer-pill-active' : '']"
+                    :aria-expanded="composerUiState.popover === 'image-advanced'"
+                    @click="toggleComposerPopover('image-advanced')"
+                  >
+                    参考与高级 JSON
+                  </button>
+                  <section v-if="composerUiState.popover === 'image-advanced'" class="composer-popover composer-popover-wide">
+                    <div class="popover-title-row"><strong>参考与高级 JSON</strong><button class="button-link" @click="closeComposerPopover">关闭</button></div>
+                    <div v-if="imageState.references.length" class="asset-grid asset-grid-compact">
+                      <article v-for="asset in imageState.references" :key="asset.id" class="asset-card">
+                        <img :src="asset.localPreviewUrl" :alt="asset.fileName" />
+                        <div class="asset-card-body"><strong>{{ asset.fileName }}</strong><p class="muted">{{ asset.publicUrl }}</p></div>
+                      </article>
+                    </div>
+                    <p v-else class="muted">还没有上传参考图。</p>
+                    <label class="field field-full"><span>高级参数 JSON</span><textarea v-model="imageState.extraJson" /></label>
+                  </section>
+                </div>
               </div>
               <button class="composer-submit-button" :disabled="imageState.loading" @click="handleImageSubmit">生成</button>
             </div>
-            <details class="composer-details">
-              <summary>参考图与高级 JSON</summary>
-              <div class="asset-grid" v-if="imageState.references.length">
-                <article v-for="asset in imageState.references" :key="asset.id" class="asset-card">
-                  <img :src="asset.localPreviewUrl" :alt="asset.fileName" />
-                  <div class="asset-card-body"><strong>{{ asset.fileName }}</strong><p class="muted">{{ asset.publicUrl }}</p></div>
-                </article>
-              </div>
-              <label class="field field-full"><span>高级参数 JSON</span><textarea v-model="imageState.extraJson" /></label>
-            </details>
             <div v-if="imageState.error" class="inline-message inline-danger">{{ imageState.error }}</div>
           </div>
 
           <div v-if="view === 'videos'" class="composer-surface">
             <div class="composer-attach-row composer-video-attach-row">
-              <label v-if="supportsUnifiedAdapter(activeModel?.adapter)" class="button-secondary composer-attach-button">
-                {{ videoState.mode === "text" ? "无需素材" : videoState.uploading ? "上传中" : "+ 参考图" }}
+              <button v-if="supportsUnifiedAdapter(activeModel?.adapter) && videoState.mode === 'text'" class="button-secondary composer-attach-button" disabled>无需素材</button>
+              <label v-else-if="supportsUnifiedAdapter(activeModel?.adapter)" class="button-secondary composer-attach-button">
+                {{ videoState.uploading ? "上传中" : "+ 参考图" }}
                 <input hidden type="file" accept="image/png,image/jpeg,image/jpg,image/webp" :multiple="videoState.mode === 'start-end'" @change="(event) => uploadVideoFiles(event, 'unified')" />
               </label>
               <label v-if="activeModel?.adapter === 'video-seedance' && videoState.mode === 'reference'" class="button-secondary composer-attach-button">
@@ -1691,26 +1841,126 @@ async function batchDelete() {
               </div>
               <textarea v-model="videoState.prompt" class="composer-input" placeholder="描述主体动作、镜头运动、时长、风格和节奏..." />
             </div>
+            <div v-if="videoState.unifiedImages.length || videoState.seedanceFirst || videoState.seedanceLast || videoState.seedanceReferences.length" class="reference-strip">
+              <article v-for="asset in videoState.unifiedImages" :key="asset.id" class="reference-thumb">
+                <img :src="asset.localPreviewUrl" :alt="asset.fileName" />
+                <button title="移除参考图" @click="removeUnifiedVideoReference(asset.id)">×</button>
+              </article>
+              <article v-if="videoState.seedanceFirst" class="reference-thumb">
+                <img :src="videoState.seedanceFirst.localPreviewUrl" :alt="videoState.seedanceFirst.fileName" />
+                <span>首帧</span>
+                <button title="移除首帧" @click="videoState.seedanceFirst = null">×</button>
+              </article>
+              <article v-if="videoState.seedanceLast" class="reference-thumb">
+                <img :src="videoState.seedanceLast.localPreviewUrl" :alt="videoState.seedanceLast.fileName" />
+                <span>尾帧</span>
+                <button title="移除尾帧" @click="videoState.seedanceLast = null">×</button>
+              </article>
+              <article v-for="asset in videoState.seedanceReferences" :key="asset.id" class="reference-thumb">
+                <img :src="asset.localPreviewUrl" :alt="asset.fileName" />
+                <button title="移除参考图" @click="removeSeedanceReference(asset.id)">×</button>
+              </article>
+            </div>
             <div class="composer-footer-bar">
-              <div class="composer-quick-fields composer-quick-fields-wide">
-                <label><span>模式</span><select v-model="videoState.mode"><option value="text">纯文生</option><option value="reference">参考图</option><option value="start-end">首尾帧</option></select></label>
+              <div class="composer-quick-fields composer-quick-fields-wide composer-control-cluster">
+                <div class="composer-popover-anchor">
+                  <button
+                    :class="['composer-pill', composerUiState.popover === 'video-mode' ? 'composer-pill-active' : '']"
+                    :aria-expanded="composerUiState.popover === 'video-mode'"
+                    @click="toggleComposerPopover('video-mode')"
+                  >
+                    {{ videoModeLabel(videoState.mode) }}
+                  </button>
+                  <section v-if="composerUiState.popover === 'video-mode'" class="composer-popover composer-menu-popover">
+                    <strong>生成模式</strong>
+                    <button
+                      v-for="mode in VIDEO_MODE_OPTIONS"
+                      :key="mode.value"
+                      :class="['composer-menu-option', videoState.mode === mode.value ? 'composer-menu-option-active' : '']"
+                      @click="selectVideoMode(mode.value)"
+                    >
+                      {{ mode.label }}
+                    </button>
+                  </section>
+                </div>
                 <label class="composer-keyword-compact"><span>关键词</span><input v-model="videoState.keywords" /></label>
-                <label><span>比例</span><select v-model="videoState.aspectRatio"><option>16:9</option><option>9:16</option><option>1:1</option><option>4:3</option><option>21:9</option></select></label>
-                <label><span>时长</span><input v-model="videoState.duration" /></label>
-                <label><span>分辨率</span><select v-model="videoState.resolution"><option>540p</option><option>720p</option><option>1080p</option></select></label>
-                <label><span>种子</span><input v-model="videoState.seed" /></label>
-                <label class="composer-check-field"><input v-model="videoState.audio" type="checkbox" /><span>音频</span></label>
+                <div class="composer-popover-anchor">
+                  <button
+                    :class="['composer-pill', composerUiState.popover === 'video-settings' ? 'composer-pill-active' : '']"
+                    :aria-expanded="composerUiState.popover === 'video-settings'"
+                    @click="toggleComposerPopover('video-settings')"
+                  >
+                    {{ videoControlSummary }}
+                  </button>
+                  <section v-if="composerUiState.popover === 'video-settings'" class="composer-popover video-options-popover">
+                    <div class="popover-title-row"><strong>视频参数</strong><button class="button-link" @click="closeComposerPopover">关闭</button></div>
+                    <div class="popover-section">
+                      <span>视频比例</span>
+                      <div class="segmented-grid">
+                        <button
+                          v-for="ratio in VIDEO_RATIO_OPTIONS"
+                          :key="ratio"
+                          :class="['segmented-option', videoState.aspectRatio === ratio ? 'segmented-option-active' : '']"
+                          @click="videoState.aspectRatio = ratio"
+                        >
+                          {{ ratio }}
+                        </button>
+                      </div>
+                    </div>
+                    <div class="popover-section">
+                      <span>分辨率</span>
+                      <div class="segmented-grid segmented-grid-compact">
+                        <button
+                          v-for="resolution in VIDEO_RESOLUTION_OPTIONS"
+                          :key="resolution"
+                          :class="['segmented-option', videoState.resolution === resolution ? 'segmented-option-active' : '']"
+                          @click="videoState.resolution = resolution"
+                        >
+                          {{ resolution }}
+                        </button>
+                      </div>
+                    </div>
+                    <div class="popover-section">
+                      <span>视频时长</span>
+                      <div class="segmented-grid segmented-grid-duration">
+                        <button
+                          v-for="duration in VIDEO_DURATION_OPTIONS"
+                          :key="duration"
+                          :class="['segmented-option', videoState.duration === duration ? 'segmented-option-active' : '']"
+                          @click="videoState.duration = duration"
+                        >
+                          {{ duration }}秒
+                        </button>
+                      </div>
+                    </div>
+                    <div class="popover-section popover-two-col">
+                      <label><span>生成数量</span><input v-model="videoState.count" type="number" min="1" max="4" /></label>
+                      <label><span>种子</span><input v-model="videoState.seed" /></label>
+                    </div>
+                    <label class="checkbox-inline"><input v-model="videoState.audio" type="checkbox" />生成音频</label>
+                  </section>
+                </div>
+                <div class="composer-popover-anchor">
+                  <button
+                    :class="['composer-pill', composerUiState.popover === 'video-advanced' ? 'composer-pill-active' : '']"
+                    :aria-expanded="composerUiState.popover === 'video-advanced'"
+                    @click="toggleComposerPopover('video-advanced')"
+                  >
+                    参考与高级 JSON
+                  </button>
+                  <section v-if="composerUiState.popover === 'video-advanced'" class="composer-popover composer-popover-wide">
+                    <div class="popover-title-row"><strong>参考与高级 JSON</strong><button class="button-link" @click="closeComposerPopover">关闭</button></div>
+                    <label class="field field-full"><span>高级参数 JSON</span><textarea v-model="videoState.extraJson" /></label>
+                    <label class="checkbox-inline"><input v-model="videoState.autoPoll" type="checkbox" />自动轮询</label>
+                    <label class="checkbox-inline"><input v-model="videoState.upsample" type="checkbox" />增强清晰度</label>
+                  </section>
+                </div>
               </div>
               <div class="composer-video-actions">
                 <button class="composer-submit-button" :disabled="videoState.loading" @click="handleVideoCreate">创建</button>
                 <button class="button-secondary" :disabled="videoState.querying || !videoState.createResult?.taskId" @click="() => handleVideoQuery()">查询</button>
               </div>
             </div>
-            <details class="composer-details">
-              <summary>素材与高级 JSON</summary>
-              <label class="field field-full"><span>高级参数 JSON</span><textarea v-model="videoState.extraJson" /></label>
-              <label class="checkbox-inline"><input v-model="videoState.autoPoll" type="checkbox" />自动轮询</label>
-            </details>
             <div v-if="videoState.error" class="inline-message inline-danger">{{ videoState.error }}</div>
           </div>
         </div>
@@ -1945,6 +2195,51 @@ async function batchDelete() {
           </section>
         </div>
       </section>
+
+      <div v-if="mediaPreviewState.asset" class="media-preview-backdrop" @click.self="closeMediaPreview">
+        <section class="media-preview-panel" aria-label="媒体预览">
+          <div class="media-preview-stage">
+            <img
+              v-if="mediaPreviewState.asset.assetType === 'image'"
+              :src="mediaPreviewState.asset.url"
+              alt="生成图片预览"
+            />
+            <video
+              v-else-if="mediaPreviewState.asset.assetType === 'video'"
+              :src="mediaPreviewState.asset.url"
+              :poster="mediaPreviewState.asset.thumbnailUrl || undefined"
+              controls
+              autoplay
+              playsinline
+            />
+          </div>
+          <div class="media-preview-actions">
+            <div>
+              <strong>{{ generatedAssetReferenceFileName(mediaPreviewState.asset) }}</strong>
+              <span>{{ mediaPreviewState.asset.assetType === "image" ? "图片创作结果" : "视频创作结果" }}</span>
+            </div>
+            <div class="media-preview-button-row">
+              <span class="sr-only">{{ mediaPreviewActionLabels(mediaPreviewState.asset.assetType).join("、") }}</span>
+              <a class="button-secondary" :href="mediaPreviewState.asset.url" download target="_blank" rel="noreferrer">保存</a>
+              <button
+                v-if="mediaPreviewState.asset.assetType === 'image'"
+                class="button-secondary"
+                @click="useGeneratedAsset(mediaPreviewState.asset); closeMediaPreview()"
+              >
+                引用编辑
+              </button>
+              <button
+                v-if="mediaPreviewState.asset.assetType === 'image'"
+                class="button-secondary"
+                @click="editSelectedAsset(mediaPreviewState.asset)"
+              >
+                选取编辑
+              </button>
+              <button class="button-link" @click="closeMediaPreview">关闭</button>
+            </div>
+          </div>
+        </section>
+      </div>
     </main>
   </div>
 </template>

@@ -7,10 +7,13 @@ import {
   findPromptBeforeMessage,
   getModelIdentifierError,
   getMissingModelMessage,
+  imageGenerationSummary,
+  mediaPreviewActionLabels,
   pickPrimaryModel,
   renderMarkdownPreview,
   resolveModelName,
   shouldResetConversationForModelSwitch,
+  videoGenerationSummary,
 } from "./utils";
 import type { ConversationDefinition, ConversationMessage } from "./types";
 
@@ -121,6 +124,27 @@ describe("conversation helpers", () => {
         url: "https://cdn.example.com/clip.mp4?download=1",
       }),
     ).toBe("clip.mp4");
+  });
+
+  it("keeps generated image previews in the creation workflow with editing actions", () => {
+    expect(mediaPreviewActionLabels("image")).toEqual(["保存", "引用编辑", "选取编辑", "关闭"]);
+    expect(mediaPreviewActionLabels("video")).toEqual(["保存", "关闭"]);
+  });
+
+  it("summarizes generation controls without scheduler priority labels", () => {
+    const imageSummary = imageGenerationSummary({ ratio: "16:9", resolution: "2k", count: "1" });
+    const videoSummary = videoGenerationSummary({
+      mode: "reference",
+      aspectRatio: "9:16",
+      resolution: "720p",
+      duration: "5",
+      count: "1",
+    });
+
+    expect(imageSummary).toBe("16:9  2k  1张");
+    expect(videoSummary).toBe("全能参考  9:16  720p  5秒  1条");
+    expect(`${imageSummary} ${videoSummary}`).not.toContain("价格优先");
+    expect(`${imageSummary} ${videoSummary}`).not.toContain("质量优先");
   });
 
   it("creates a visible local conversation when a proxy response has no server conversation", () => {

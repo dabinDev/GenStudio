@@ -153,37 +153,73 @@ export async function setServerPrimaryModel(modelId: string, subModelId: string)
   return payload.model;
 }
 
+export async function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+        return;
+      }
+      reject(new Error("读取本地文件失败。"));
+    });
+    reader.addEventListener("error", () => reject(new Error("读取本地文件失败。")));
+    reader.readAsDataURL(file);
+  });
+}
+
+export function shouldFallbackToLocalReference(error: unknown): boolean {
+  if (!(error instanceof ApiRequestError)) return false;
+  if (error.status === 404 || error.status === 405 || error.status >= 500) return true;
+  const message = error.message.toLowerCase();
+  return message.includes("invalid url") || message.includes("presign") || message.includes("上传地址");
+}
+
 export async function uploadAsset(
   file: File,
   config: { baseUrl?: string; apiKey?: string; subModelId?: string },
 ): Promise<UploadedAsset> {
-  const presign = await postProxy<{
-    uploadUrl: string;
-    method: string;
-    publicUrl: string;
-    objectKey: string;
-    contentType: string;
-  }>("/api/proxy/upload/presign", {
-    ...(config.subModelId ? { subModelId: config.subModelId } : { config }),
-    fileName: file.name,
-    contentType: file.type || "application/octet-stream",
-  });
+  try {
+    const presign = await postProxy<{
+      uploadUrl: string;
+      method: string;
+      publicUrl: string;
+      objectKey: string;
+      contentType: string;
+    }>("/api/proxy/upload/presign", {
+      ...(config.subModelId ? { subModelId: config.subModelId } : { config }),
+      fileName: file.name,
+      contentType: file.type || "application/octet-stream",
+    });
 
-  const uploadResponse = await fetch(presign.uploadUrl, {
-    method: presign.method || "PUT",
-    headers: { "Content-Type": file.type || presign.contentType },
-    body: file,
-  });
+    const uploadResponse = await fetch(presign.uploadUrl, {
+      method: presign.method || "PUT",
+      headers: { "Content-Type": file.type || presign.contentType },
+      body: file,
+    });
 
-  if (!uploadResponse.ok) {
-    throw new Error("文件上传到预签名地址失败。");
+    if (!uploadResponse.ok) {
+      throw new Error("文件上传到预签名地址失败。");
+    }
+
+    return {
+      id: crypto.randomUUID(),
+      fileName: file.name,
+      publicUrl: presign.publicUrl,
+      contentType: file.type || presign.contentType,
+      localPreviewUrl: URL.createObjectURL(file),
+    };
+  } catch (error) {
+    if (!shouldFallbackToLocalReference(error)) {
+      throw error;
+    }
+    const dataUrl = await fileToDataUrl(file);
+    return {
+      id: crypto.randomUUID(),
+      fileName: file.name,
+      publicUrl: dataUrl,
+      contentType: file.type || "application/octet-stream",
+      localPreviewUrl: dataUrl,
+    };
   }
-
-  return {
-    id: crypto.randomUUID(),
-    fileName: file.name,
-    publicUrl: presign.publicUrl,
-    contentType: file.type || presign.contentType,
-    localPreviewUrl: URL.createObjectURL(file),
-  };
 }

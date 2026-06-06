@@ -239,3 +239,29 @@ export function generatedAssetReferenceFileName(asset: { assetType: string; url:
   if (fileName) return fileName;
   return asset.assetType === "video" ? "generated-video.mp4" : "generated-image.png";
 }
+
+export function mediaPreviewActionLabels(assetType: string): string[] {
+  if (assetType === "image") {
+    return ["保存", "引用编辑", "选取编辑", "关闭"];
+  }
+  return ["保存", "关闭"];
+}
+
+export function imageGenerationSummary(input: {
+  ratio: string;
+  resolution: string;
+  count: string;
+}): string {
+  return [input.ratio, input.resolution, `${input.count || "1"}张`].join("  ");
+}
+
+export function videoGenerationSummary(input: {
+  mode: string;
+  aspectRatio: string;
+  resolution: string;
+  duration: string;
+  count?: string;
+}): string {
+  const modeLabel = input.mode === "reference" ? "全能参考" : input.mode === "start-end" ? "首尾帧" : "文生视频";
+  return [modeLabel, input.aspectRatio, input.resolution, `${input.duration || "5"}秒`, `${input.count || "1"}条`].join("  ");
+}

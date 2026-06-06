@@ -6,6 +6,7 @@ import {
   generatedAssetReferenceFileName,
   findPromptBeforeMessage,
   getModelIdentifierError,
+  getMissingModelMessage,
   pickPrimaryModel,
   renderMarkdownPreview,
   resolveModelName,
@@ -54,8 +55,14 @@ describe("model selection helpers", () => {
   });
 
   it("rejects URL-shaped model identifiers before saving or testing", () => {
-    expect(getModelIdentifierError("https://token.cylonai.cn")).toContain("baseURL");
+    expect(getModelIdentifierError("https://token.example.com")).toContain("baseURL");
     expect(getModelIdentifierError("gpt-4o")).toBe("");
+  });
+
+  it("explains why a send action cannot run without a matching model", () => {
+    expect(getMissingModelMessage("text")).toContain("文案创作模型");
+    expect(getMissingModelMessage("image")).toContain("图片创作模型");
+    expect(getMissingModelMessage("video")).toContain("视频创作模型");
   });
 });
 

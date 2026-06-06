@@ -868,8 +868,18 @@ async def proxy_video_query(
 
 
 @app.post("/api/proxy/upload/presign")
-async def proxy_upload_presign(payload: dict[str, Any]) -> dict[str, Any]:
-    base_url, api_key = validate_config(payload.get("config"))
+async def proxy_upload_presign(
+    payload: dict[str, Any],
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_current_user),
+) -> dict[str, Any]:
+    if payload.get("subModelId") and not current_user:
+        raise HTTPException(status_code=401, detail={"message": "请先登录。"})
+    if payload.get("subModelId") and current_user:
+        _model_group, _sub_model, api_key_record, api_key = get_sub_model_for_user(db, current_user, str(payload["subModelId"]))
+        base_url = api_key_record.base_url
+    else:
+        base_url, api_key = validate_config(payload.get("config"))
     target_url = resolve_url(base_url, "/api/upload/presign")
     body = {
         "file_name": payload.get("fileName") or "upload.bin",

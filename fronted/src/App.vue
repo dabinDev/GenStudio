@@ -45,6 +45,7 @@ import {
   findPromptBeforeMessage,
   generatedAssetReferenceFileName,
   getModelIdentifierError,
+  getMissingModelMessage,
   pickPrimaryModel,
   renderMarkdownPreview,
   resolveModelName,
@@ -146,6 +147,7 @@ const store = useWorkbenchStore();
 const auth = useAuthStore();
 const view = ref<ViewName>(getViewFromHash());
 const sidebarFilter = ref<SidebarFilter>("all");
+const devAuthCode = ref("dev:alice");
 
 const textModelId = ref("");
 const imageModelId = ref("");
@@ -587,6 +589,12 @@ async function handleDevLogin() {
   }
 }
 
+function handleAuthCodeLogin() {
+  const code = devAuthCode.value.trim();
+  if (!code) return;
+  window.location.href = `/auth/callback?code=${encodeURIComponent(code)}`;
+}
+
 function getSetting(modelId: string): ModelSetting {
   return (
     store.state.modelSettings[modelId] || {
@@ -671,6 +679,14 @@ function buildModelProxyPayload(
   };
 }
 
+function buildUploadConfig(model: ModelDefinition, setting: ModelSetting): { baseUrl?: string; apiKey?: string; subModelId?: string } {
+  const primarySubModel = getPrimarySubModel(model);
+  if (model.serverManaged && primarySubModel) {
+    return { subModelId: primarySubModel.id };
+  }
+  return { baseUrl: setting.baseUrl, apiKey: setting.apiKey };
+}
+
 function conversationIdFor(capability: Capability): string {
   return conversationState.current?.capability === capability ? conversationState.current.id : "";
 }
@@ -688,7 +704,10 @@ function getModelReadyError(model: ModelDefinition, setting: ModelSetting): stri
 async function handleTextSubmit() {
   const model = activeModel.value;
   const setting = activeSetting.value;
-  if (!model || !setting) return;
+  if (!model || !setting) {
+    textState.error = getMissingModelMessage("text");
+    return;
+  }
 
   const finalPrompt = combinePrompt(textState.keywords, textState.prompt);
   if (!finalPrompt.trim()) {
@@ -758,13 +777,14 @@ async function handleTextSubmit() {
 
 async function handleImageUpload(event: Event) {
   const input = event.target as HTMLInputElement;
+  const model = activeModel.value;
   const setting = activeSetting.value;
-  if (!setting || !input.files?.length) return;
+  if (!model || !setting || !input.files?.length) return;
   imageState.uploading = true;
   imageState.error = "";
   try {
     const uploaded = await Promise.all(
-      Array.from(input.files).map((file) => uploadAsset(file, setting)),
+      Array.from(input.files).map((file) => uploadAsset(file, buildUploadConfig(model, setting))),
     );
     imageState.references.push(...uploaded);
   } catch (error) {
@@ -778,7 +798,10 @@ async function handleImageUpload(event: Event) {
 async function handleImageSubmit() {
   const model = activeModel.value;
   const setting = activeSetting.value;
-  if (!model || !setting) return;
+  if (!model || !setting) {
+    imageState.error = getMissingModelMessage("image");
+    return;
+  }
 
   const finalPrompt = combinePrompt(imageState.keywords, imageState.prompt);
   if (!finalPrompt.trim()) {
@@ -848,14 +871,15 @@ function getUnifiedImageLimit(mode: VideoMode): number {
 
 async function uploadVideoFiles(event: Event, target: "unified" | "first" | "last" | "seedanceRef") {
   const input = event.target as HTMLInputElement;
+  const model = activeModel.value;
   const setting = activeSetting.value;
-  if (!setting || !input.files?.length) return;
+  if (!model || !setting || !input.files?.length) return;
 
   videoState.uploading = true;
   videoState.error = "";
   try {
     const uploaded = await Promise.all(
-      Array.from(input.files).map((file) => uploadAsset(file, setting)),
+      Array.from(input.files).map((file) => uploadAsset(file, buildUploadConfig(model, setting))),
     );
     if (target === "unified") {
       videoState.unifiedImages = uploaded.slice(0, getUnifiedImageLimit(videoState.mode));
@@ -953,7 +977,10 @@ function buildVideoRequestBody(model: ModelDefinition, modelName: string, finalP
 async function handleVideoCreate() {
   const model = activeModel.value;
   const setting = activeSetting.value;
-  if (!model || !setting) return;
+  if (!model || !setting) {
+    videoState.error = getMissingModelMessage("video");
+    return;
+  }
 
   const finalPrompt = combinePrompt(videoState.keywords, videoState.prompt);
   if (!finalPrompt.trim()) {
@@ -1439,14 +1466,6 @@ async function batchDelete() {
       </div>
 
       <div class="model-list">
-        <div class="model-list-special">
-          <div class="model-avatar">M</div>
-          <div class="model-info">
-            <strong>多模型协作</strong>
-            <span>多个模型同时调试，对比响应结果</span>
-          </div>
-          <span class="model-tag tag-duo">多模型</span>
-        </div>
         <div class="model-divider"><span>模型列表</span></div>
         <button
           v-for="model in filteredModels"
@@ -1733,12 +1752,19 @@ async function batchDelete() {
         <section class="settings-list-panel profile-actions">
           <div>
             <h3>官网授权回跳</h3>
-            <p class="muted">正式环境使用官网生成的短期 code 访问 /auth/callback?code=xxx；本地测试可用 dev:alice、dev:bob、dev:carol 模拟三个用户。</p>
+            <p class="muted">正式环境使用官网生成的短期 code 访问 /auth/callback?code=xxx；本地测试可输入 dev:alice、dev:bob、dev:carol 模拟多个用户。</p>
+          </div>
+          <div class="auth-code-form">
+            <label class="field">
+              <span>授权 code</span>
+              <input v-model="devAuthCode" placeholder="dev:alice" @keyup.enter="handleAuthCodeLogin" />
+            </label>
+            <button @click="handleAuthCodeLogin">授权登录</button>
           </div>
           <div class="settings-row-actions">
-            <a class="button-link" href="/auth/callback?code=dev:alice">模拟 Alice</a>
-            <a class="button-link" href="/auth/callback?code=dev:bob">模拟 Bob</a>
-            <a class="button-link" href="/auth/callback?code=dev:carol">模拟 Carol</a>
+            <button class="button-secondary" @click="devAuthCode = 'dev:alice'">Alice</button>
+            <button class="button-secondary" @click="devAuthCode = 'dev:bob'">Bob</button>
+            <button class="button-secondary" @click="devAuthCode = 'dev:carol'">Carol</button>
             <button class="button-secondary" @click="refreshConversations">刷新历史</button>
           </div>
         </section>
@@ -1913,6 +1939,9 @@ async function batchDelete() {
             </div>
             <div v-if="settingsState.modelListState[settingsState.draft.id]?.error" class="inline-message inline-danger">{{ settingsState.modelListState[settingsState.draft.id].error }}</div>
             <div v-if="settingsState.testState[settingsState.draft.id]?.error" class="inline-message inline-danger">{{ settingsState.testState[settingsState.draft.id].error }}</div>
+            <div v-else-if="settingsState.testState[settingsState.draft.id]?.result" class="inline-message inline-success">
+              测试成功，耗时 {{ settingsState.testState[settingsState.draft.id].result?.durationMs }}ms。
+            </div>
           </section>
         </div>
       </section>

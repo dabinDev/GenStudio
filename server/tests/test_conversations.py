@@ -360,6 +360,53 @@ def test_video_create_and_query_record_playable_asset(monkeypatch) -> None:
     assert queried.json()["assistantMessage"]["assets"][0]["url"] == "https://cdn.example.com/video.mp4"
 
 
+def test_upload_presign_can_use_saved_sub_model_credentials(monkeypatch) -> None:
+    async def fake_forward_json(method, url, api_key, body=None):
+        assert method == "POST"
+        assert url == "https://token.example.com/api/upload/presign"
+        assert api_key == "sk-test"
+        assert body["file_name"] == "reference.png"
+        return httpx.Response(
+            200,
+            json={
+                "success": True,
+                "data": {
+                    "upload_url": "https://upload.example.com/reference.png",
+                    "method": "PUT",
+                    "public_url": "https://cdn.example.com/reference.png",
+                    "object_key": "reference.png",
+                    "content_type": "image/png",
+                },
+            },
+        ), {
+            "success": True,
+            "data": {
+                "upload_url": "https://upload.example.com/reference.png",
+                "method": "PUT",
+                "public_url": "https://cdn.example.com/reference.png",
+                "object_key": "reference.png",
+                "content_type": "image/png",
+            },
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+    sub_model_id = create_model(client, "image", "image-openai", "gpt-image-2")
+
+    response = client.post(
+        "/api/proxy/upload/presign",
+        json={
+            "subModelId": sub_model_id,
+            "fileName": "reference.png",
+            "contentType": "image/png",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["publicUrl"] == "https://cdn.example.com/reference.png"
+
+
 def test_seedance_video_prompt_uses_text_content_for_title(monkeypatch) -> None:
     async def fake_forward_json(method, url, api_key, body=None):
         return httpx.Response(200, json={"id": "task-2", "status": "processing"}), {

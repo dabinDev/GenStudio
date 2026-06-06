@@ -155,7 +155,7 @@ export async function setServerPrimaryModel(modelId: string, subModelId: string)
 
 export async function uploadAsset(
   file: File,
-  config: { baseUrl: string; apiKey: string },
+  config: { baseUrl?: string; apiKey?: string; subModelId?: string },
 ): Promise<UploadedAsset> {
   const presign = await postProxy<{
     uploadUrl: string;
@@ -164,7 +164,7 @@ export async function uploadAsset(
     objectKey: string;
     contentType: string;
   }>("/api/proxy/upload/presign", {
-    config,
+    ...(config.subModelId ? { subModelId: config.subModelId } : { config }),
     fileName: file.name,
     contentType: file.type || "application/octet-stream",
   });

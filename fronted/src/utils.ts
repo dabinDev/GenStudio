@@ -46,6 +46,16 @@ export function getModelIdentifierError(value: string): string {
   return "";
 }
 
+export function getMissingModelMessage(capability: Capability): string {
+  if (capability === "text") {
+    return "当前用户还没有可用的文案创作模型，请先在设置里添加并保存一个聊天模型。";
+  }
+  if (capability === "image") {
+    return "当前用户还没有可用的图片创作模型，请先在设置里添加并保存一个生图模型。";
+  }
+  return "当前用户还没有可用的视频创作模型，请先在设置里添加并保存一个视频模型。";
+}
+
 export function shortText(value: string, max = 72): string {
   const text = value.replace(/\s+/g, " ").trim();
   return text.length > max ? `${text.slice(0, max)}...` : text;

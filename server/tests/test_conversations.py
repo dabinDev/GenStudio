@@ -130,6 +130,98 @@ def test_text_proxy_records_successful_conversation_message(monkeypatch) -> None
     assert [message["role"] for message in messages] == ["user", "assistant"]
 
 
+def test_text_proxy_extracts_content_from_part_array(monkeypatch) -> None:
+    async def fake_forward_json(method, url, api_key, body=None):
+        return (
+            httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "content": [
+                                    {"type": "text", "text": "第一段"},
+                                    {"type": "text", "text": "第二段"},
+                                ]
+                            }
+                        }
+                    ]
+                },
+            ),
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": [
+                                {"type": "text", "text": "第一段"},
+                                {"type": "text", "text": "第二段"},
+                            ]
+                        }
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+    sub_model_id = create_text_model(client)
+
+    response = client.post(
+        "/api/proxy/text",
+        json={
+            "subModelId": sub_model_id,
+            "requestBody": {"messages": [{"role": "user", "content": "分段输出"}]},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["content"] == "第一段\n第二段"
+
+
+def test_text_proxy_extracts_content_from_responses_payload(monkeypatch) -> None:
+    async def fake_forward_json(method, url, api_key, body=None):
+        return (
+            httpx.Response(
+                200,
+                json={
+                    "output": [
+                        {
+                            "content": [
+                                {"type": "output_text", "text": "Responses 正文"},
+                            ]
+                        }
+                    ]
+                },
+            ),
+            {
+                "output": [
+                    {
+                        "content": [
+                            {"type": "output_text", "text": "Responses 正文"},
+                        ]
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+    sub_model_id = create_text_model(client)
+
+    response = client.post(
+        "/api/proxy/text",
+        json={
+            "subModelId": sub_model_id,
+            "requestBody": {"messages": [{"role": "user", "content": "responses"}]},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["content"] == "Responses 正文"
+
+
 def test_text_proxy_records_retryable_failed_message(monkeypatch) -> None:
     async def fake_forward_json(method, url, api_key, body=None):
         return httpx.Response(401, json={"error": {"message": "Invalid API key"}}), {

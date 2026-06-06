@@ -62,6 +62,49 @@ def pick_error_message(payload: Any, fallback: str) -> str:
     return fallback
 
 
+def _text_from_value(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        chunks = [_text_from_value(item).strip() for item in value]
+        return "\n".join(chunk for chunk in chunks if chunk)
+    if isinstance(value, dict):
+        for key in ("text", "content", "output_text"):
+            text = _text_from_value(value.get(key))
+            if text:
+                return text
+    return ""
+
+
+def pick_text_content(raw: dict[str, Any]) -> str:
+    choices = raw.get("choices") if isinstance(raw.get("choices"), list) else []
+    for choice in choices:
+        if not isinstance(choice, dict):
+            continue
+        message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+        content = _text_from_value(message.get("content"))
+        if content:
+            return content
+        delta = choice.get("delta") if isinstance(choice.get("delta"), dict) else {}
+        content = _text_from_value(delta.get("content"))
+        if content:
+            return content
+
+    content = _text_from_value(raw.get("output_text"))
+    if content:
+        return content
+
+    output = raw.get("output") if isinstance(raw.get("output"), list) else []
+    for item in output:
+        if not isinstance(item, dict):
+            continue
+        content = _text_from_value(item.get("content"))
+        if content:
+            return content
+
+    return ""
+
+
 def upstream_error(payload: Any, fallback: str, status_code: int = 500) -> HTTPException:
     return HTTPException(
         status_code=status_code or 500,

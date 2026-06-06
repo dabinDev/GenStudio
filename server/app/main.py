@@ -53,6 +53,7 @@ from app.proxy_utils import (
     parse_model_ids,
     pick_task_id,
     pick_error_message,
+    pick_text_content,
     pick_video_query_payload,
     resolve_test_path,
     resolve_url,
@@ -459,9 +460,7 @@ async def proxy_text(
             }
         raise HTTPException(status_code=response.status_code or 500, detail=detail)
 
-    choices = raw.get("choices") if isinstance(raw.get("choices"), list) else []
-    message = choices[0].get("message") if choices and isinstance(choices[0], dict) else {}
-    content = message.get("content") if isinstance(message, dict) and isinstance(message.get("content"), str) else ""
+    content = pick_text_content(raw)
 
     assistant_message = None
     if current_user and model_group and sub_model:

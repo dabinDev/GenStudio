@@ -37,6 +37,18 @@ export function pickPrimaryModel(availableModels: string[], currentModel: string
   return availableModels.includes(current) ? current : availableModels[0];
 }
 
+export function filterModelOptions(options: string[], query: string): string[] {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return options;
+  return options.filter((option) => option.toLowerCase().includes(normalizedQuery));
+}
+
+export function prioritizeModelOptions(options: string[], selectedModel: string): string[] {
+  const selected = selectedModel.trim();
+  if (!selected || !options.includes(selected)) return options;
+  return [selected, ...options.filter((option) => option !== selected)];
+}
+
 export function getModelIdentifierError(value: string): string {
   const model = value.trim();
   if (!model) return "";

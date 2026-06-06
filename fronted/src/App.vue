@@ -51,7 +51,9 @@ import {
   mediaPreviewActionLabels,
   modelDisplayNameForModel,
   modelDisplayNameFromPrimary,
+  filterModelOptions,
   pickPrimaryModel,
+  prioritizeModelOptions,
   renderMarkdownPreview,
   resolveModelName,
   shouldResetConversationForModelSwitch,
@@ -260,6 +262,12 @@ const composerUiState = reactive({
   popover: null as ComposerPopover,
 });
 
+const modelSelectState = reactive({
+  openId: "",
+  query: "",
+  placement: "down" as "down" | "up",
+});
+
 const IMAGE_RATIO_OPTIONS = ["1:1", "16:9", "9:16", "4:3", "3:4"];
 const IMAGE_RESOLUTION_OPTIONS = ["1k", "2k", "4k"];
 const VIDEO_RATIO_OPTIONS = ["21:9", "3:4", "4:3", "1:1", "16:9", "9:16"];
@@ -422,6 +430,7 @@ function getViewFromHash(): ViewName {
 
 function navigate(nextView: ViewName) {
   closeComposerPopover();
+  closeModelSelect();
   window.location.hash = `/${nextView}`;
   view.value = nextView;
 }
@@ -513,6 +522,53 @@ function toggleComposerPopover(popover: Exclude<ComposerPopover, null>) {
 
 function closeComposerPopover() {
   composerUiState.popover = null;
+}
+
+function modelSelectKey(kind: "row" | "draft", id = ""): string {
+  return kind === "draft" ? "draft" : `row:${id}`;
+}
+
+function isModelSelectOpen(key: string): boolean {
+  return modelSelectState.openId === key;
+}
+
+function getModelSelectPlacement(event?: MouseEvent): "down" | "up" {
+  const target = event?.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+  if (!target) return "down";
+  const rect = target.getBoundingClientRect();
+  const spaceBelow = window.innerHeight - rect.bottom;
+  return spaceBelow < 320 && rect.top > spaceBelow ? "up" : "down";
+}
+
+function toggleModelSelect(key: string, event?: MouseEvent) {
+  if (modelSelectState.openId === key) {
+    closeModelSelect();
+    return;
+  }
+  modelSelectState.openId = key;
+  modelSelectState.query = "";
+  modelSelectState.placement = getModelSelectPlacement(event);
+}
+
+function closeModelSelect() {
+  modelSelectState.openId = "";
+  modelSelectState.query = "";
+  modelSelectState.placement = "down";
+}
+
+function filteredModelSelectOptions(options: string[], selectedModel = ""): string[] {
+  return prioritizeModelOptions(filterModelOptions(options, modelSelectState.query), selectedModel);
+}
+
+async function chooseRowPrimaryModel(modelId: string, model: ModelDefinition) {
+  await setPrimaryModel(modelId, model, getSetting(model.id));
+  closeModelSelect();
+}
+
+function chooseDraftPrimaryModel(modelId: string) {
+  settingsState.draft.modelNameOverride = modelId;
+  settingsState.draft.model = modelId;
+  closeModelSelect();
 }
 
 function selectVideoMode(mode: VideoMode) {
@@ -1480,6 +1536,7 @@ async function setPrimaryModel(modelId: string, model: ModelDefinition, setting:
 }
 
 function openCreateDialog() {
+  closeModelSelect();
   settingsState.dialogMode = "create";
   settingsState.draft = createEmptyDraft();
   syncDraftAutoName();
@@ -1487,9 +1544,15 @@ function openCreateDialog() {
 }
 
 function openEditDialog(model: ModelDefinition) {
+  closeModelSelect();
   settingsState.dialogMode = "edit";
   settingsState.draft = createDraftFromModel(model);
   settingsState.dialogOpen = true;
+}
+
+function closeSettingsDialog() {
+  closeModelSelect();
+  settingsState.dialogOpen = false;
 }
 
 async function saveDialog() {
@@ -1525,6 +1588,7 @@ async function saveDialog() {
       }
       await refreshServerModels();
       settingsState.testState[draft.id] = { ...createIdleState<TestRequestResult>() };
+      closeModelSelect();
       settingsState.dialogOpen = false;
     } catch (error) {
       settingsState.testState[draft.id] = {
@@ -1564,6 +1628,7 @@ async function saveDialog() {
     modelNameOverride: draft.modelNameOverride.trim(),
     availableModels: draft.availableModels,
   });
+  closeModelSelect();
   settingsState.dialogOpen = false;
 }
 
@@ -2350,7 +2415,11 @@ async function batchDelete() {
             <article
               v-for="model in store.models.value"
               :key="model.id"
-              :class="['settings-model-row', `settings-model-row-${model.capability}`]"
+              :class="[
+                'settings-model-row',
+                `settings-model-row-${model.capability}`,
+                isModelSelectOpen(modelSelectKey('row', model.id)) ? 'settings-model-row-select-open' : '',
+              ]"
               :data-model-id="model.id"
             >
               <label class="settings-check-cell">
@@ -2364,21 +2433,55 @@ async function batchDelete() {
                 </div>
               </div>
               <div class="settings-primary-model">
-                <label v-if="getAvailableModels(model).length" class="inline-model-select">
-                  <span>主模型</span>
-                  <select
-                    :value="resolveModelName(model, getSetting(model.id))"
-                    @change="(event) => setPrimaryModel((event.target as HTMLSelectElement).value, model, getSetting(model.id))"
+                <div
+                  v-if="getAvailableModels(model).length"
+                  :class="[
+                    'model-select',
+                    'inline-model-select',
+                    isModelSelectOpen(modelSelectKey('row', model.id)) ? 'model-select-open' : '',
+                    isModelSelectOpen(modelSelectKey('row', model.id)) ? `model-select-${modelSelectState.placement}` : '',
+                  ]"
+                  @keydown.escape.stop="closeModelSelect"
+                >
+                  <span class="model-select-label">主模型</span>
+                  <button
+                    type="button"
+                    class="model-select-trigger"
+                    :aria-expanded="isModelSelectOpen(modelSelectKey('row', model.id))"
+                    @click.stop="(event) => toggleModelSelect(modelSelectKey('row', model.id), event)"
                   >
-                    <option
-                      v-for="modelId in getAvailableModels(model)"
-                      :key="modelId"
-                      :value="modelId"
-                    >
-                      {{ modelId }}
-                    </option>
-                  </select>
-                </label>
+                    <span class="model-select-trigger-text">{{ resolveModelName(model, getSetting(model.id)) || "选择主模型" }}</span>
+                    <span class="model-select-trigger-meta">{{ getAvailableModels(model).length }} 项</span>
+                    <span class="model-select-chevron">⌄</span>
+                  </button>
+                  <button
+                    v-if="isModelSelectOpen(modelSelectKey('row', model.id))"
+                    type="button"
+                    class="model-select-scrim"
+                    tabindex="-1"
+                    aria-label="关闭模型选择"
+                    @click="closeModelSelect"
+                  ></button>
+                  <div v-if="isModelSelectOpen(modelSelectKey('row', model.id))" class="model-select-menu" @click.stop>
+                    <label v-if="getAvailableModels(model).length > 8" class="model-select-search">
+                      <span>搜索</span>
+                      <input v-model="modelSelectState.query" placeholder="输入模型名称" @keydown.stop />
+                    </label>
+                    <div class="model-select-list">
+                      <button
+                        v-for="modelId in filteredModelSelectOptions(getAvailableModels(model), resolveModelName(model, getSetting(model.id)))"
+                        :key="modelId"
+                        type="button"
+                        :class="['model-select-option', modelId === resolveModelName(model, getSetting(model.id)) ? 'model-select-option-active' : '']"
+                        @click="chooseRowPrimaryModel(modelId, model)"
+                      >
+                        <span class="model-select-option-name">{{ modelId }}</span>
+                        <span v-if="modelId === resolveModelName(model, getSetting(model.id))" class="model-select-check">✓</span>
+                      </button>
+                      <div v-if="!filteredModelSelectOptions(getAvailableModels(model), resolveModelName(model, getSetting(model.id))).length" class="model-select-empty">没有匹配的模型</div>
+                    </div>
+                  </div>
+                </div>
                 <template v-else>
                   <strong>{{ resolveModelName(model, getSetting(model.id)) || "尚未选择" }}</strong>
                 </template>
@@ -2426,7 +2529,7 @@ async function batchDelete() {
                 <h3>{{ settingsState.dialogMode === "create" ? "添加模型" : "模型配置" }}</h3>
                 <span>填写密钥后先获取可用模型，再选择一个主模型用于创作。</span>
               </div>
-              <button class="button-secondary icon-button" @click="settingsState.dialogOpen = false">关闭</button>
+              <button class="button-secondary icon-button" @click="closeSettingsDialog">关闭</button>
             </div>
             <div class="settings-dialog-workspace">
               <div class="wizard-steps">
@@ -2481,18 +2584,54 @@ async function batchDelete() {
                     <span>一个密钥可返回多个模型，保存后创作会使用当前选中的主模型。</span>
                   </div>
                   <div v-if="settingsState.draft.availableModels.length" class="model-pick-panel">
-                    <label class="field field-full">
-                      <span>主模型</span>
-                      <select v-model="settingsState.draft.modelNameOverride" @change="settingsState.draft.model = settingsState.draft.modelNameOverride">
-                        <option
-                          v-for="modelId in settingsState.draft.availableModels"
-                          :key="modelId"
-                          :value="modelId"
-                        >
-                          {{ modelId }}
-                        </option>
-                      </select>
-                    </label>
+                    <div
+                      :class="[
+                        'model-select',
+                        'model-select-dialog',
+                        isModelSelectOpen(modelSelectKey('draft')) ? 'model-select-open' : '',
+                        isModelSelectOpen(modelSelectKey('draft')) ? `model-select-${modelSelectState.placement}` : '',
+                      ]"
+                      @keydown.escape.stop="closeModelSelect"
+                    >
+                      <span class="model-select-label">主模型</span>
+                      <button
+                        type="button"
+                        class="model-select-trigger"
+                        :aria-expanded="isModelSelectOpen(modelSelectKey('draft'))"
+                        @click.stop="(event) => toggleModelSelect(modelSelectKey('draft'), event)"
+                      >
+                        <span class="model-select-trigger-text">{{ getDraftModelName(settingsState.draft) || "选择主模型" }}</span>
+                        <span class="model-select-trigger-meta">{{ settingsState.draft.availableModels.length }} 项</span>
+                        <span class="model-select-chevron">⌄</span>
+                      </button>
+                      <button
+                        v-if="isModelSelectOpen(modelSelectKey('draft'))"
+                        type="button"
+                        class="model-select-scrim"
+                        tabindex="-1"
+                        aria-label="关闭模型选择"
+                        @click="closeModelSelect"
+                      ></button>
+                      <div v-if="isModelSelectOpen(modelSelectKey('draft'))" class="model-select-menu" @click.stop>
+                        <label v-if="settingsState.draft.availableModels.length > 8" class="model-select-search">
+                          <span>搜索</span>
+                          <input v-model="modelSelectState.query" placeholder="输入模型名称" @keydown.stop />
+                        </label>
+                        <div class="model-select-list">
+                          <button
+                            v-for="modelId in filteredModelSelectOptions(settingsState.draft.availableModels, getDraftModelName(settingsState.draft))"
+                            :key="modelId"
+                            type="button"
+                            :class="['model-select-option', modelId === getDraftModelName(settingsState.draft) ? 'model-select-option-active' : '']"
+                            @click="chooseDraftPrimaryModel(modelId)"
+                          >
+                            <span class="model-select-option-name">{{ modelId }}</span>
+                            <span v-if="modelId === getDraftModelName(settingsState.draft)" class="model-select-check">✓</span>
+                          </button>
+                          <div v-if="!filteredModelSelectOptions(settingsState.draft.availableModels, getDraftModelName(settingsState.draft)).length" class="model-select-empty">没有匹配的模型</div>
+                        </div>
+                      </div>
+                    </div>
                     <div class="model-pick-list">
                       <span v-for="modelId in settingsState.draft.availableModels.slice(0, 8)" :key="modelId">{{ modelId }}</span>
                     </div>
@@ -2565,7 +2704,7 @@ async function batchDelete() {
               <button class="button-secondary" :disabled="!canTestDraftModel || settingsState.testState[settingsState.draft.id]?.loading" :title="draftTestDisabledTitle" @click="testModel(getDraftModel(), getDraftSetting())">
                 {{ settingsState.testState[settingsState.draft.id]?.loading ? "测试中..." : "测试连接" }}
               </button>
-              <button class="button-secondary" @click="settingsState.dialogOpen = false">取消</button>
+              <button class="button-secondary" @click="closeSettingsDialog">取消</button>
               <button :disabled="!canSaveDraft()" :title="draftSaveDisabledTitle" @click="saveDialog">保存</button>
             </div>
             <div v-if="settingsState.modelListState[settingsState.draft.id]?.error" class="inline-message inline-danger">{{ settingsState.modelListState[settingsState.draft.id].error }}</div>

@@ -10,6 +10,8 @@ import {
   imageGenerationSummary,
   mediaPreviewActionLabels,
   pickPrimaryModel,
+  filterModelOptions,
+  prioritizeModelOptions,
   modelDisplayNameFromPrimary,
   modelDisplayNameForModel,
   renderMarkdownPreview,
@@ -58,6 +60,24 @@ describe("model selection helpers", () => {
     expect(pickPrimaryModel(["gpt-4o", "gpt-4.1"], "gpt-4.1")).toBe("gpt-4.1");
     expect(pickPrimaryModel(["gpt-4o", "gpt-4.1"], "missing-model")).toBe("gpt-4o");
     expect(pickPrimaryModel([], "manual-model")).toBe("manual-model");
+  });
+
+  it("filters model options without changing the original order for empty searches", () => {
+    const options = ["gpt-5.5", "gpt-image-2", "doubao-seedance-2-0"];
+
+    expect(filterModelOptions(options, "")).toEqual(options);
+    expect(filterModelOptions(options, "GPT")).toEqual(["gpt-5.5", "gpt-image-2"]);
+    expect(filterModelOptions(options, "seed")).toEqual(["doubao-seedance-2-0"]);
+  });
+
+  it("pins the selected model at the top without dropping other options", () => {
+    expect(
+      prioritizeModelOptions(
+        ["claude-haiku", "doubao-seedance-2-0-fast", "gpt-image-2"],
+        "doubao-seedance-2-0-fast",
+      ),
+    ).toEqual(["doubao-seedance-2-0-fast", "claude-haiku", "gpt-image-2"]);
+    expect(prioritizeModelOptions(["gpt-5.5", "gpt-image-2"], "missing")).toEqual(["gpt-5.5", "gpt-image-2"]);
   });
 
   it("rejects URL-shaped model identifiers before saving or testing", () => {

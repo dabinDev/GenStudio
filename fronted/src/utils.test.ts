@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ModelDefinition, ModelSetting } from "./types";
 import {
+  appendLocalConversationMessages,
   generatedAssetReferenceFileName,
   findPromptBeforeMessage,
   getModelIdentifierError,
@@ -10,7 +11,7 @@ import {
   resolveModelName,
   shouldResetConversationForModelSwitch,
 } from "./utils";
-import type { ConversationMessage } from "./types";
+import type { ConversationDefinition, ConversationMessage } from "./types";
 
 const textModel: ModelDefinition = {
   id: "custom-text",
@@ -114,6 +115,75 @@ describe("conversation helpers", () => {
       }),
     ).toBe("clip.mp4");
   });
+
+  it("creates a visible local conversation when a proxy response has no server conversation", () => {
+    const conversation = appendLocalConversationMessages(null, {
+      capability: "text",
+      titleSeed: "你好",
+      modelGroupId: "local-gpt",
+      now: "2026-06-06T01:00:00.000Z",
+      messages: [
+        { role: "user", content: "你好" },
+        { role: "assistant", content: "# 你好\n\n我在。", status: "success" },
+      ],
+    });
+
+    expect(conversation.title).toBe("你好");
+    expect(conversation.capability).toBe("text");
+    expect(conversation.modelGroupId).toBe("local-gpt");
+    expect(conversation.messages.map((item) => [item.role, item.content])).toEqual([
+      ["user", "你好"],
+      ["assistant", "# 你好\n\n我在。"],
+    ]);
+  });
+
+  it("appends local messages to the current conversation for the same capability", () => {
+    const existing = conversation({
+      id: "local-conversation",
+      capability: "text",
+      messages: [message({ id: "m1", role: "user", content: "第一次" })],
+    });
+
+    const next = appendLocalConversationMessages(existing, {
+      capability: "text",
+      titleSeed: "第二次",
+      modelGroupId: "local-gpt",
+      now: "2026-06-06T01:02:00.000Z",
+      messages: [
+        { role: "user", content: "第二次" },
+        { role: "assistant", content: "第二次回复", status: "success" },
+      ],
+    });
+
+    expect(next.id).toBe("local-conversation");
+    expect(next.messages.map((item) => item.content)).toEqual(["第一次", "第二次", "第二次回复"]);
+    expect(next.updatedAt).toBe("2026-06-06T01:02:00.000Z");
+  });
+
+  it("keeps local generated assets on assistant messages", () => {
+    const conversation = appendLocalConversationMessages(null, {
+      capability: "image",
+      titleSeed: "生成海报",
+      modelGroupId: "local-image",
+      now: "2026-06-06T01:03:00.000Z",
+      messages: [
+        { role: "user", content: "生成海报" },
+        {
+          role: "assistant",
+          content: "已生成 1 张图片。",
+          assets: [{ assetType: "image", url: "https://cdn.example.com/image.png" }],
+        },
+      ],
+    });
+
+    expect(conversation.messages[1].assets).toEqual([
+      expect.objectContaining({
+        assetType: "image",
+        url: "https://cdn.example.com/image.png",
+        capability: "image",
+      }),
+    ]);
+  });
 });
 
 function message(patch: Partial<ConversationMessage>): ConversationMessage {
@@ -129,6 +199,21 @@ function message(patch: Partial<ConversationMessage>): ConversationMessage {
     subModelId: null,
     assets: [],
     createdAt: "2026-01-01T00:00:00",
+    ...patch,
+  };
+}
+
+function conversation(patch: Partial<ConversationDefinition>): ConversationDefinition {
+  return {
+    id: "conversation-id",
+    title: "本地对话",
+    capability: "text",
+    modelGroupId: null,
+    subModelId: null,
+    status: "active",
+    createdAt: "2026-01-01T00:00:00",
+    updatedAt: "2026-01-01T00:00:00",
+    messages: [],
     ...patch,
   };
 }

@@ -1,4 +1,11 @@
-import type { Capability, ConversationMessage, ModelDefinition, ModelSetting } from "./types";
+import type {
+  Capability,
+  ConversationAsset,
+  ConversationDefinition,
+  ConversationMessage,
+  ModelDefinition,
+  ModelSetting,
+} from "./types";
 
 export function createLocalId(prefix: string): string {
   return `${prefix}-${crypto.randomUUID()}`;
@@ -139,6 +146,71 @@ export function findPromptBeforeMessage(messages: ConversationMessage[], message
     }
   }
   return "";
+}
+
+interface LocalMessageInput {
+  role: "user" | "assistant";
+  content: string;
+  status?: ConversationMessage["status"];
+  errorMessage?: string;
+  canRetry?: boolean;
+  assets?: Array<Partial<ConversationAsset> & { assetType: string; url: string }>;
+}
+
+interface LocalConversationAppendInput {
+  capability: Capability;
+  titleSeed: string;
+  modelGroupId: string | null;
+  subModelId?: string | null;
+  now?: string;
+  messages: LocalMessageInput[];
+}
+
+export function appendLocalConversationMessages(
+  current: ConversationDefinition | null,
+  input: LocalConversationAppendInput,
+): ConversationDefinition {
+  const now = input.now || new Date().toISOString();
+  const sameConversation = current?.capability === input.capability ? current : null;
+  const base: ConversationDefinition = sameConversation || {
+    id: createLocalId("local-conversation"),
+    title: shortText(input.titleSeed || "本地对话", 34),
+    capability: input.capability,
+    modelGroupId: input.modelGroupId,
+    subModelId: input.subModelId || null,
+    status: "active",
+    createdAt: now,
+    updatedAt: now,
+    messages: [],
+  };
+  const nextMessages = input.messages.map((item): ConversationMessage => ({
+    id: createLocalId("local-message"),
+    role: item.role,
+    capability: input.capability,
+    content: item.content,
+    status: item.status || "success",
+    errorMessage: item.errorMessage || "",
+    canRetry: item.canRetry || false,
+    modelGroupId: input.modelGroupId,
+    subModelId: input.subModelId || null,
+    assets: (item.assets || []).map((asset): ConversationAsset => ({
+      id: asset.id || createLocalId("local-asset"),
+      capability: input.capability,
+      assetType: asset.assetType,
+      url: asset.url,
+      thumbnailUrl: asset.thumbnailUrl || "",
+      metadata: asset.metadata || {},
+      createdAt: now,
+    })),
+    createdAt: now,
+  }));
+  return {
+    ...base,
+    modelGroupId: base.modelGroupId || input.modelGroupId,
+    subModelId: base.subModelId || input.subModelId || null,
+    updatedAt: now,
+    messages: [...base.messages, ...nextMessages],
+  };
 }
 
 export function shouldResetConversationForModelSwitch(

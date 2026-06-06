@@ -39,6 +39,7 @@ import type {
   UploadedAsset,
 } from "./types";
 import {
+  appendLocalConversationMessages,
   combinePrompt,
   createLocalId,
   findPromptBeforeMessage,
@@ -360,8 +361,6 @@ function syncSelectedModel(modelId: typeof textModelId, models: ModelDefinition[
 
 async function refreshConversations() {
   if (!auth.state.user) {
-    conversationState.conversations = [];
-    conversationState.current = null;
     return;
   }
   conversationState.loading = true;
@@ -723,8 +722,22 @@ async function handleTextSubmit() {
       },
     }), controller.signal);
     textState.result = response;
-    setCurrentConversation(response.conversation);
-    simulateStreamingPreview(response.assistantMessage);
+    if (response.conversation) {
+      setCurrentConversation(response.conversation);
+      simulateStreamingPreview(response.assistantMessage);
+    } else {
+      const localConversation = appendLocalConversationMessages(conversationState.current, {
+        capability: "text",
+        titleSeed: finalPrompt,
+        modelGroupId: model.id,
+        messages: [
+          { role: "user", content: finalPrompt },
+          { role: "assistant", content: response.content || "已返回响应", status: "success" },
+        ],
+      });
+      setCurrentConversation(localConversation);
+      simulateStreamingPreview(localConversation.messages[localConversation.messages.length - 1]);
+    }
     store.addHistory({
       id: createLocalId("history"),
       capability: "text",
@@ -797,7 +810,24 @@ async function handleImageSubmit() {
         ...extra,
       },
     }), controller.signal);
-    setCurrentConversation(imageState.result.conversation);
+    if (imageState.result.conversation) {
+      setCurrentConversation(imageState.result.conversation);
+    } else {
+      setCurrentConversation(appendLocalConversationMessages(conversationState.current, {
+        capability: "image",
+        titleSeed: finalPrompt,
+        modelGroupId: model.id,
+        messages: [
+          { role: "user", content: finalPrompt },
+          {
+            role: "assistant",
+            content: `已生成 ${imageState.result.images.length} 张图片。`,
+            status: "success",
+            assets: imageState.result.images.map((image) => ({ assetType: "image", url: image.src })),
+          },
+        ],
+      }));
+    }
   } catch (error) {
     imageState.error = handleRequestError(error, "图片生成失败。");
   } finally {
@@ -960,7 +990,23 @@ async function handleVideoCreate() {
       conversationId: conversationIdFor("video"),
       requestBody,
     }), controller.signal);
-    setCurrentConversation(videoState.createResult.conversation);
+    if (videoState.createResult.conversation) {
+      setCurrentConversation(videoState.createResult.conversation);
+    } else {
+      setCurrentConversation(appendLocalConversationMessages(conversationState.current, {
+        capability: "video",
+        titleSeed: finalPrompt,
+        modelGroupId: model.id,
+        messages: [
+          { role: "user", content: finalPrompt },
+          {
+            role: "assistant",
+            content: videoState.createResult.taskId,
+            status: "processing",
+          },
+        ],
+      }));
+    }
     if (videoState.autoPoll) {
       await handleVideoQuery(videoState.createResult.taskId);
     }
@@ -990,7 +1036,28 @@ async function handleVideoQuery(taskIdArg?: string) {
       conversationId: conversationIdFor("video"),
       taskId,
     }), controller.signal);
-    setCurrentConversation(videoState.taskResult.conversation);
+    if (videoState.taskResult.conversation) {
+      setCurrentConversation(videoState.taskResult.conversation);
+    } else if (videoState.taskResult.videoUrl) {
+      setCurrentConversation(appendLocalConversationMessages(conversationState.current, {
+        capability: "video",
+        titleSeed: taskId,
+        modelGroupId: model.id,
+        messages: [
+          {
+            role: "assistant",
+            content: String(videoState.taskResult.status || "completed"),
+            status: videoState.taskResult.status === "completed" ? "success" : "processing",
+            assets: [{
+              assetType: "video",
+              url: videoState.taskResult.videoUrl,
+              thumbnailUrl: videoState.taskResult.thumbnailUrl || "",
+              metadata: { taskId, status: videoState.taskResult.status, progress: videoState.taskResult.progress },
+            }],
+          },
+        ],
+      }));
+    }
   } catch (error) {
     videoState.error = handleRequestError(error, "任务查询失败。");
   } finally {

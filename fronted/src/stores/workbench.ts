@@ -91,6 +91,11 @@ export function useWorkbenchStore() {
     });
   }
 
+  function clearServerModels() {
+    state.serverSynced = false;
+    state.serverModels = [];
+  }
+
   function updateModelSetting(
     modelId: string,
     patch: Partial<ModelSettingsRecord[string]>,
@@ -153,6 +158,7 @@ export function useWorkbenchStore() {
     state,
     models,
     applyServerModels,
+    clearServerModels,
     updateModelSetting,
     clearModelSetting,
     addCustomModel,

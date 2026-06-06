@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import base64
 
 import httpx
 from fastapi.testclient import TestClient
@@ -38,9 +39,16 @@ def login(client: TestClient, user_id: str) -> None:
     assert response.status_code == 200
 
 
+def csrf_headers(client: TestClient) -> dict[str, str]:
+    response = client.get("/api/auth/csrf")
+    assert response.status_code == 200
+    return {"X-CSRF-Token": response.json()["csrfToken"]}
+
+
 def create_text_model(client: TestClient) -> str:
     response = client.post(
         "/api/models",
+        headers=csrf_headers(client),
         json={
             "name": "GPT Text",
             "vendor": "Test",
@@ -58,6 +66,7 @@ def create_text_model(client: TestClient) -> str:
 def create_model(client: TestClient, capability: str, adapter: str, model_name: str) -> str:
     response = client.post(
         "/api/models",
+        headers=csrf_headers(client),
         json={
             "name": f"{capability} model",
             "vendor": "Test",
@@ -80,6 +89,7 @@ def test_conversations_are_isolated_per_user() -> None:
 
     created = alice.post(
         "/api/conversations",
+        headers=csrf_headers(alice),
         json={"title": "Alice chat", "capability": "text"},
     )
     assert created.status_code == 200
@@ -114,6 +124,7 @@ def test_text_proxy_records_successful_conversation_message(monkeypatch) -> None
 
     response = client.post(
         "/api/proxy/text",
+        headers=csrf_headers(client),
         json={
             "subModelId": sub_model_id,
             "conversationId": "",
@@ -169,6 +180,7 @@ def test_text_proxy_extracts_content_from_part_array(monkeypatch) -> None:
 
     response = client.post(
         "/api/proxy/text",
+        headers=csrf_headers(client),
         json={
             "subModelId": sub_model_id,
             "requestBody": {"messages": [{"role": "user", "content": "分段输出"}]},
@@ -212,6 +224,7 @@ def test_text_proxy_extracts_content_from_responses_payload(monkeypatch) -> None
 
     response = client.post(
         "/api/proxy/text",
+        headers=csrf_headers(client),
         json={
             "subModelId": sub_model_id,
             "requestBody": {"messages": [{"role": "user", "content": "responses"}]},
@@ -235,6 +248,7 @@ def test_text_proxy_records_retryable_failed_message(monkeypatch) -> None:
 
     response = client.post(
         "/api/proxy/text",
+        headers=csrf_headers(client),
         json={
             "subModelId": sub_model_id,
             "requestBody": {"messages": [{"role": "user", "content": "会失败的请求"}]},
@@ -263,6 +277,7 @@ def test_image_proxy_records_generated_assets(monkeypatch) -> None:
 
     response = client.post(
         "/api/proxy/image",
+        headers=csrf_headers(client),
         json={
             "subModelId": sub_model_id,
             "requestBody": {"prompt": "生成一张绿色茶饮海报"},
@@ -274,6 +289,83 @@ def test_image_proxy_records_generated_assets(monkeypatch) -> None:
     assert payload["assistantMessage"]["assets"][0]["url"] == "https://cdn.example.com/image.png"
     conversation = client.get(f"/api/conversations/{payload['conversation']['id']}").json()["conversation"]
     assert conversation["messages"][-1]["assets"][0]["assetType"] == "image"
+
+
+def test_image_proxy_persists_b64_response_as_generated_asset(monkeypatch) -> None:
+    tiny_png = base64.b64encode(b"fake-png").decode("ascii")
+    huge_raw = {
+        "data": [{"b64_json": tiny_png, "revised_prompt": "small image"}],
+        "usage": {"total_tokens": 7},
+    }
+
+    async def fake_forward_json(method, url, api_key, body=None):
+        return httpx.Response(200, json=huge_raw), huge_raw
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+    sub_model_id = create_model(client, "image", "image-openai", "gpt-image-2")
+
+    response = client.post(
+        "/api/proxy/image",
+        headers=csrf_headers(client),
+        json={
+            "subModelId": sub_model_id,
+            "requestBody": {"prompt": "image from b64"},
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    image_url = payload["images"][0]["src"]
+    assert image_url.startswith("/api/assets/generated/")
+    assert "b64_json" not in payload["raw"]["data"][0]
+    assert payload["raw"]["data"][0]["url"] == image_url
+    assert payload["assistantMessage"]["assets"][0]["url"] == image_url
+    conversation = client.get(f"/api/conversations/{payload['conversation']['id']}").json()["conversation"]
+    assert conversation["messages"][-1]["assets"][0]["url"] == image_url
+
+    asset_response = client.get(image_url)
+    assert asset_response.status_code == 200
+    assert asset_response.content == b"fake-png"
+
+
+def test_image_proxy_sanitizes_large_reference_data_urls_before_storing(monkeypatch) -> None:
+    reference_data_url = f"data:image/jpeg;base64,{'a' * 70000}"
+
+    async def fake_forward_json(method, url, api_key, body=None):
+        assert body["image"] == [reference_data_url]
+        return httpx.Response(200, json={"data": [{"url": "https://cdn.example.com/generated.png"}]}), {
+            "data": [{"url": "https://cdn.example.com/generated.png"}]
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+    sub_model_id = create_model(client, "image", "image-openai", "gpt-image-2")
+
+    response = client.post(
+        "/api/proxy/image",
+        headers=csrf_headers(client),
+        json={
+            "subModelId": sub_model_id,
+            "requestBody": {"prompt": "edit reference", "image": [reference_data_url]},
+        },
+    )
+
+    assert response.status_code == 200
+    conversation = client.get(f"/api/conversations/{response.json()['conversation']['id']}").json()["conversation"]
+    assistant = conversation["messages"][-1]
+    assert assistant["assets"][0]["url"] == "https://cdn.example.com/generated.png"
+
+    from app.database import SessionLocal
+    from app.db_models import ConversationMessage
+
+    with SessionLocal() as db:
+        messages = db.query(ConversationMessage).order_by(ConversationMessage.created_at).all()
+        assert len(messages[0].request_json) < 1000
+        assert "<data-url image/jpeg" in messages[0].request_json
+        assert "a" * 100 not in messages[0].request_json
 
 
 def test_image_proxy_returns_latest_messages_when_appending_to_existing_conversation(monkeypatch) -> None:
@@ -293,6 +385,7 @@ def test_image_proxy_returns_latest_messages_when_appending_to_existing_conversa
 
     first = client.post(
         "/api/proxy/image",
+        headers=csrf_headers(client),
         json={
             "subModelId": sub_model_id,
             "requestBody": {"prompt": "first image"},
@@ -303,6 +396,7 @@ def test_image_proxy_returns_latest_messages_when_appending_to_existing_conversa
 
     second = client.post(
         "/api/proxy/image",
+        headers=csrf_headers(client),
         json={
             "subModelId": sub_model_id,
             "conversationId": first_conversation["id"],
@@ -342,6 +436,7 @@ def test_video_create_and_query_record_playable_asset(monkeypatch) -> None:
 
     created = client.post(
         "/api/proxy/video/create",
+        headers=csrf_headers(client),
         json={"subModelId": sub_model_id, "requestBody": {"prompt": "一杯茶旋转"}},
     )
     assert created.status_code == 200
@@ -349,6 +444,7 @@ def test_video_create_and_query_record_playable_asset(monkeypatch) -> None:
 
     queried = client.post(
         "/api/proxy/video/query",
+        headers=csrf_headers(client),
         json={
             "subModelId": sub_model_id,
             "conversationId": conversation_id,
@@ -396,6 +492,7 @@ def test_upload_presign_can_use_saved_sub_model_credentials(monkeypatch) -> None
 
     response = client.post(
         "/api/proxy/upload/presign",
+        headers=csrf_headers(client),
         json={
             "subModelId": sub_model_id,
             "fileName": "reference.png",
@@ -421,6 +518,7 @@ def test_seedance_video_prompt_uses_text_content_for_title(monkeypatch) -> None:
 
     created = client.post(
         "/api/proxy/video/create",
+        headers=csrf_headers(client),
         json={
             "subModelId": sub_model_id,
             "requestBody": {

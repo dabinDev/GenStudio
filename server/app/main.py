@@ -1,20 +1,30 @@
 from __future__ import annotations
 
+import base64
+import binascii
+import copy
+from pathlib import Path
 import time
+from uuid import uuid4
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.auth import (
-    clear_session_cookie,
+    authenticate_local_user,
+    clear_session,
     create_session,
     exchange_official_code,
     get_current_user,
     get_optional_current_user,
+    issue_csrf_token,
+    register_local_user,
+    require_csrf,
     serialize_user,
+    update_user_profile,
     upsert_user,
 )
 from app.config import Settings, get_settings
@@ -49,6 +59,7 @@ from app.model_service import (
 )
 from app.proxy_utils import (
     build_test_body,
+    coerce_json_object,
     forward_json,
     parse_model_ids,
     pick_task_id,
@@ -62,10 +73,20 @@ from app.proxy_utils import (
     upstream_error,
     validate_config,
 )
-from app.schemas import ConversationCreate, DevLoginRequest, ModelCreate, ModelUpdate
+from app.schemas import (
+    ConversationCreate,
+    DevLoginRequest,
+    LoginRequest,
+    ModelCreate,
+    ModelUpdate,
+    ProfileUpdateRequest,
+    RegisterRequest,
+)
 from app.security import decrypt_secret
 
 app = FastAPI(title="GenStudio Server")
+GENERATED_ASSET_DIR = Path(__file__).resolve().parents[2] / "generated_assets"
+GENERATED_ASSET_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def extract_video_prompt(request_body: dict[str, Any]) -> str:
@@ -80,6 +101,41 @@ def extract_video_prompt(request_body: dict[str, Any]) -> str:
     if isinstance(content, str):
         return content
     return ""
+
+
+def persist_generated_image_from_b64(value: str) -> str:
+    try:
+        image_bytes = base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError):
+        return f"data:image/png;base64,{value}"
+    file_name = f"{uuid4().hex}.png"
+    (GENERATED_ASSET_DIR / file_name).write_bytes(image_bytes)
+    return f"/api/assets/generated/{file_name}"
+
+
+def extract_images_from_response(raw: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    safe_raw = copy.deepcopy(raw)
+    images: list[dict[str, Any]] = []
+    data = safe_raw.get("data") if isinstance(safe_raw.get("data"), list) else []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        src = item.get("url") if isinstance(item.get("url"), str) else ""
+        if not src and isinstance(item.get("b64_json"), str):
+            src = persist_generated_image_from_b64(item["b64_json"])
+            item.pop("b64_json", None)
+            item["url"] = src
+            item["source"] = "b64_json_saved"
+        if src:
+            images.append(
+                {
+                    "src": src,
+                    "revisedPrompt": item.get("revised_prompt")
+                    if isinstance(item.get("revised_prompt"), str)
+                    else None,
+                }
+            )
+    return images, safe_raw
 
 app.add_middleware(
     CORSMiddleware,
@@ -106,9 +162,55 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/assets/generated/{file_name}")
+async def generated_asset(file_name: str) -> FileResponse:
+    if "/" in file_name or "\\" in file_name or not file_name.endswith(".png"):
+        raise HTTPException(status_code=404, detail={"message": "Asset not found."})
+    file_path = GENERATED_ASSET_DIR / file_name
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail={"message": "Asset not found."})
+    return FileResponse(file_path, media_type="image/png")
+
+
 @app.get("/api/auth/me")
 async def auth_me(current_user: User = Depends(get_current_user)) -> dict[str, Any]:
     return {"user": serialize_user(current_user).model_dump()}
+
+
+@app.get("/api/auth/csrf")
+async def auth_csrf(
+    request: Request,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    return {"csrfToken": issue_csrf_token(request, db, settings)}
+
+
+@app.post("/api/auth/register")
+async def auth_register(
+    payload: RegisterRequest,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    user = register_local_user(db, payload)
+    db.flush()
+    create_session(db, response, user)
+    db.commit()
+    return {"user": serialize_user(user).model_dump()}
+
+
+@app.post("/api/auth/login")
+async def auth_login(
+    payload: LoginRequest,
+    response: Response,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    user = authenticate_local_user(db, payload, settings)
+    db.flush()
+    create_session(db, response, user)
+    db.commit()
+    return {"user": serialize_user(user).model_dump()}
 
 
 @app.get("/api/auth/callback")
@@ -147,7 +249,10 @@ async def auth_dev_login(
     payload: DevLoginRequest,
     response: Response,
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
+    if not settings.enable_dev_login:
+        raise HTTPException(status_code=404, detail={"message": "开发登录未启用。"})
     user = upsert_user(
         db,
         external_user_id=payload.externalUserId,
@@ -163,9 +268,28 @@ async def auth_dev_login(
 
 
 @app.post("/api/auth/logout")
-async def auth_logout(response: Response) -> dict[str, bool]:
-    clear_session_cookie(response)
+async def auth_logout(
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, bool]:
+    clear_session(request, response, db, settings)
     return {"ok": True}
+
+
+@app.put("/api/users/me")
+async def update_me(
+    payload: ProfileUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    update_user_profile(current_user, payload)
+    db.commit()
+    db.refresh(current_user)
+    return {"user": serialize_user(current_user).model_dump()}
 
 
 @app.get("/api/api-keys")
@@ -189,6 +313,7 @@ async def create_model(
     payload: ModelCreate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
     model = create_model_group(db, current_user, payload)
     return {"model": serialize_model(model).model_dump()}
@@ -200,6 +325,7 @@ async def update_model(
     payload: ModelUpdate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
     model = update_model_group(db, current_user, model_id, payload)
     return {"model": serialize_model(model).model_dump()}
@@ -210,6 +336,7 @@ async def delete_model(
     model_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    _csrf: None = Depends(require_csrf),
 ) -> dict[str, bool]:
     delete_model_group(db, current_user, model_id)
     return {"ok": True}
@@ -221,6 +348,7 @@ async def set_model_primary(
     payload: dict[str, Any],
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
     sub_model_id = str(payload.get("subModelId") or "").strip()
     if not sub_model_id:
@@ -234,6 +362,7 @@ async def sync_model_list(
     model_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
     model = get_model_group(db, current_user, model_id)
     api_key = model.api_key
@@ -280,6 +409,7 @@ async def create_conversation_route(
     payload: ConversationCreate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
     conversation = create_conversation(db, current_user, payload)
     return {"conversation": serialize_conversation(conversation).model_dump()}
@@ -318,6 +448,7 @@ async def proxy_test(
     payload: dict[str, Any],
     current_user: User | None = Depends(get_optional_current_user),
     db: Session = Depends(get_db),
+    _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
     if payload.get("subModelId") and not current_user:
         raise HTTPException(status_code=401, detail={"message": "请先登录。"})
@@ -342,6 +473,7 @@ async def proxy_test(
     body = build_test_body(str(capability), model, str(adapter) if adapter else None)
     started_at = time.perf_counter()
     response, raw = await forward_json("POST", target_url, api_key, body)
+    raw = coerce_json_object(raw)
     duration_ms = round((time.perf_counter() - started_at) * 1000)
     request = {"url": target_url, "body": body}
 
@@ -370,6 +502,7 @@ async def proxy_text(
     payload: dict[str, Any],
     db: Session = Depends(get_db),
     current_user: User | None = Depends(get_optional_current_user),
+    _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
     model_group = sub_model = None
     conversation = None
@@ -512,6 +645,7 @@ async def proxy_image(
     payload: dict[str, Any],
     db: Session = Depends(get_db),
     current_user: User | None = Depends(get_optional_current_user),
+    _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
     model_group = sub_model = None
     conversation = None
@@ -596,22 +730,7 @@ async def proxy_image(
             }
         raise HTTPException(status_code=response.status_code or 500, detail=detail)
 
-    images = []
-    for item in raw.get("data", []) if isinstance(raw.get("data"), list) else []:
-        if not isinstance(item, dict):
-            continue
-        src = item.get("url") if isinstance(item.get("url"), str) else ""
-        if not src and isinstance(item.get("b64_json"), str):
-            src = f"data:image/png;base64,{item['b64_json']}"
-        if src:
-            images.append(
-                {
-                    "src": src,
-                    "revisedPrompt": item.get("revised_prompt")
-                    if isinstance(item.get("revised_prompt"), str)
-                    else None,
-                }
-            )
+    images, safe_raw = extract_images_from_response(raw)
 
     assistant_message = None
     if current_user and model_group and sub_model:
@@ -627,7 +746,7 @@ async def proxy_image(
                 model_group_id=model_group.id,
                 sub_model_id=sub_model.id,
                 request=body,
-                response=raw,
+                response=safe_raw,
             )
             for image in images:
                 add_asset(
@@ -652,7 +771,7 @@ async def proxy_image(
             usage=raw.get("usage"),
         )
 
-    result = {"images": images, "raw": raw}
+    result = {"images": images, "raw": safe_raw}
     if conversation and current_user:
         db.commit()
         refreshed = reload_conversation(db, current_user, conversation.id)
@@ -667,6 +786,7 @@ async def proxy_video_create(
     payload: dict[str, Any],
     db: Session = Depends(get_db),
     current_user: User | None = Depends(get_optional_current_user),
+    _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
     model_group = sub_model = None
     conversation = None
@@ -802,6 +922,7 @@ async def proxy_video_query(
     payload: dict[str, Any],
     db: Session = Depends(get_db),
     current_user: User | None = Depends(get_optional_current_user),
+    _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
     model_group = None
     sub_model = None
@@ -872,6 +993,7 @@ async def proxy_upload_presign(
     payload: dict[str, Any],
     db: Session = Depends(get_db),
     current_user: User | None = Depends(get_optional_current_user),
+    _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
     if payload.get("subModelId") and not current_user:
         raise HTTPException(status_code=401, detail={"message": "请先登录。"})

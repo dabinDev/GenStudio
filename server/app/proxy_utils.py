@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 from urllib.parse import quote, urljoin, urlparse, urlunparse
 
@@ -42,7 +43,19 @@ async def parse_upstream(response: httpx.Response) -> dict[str, Any] | str:
     content_type = response.headers.get("content-type", "")
     if "application/json" in content_type:
         return response.json()
-    return response.text
+    return coerce_json_object(response.text)
+
+
+def coerce_json_object(payload: Any) -> Any:
+    if isinstance(payload, dict):
+        return payload
+    if not isinstance(payload, str):
+        return payload
+    try:
+        parsed = json.loads(payload)
+    except ValueError:
+        return payload
+    return parsed if isinstance(parsed, dict) else payload
 
 
 def pick_error_message(payload: Any, fallback: str) -> str:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from fastapi import HTTPException
@@ -23,6 +24,37 @@ def _json_loads(value: str) -> dict[str, Any]:
     except ValueError:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+DATA_URL_PATTERN = re.compile(r"^data:([^;,]+)?;base64,(.*)$", re.DOTALL)
+MAX_STORED_STRING_LENGTH = 4096
+
+
+def sanitize_json_for_storage(value: Any) -> Any:
+    if isinstance(value, dict):
+        sanitized: dict[str, Any] = {}
+        for key, item in value.items():
+            if key == "b64_json" and isinstance(item, str):
+                sanitized[key] = f"<base64 omitted length={len(item)}>"
+                continue
+            sanitized[key] = sanitize_json_for_storage(item)
+        return sanitized
+    if isinstance(value, list):
+        return [sanitize_json_for_storage(item) for item in value]
+    if isinstance(value, str):
+        match = DATA_URL_PATTERN.match(value)
+        if match:
+            mime_type = match.group(1) or "application/octet-stream"
+            return f"<data-url {mime_type} omitted length={len(value)}>"
+        if len(value) > MAX_STORED_STRING_LENGTH:
+            return f"{value[:MAX_STORED_STRING_LENGTH]}...<truncated length={len(value)}>"
+    return value
+
+
+def dumps_for_storage(value: Any) -> str:
+    if value is None:
+        return ""
+    return json.dumps(sanitize_json_for_storage(value), ensure_ascii=False)
 
 
 def make_title(value: str, fallback: str = "新的创作") -> str:
@@ -157,8 +189,8 @@ def add_message(
         can_retry=can_retry,
         model_group_id=model_group_id,
         sub_model_id=sub_model_id,
-        request_json=json.dumps(request, ensure_ascii=False) if request is not None else "",
-        response_json=json.dumps(response, ensure_ascii=False) if response is not None else "",
+        request_json=dumps_for_storage(request),
+        response_json=dumps_for_storage(response),
     )
     db.add(message)
     conversation.capability = capability

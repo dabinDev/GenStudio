@@ -10,9 +10,12 @@ import {
   imageGenerationSummary,
   mediaPreviewActionLabels,
   pickPrimaryModel,
+  modelDisplayNameFromPrimary,
+  modelDisplayNameForModel,
   renderMarkdownPreview,
   resolveModelName,
   shouldResetConversationForModelSwitch,
+  testResultSummary,
   videoGenerationSummary,
 } from "./utils";
 import type { ConversationDefinition, ConversationMessage } from "./types";
@@ -145,6 +148,71 @@ describe("conversation helpers", () => {
     expect(videoSummary).toBe("全能参考  9:16  720p  5秒  1条");
     expect(`${imageSummary} ${videoSummary}`).not.toContain("价格优先");
     expect(`${imageSummary} ${videoSummary}`).not.toContain("质量优先");
+  });
+
+  it("uses the selected primary model for default display names", () => {
+    expect(modelDisplayNameFromPrimary("text", "gpt-5.5")).toBe("gpt-5.5 文案");
+    expect(modelDisplayNameFromPrimary("image", "gpt-image-2")).toBe("gpt-image-2 图片");
+    expect(modelDisplayNameFromPrimary("video", "doubao-seedance-2-0-fast-260128")).toBe("doubao-seedance-2-0-fast-260128 视频");
+    expect(modelDisplayNameFromPrimary("video", "")).toBe("视频模型");
+  });
+
+  it("replaces generic saved model names with the selected primary model in lists", () => {
+    const genericVideoModel: ModelDefinition = {
+      ...textModel,
+      id: "custom-video",
+      name: "视频模型配置",
+      capability: "video",
+      adapter: "video-unified-generic",
+      model: "video-placeholder",
+    };
+
+    expect(
+      modelDisplayNameForModel(
+        genericVideoModel,
+        setting({ modelNameOverride: "doubao-seedance-2-0-fast-260128" }),
+      ),
+    ).toBe("doubao-seedance-2-0-fast-260128 视频");
+    expect(modelDisplayNameForModel({ ...genericVideoModel, name: "我的视频号脚本模型" }, setting({}))).toBe(
+      "我的视频号脚本模型",
+    );
+  });
+
+  it("formats test results without empty status or duration placeholders", () => {
+    expect(
+      testResultSummary({
+        ok: true,
+        status: 200,
+        durationMs: 1234,
+        request: { url: "https://token.example.com/v1/chat/completions" },
+        raw: { id: "chatcmpl-test", model: "gpt-5.5" },
+      }),
+    ).toEqual({
+      status: "200",
+      duration: "1234ms",
+      requestUrl: "https://token.example.com/v1/chat/completions",
+      rawPreview: '{\n  "id": "chatcmpl-test",\n  "model": "gpt-5.5"\n}',
+    });
+
+    expect(testResultSummary({ raw: {} })).toEqual({
+      status: "未知",
+      duration: "未知",
+      requestUrl: "未知",
+      rawPreview: "{}",
+    });
+
+    expect(
+      testResultSummary({
+        status: "",
+        durationMs: "",
+        request: { url: "" },
+        raw: {},
+      }),
+    ).toMatchObject({
+      status: "未知",
+      duration: "未知",
+      requestUrl: "未知",
+    });
   });
 
   it("creates a visible local conversation when a proxy response has no server conversation", () => {

@@ -26,7 +26,7 @@ export const MODEL_WIZARD_STEPS: Array<Omit<ModelWizardProgress, "complete">> = 
     step: "connect",
     index: 1,
     label: "连接密钥",
-    description: "填写名称、能力、baseURL 和 API Key。",
+    description: "填写能力、baseURL 和 API Key。",
   },
   {
     step: "models",
@@ -37,8 +37,8 @@ export const MODEL_WIZARD_STEPS: Array<Omit<ModelWizardProgress, "complete">> = 
   {
     step: "review",
     index: 3,
-    label: "保存确认",
-    description: "确认保存后，创作时会使用当前主模型。",
+    label: "测试保存",
+    description: "测试通过后保存为创作主模型。",
   },
 ];
 
@@ -100,7 +100,7 @@ export function getModelDraftMissingFieldLabels(
   if (!draft.name.trim()) missing.push("名称");
   if (requireServerCredentials && !setting.baseUrl.trim()) missing.push("baseURL");
   if (requireServerCredentials && !setting.apiKey.trim()) missing.push("API Key");
-  if (!resolveDraftPrimaryModel(draft)) missing.push("模型标识");
+  if (!resolveDraftPrimaryModel(draft)) missing.push("主模型");
   return missing;
 }
 
@@ -112,6 +112,7 @@ export function canTestModelDraft(draft: ModelWizardDraft): boolean {
   const primaryModel = resolveDraftPrimaryModel(draft);
   return Boolean(
     canFetchModelListForDraft(draft) &&
+      draft.availableModels.length &&
       primaryModel &&
       !getModelIdentifierError(draft.model) &&
       !getModelIdentifierError(draft.modelNameOverride),

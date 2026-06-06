@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class UserOut(BaseModel):
@@ -21,6 +21,59 @@ class DevLoginRequest(BaseModel):
     nickname: str = "开发用户"
     phone: str = ""
     avatarUrl: str = ""
+
+
+class RegisterRequest(BaseModel):
+    email: str = ""
+    phone: str = ""
+    password: str
+    nickname: str = ""
+
+    @field_validator("email", "phone", "nickname")
+    @classmethod
+    def trim_text(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        return value.strip().lower()
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        if len(value) < 8:
+            raise ValueError("密码至少需要 8 位。")
+        if not any(char.isalpha() for char in value) or not any(char.isdigit() for char in value):
+            raise ValueError("密码需要同时包含字母和数字。")
+        return value
+
+    @model_validator(mode="after")
+    def validate_identifier(self) -> RegisterRequest:
+        if not self.email and not self.phone:
+            raise ValueError("请填写邮箱或手机号。")
+        return self
+
+
+class LoginRequest(BaseModel):
+    identifier: str
+    password: str
+
+    @field_validator("identifier")
+    @classmethod
+    def normalize_identifier(cls, value: str) -> str:
+        return value.strip().lower()
+
+
+class ProfileUpdateRequest(BaseModel):
+    nickname: str | None = None
+    phone: str | None = None
+    avatarUrl: str | None = None
+
+    @field_validator("nickname", "phone", "avatarUrl")
+    @classmethod
+    def trim_optional_text(cls, value: str | None) -> str | None:
+        return value.strip() if isinstance(value, str) else value
 
 
 class ApiKeyCreate(BaseModel):

@@ -1,5 +1,10 @@
 import type { ConversationDefinition, ServerModelDefinition, UploadedAsset, UserProfile } from "./types";
 
+const CSRF_SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+const AUTH_CSRF_EXEMPT_ENDPOINTS = new Set(["/api/auth/login", "/api/auth/register", "/api/auth/dev-login"]);
+
+let csrfToken = "";
+
 interface ProxyErrorShape {
   detail?: {
     message?: string;
@@ -38,18 +43,41 @@ async function parseErrorPayload(response: Response): Promise<{ message: string;
   }
 }
 
-async function requestJson<T>(endpoint: string, init: RequestInit = {}): Promise<T> {
+export function setCsrfToken(token: string): void {
+  csrfToken = token;
+}
+
+function shouldAttachCsrf(endpoint: string, method: string): boolean {
+  return Boolean(csrfToken && !CSRF_SAFE_METHODS.has(method.toUpperCase()) && !AUTH_CSRF_EXEMPT_ENDPOINTS.has(endpoint));
+}
+
+function shouldRefreshCsrf(endpoint: string, method: string, status: number, message: string): boolean {
+  return (
+    status === 403 &&
+    !CSRF_SAFE_METHODS.has(method.toUpperCase()) &&
+    !AUTH_CSRF_EXEMPT_ENDPOINTS.has(endpoint) &&
+    message.toLowerCase().includes("csrf")
+  );
+}
+
+async function requestJson<T>(endpoint: string, init: RequestInit = {}, retryingCsrf = false): Promise<T> {
+  const method = init.method || "GET";
   const response = await fetch(endpoint, {
     credentials: "include",
     ...init,
     headers: {
       "Content-Type": "application/json",
+      ...(shouldAttachCsrf(endpoint, method) ? { "X-CSRF-Token": csrfToken } : {}),
       ...(init.headers || {}),
     },
   });
 
   if (!response.ok) {
     const parsed = await parseErrorPayload(response);
+    if (!retryingCsrf && shouldRefreshCsrf(endpoint, method, response.status, parsed.message)) {
+      await fetchCsrfToken();
+      return requestJson<T>(endpoint, init, true);
+    }
     throw new ApiRequestError(parsed.message, response.status, parsed.detail);
   }
 
@@ -110,8 +138,37 @@ export async function fetchCurrentUser(): Promise<UserProfile | null> {
   return payload.user;
 }
 
-export async function devLogin(): Promise<UserProfile> {
-  const payload = await postApi<{ user: UserProfile }>("/api/auth/dev-login", {});
+export async function fetchCsrfToken(): Promise<string> {
+  const payload = await getApi<{ csrfToken: string }>("/api/auth/csrf");
+  setCsrfToken(payload.csrfToken);
+  return payload.csrfToken;
+}
+
+export async function registerAccount(body: { email?: string; phone?: string; password: string; nickname?: string }): Promise<UserProfile> {
+  const payload = await postApi<{ user: UserProfile }>("/api/auth/register", body);
+  await fetchCsrfToken();
+  return payload.user;
+}
+
+export async function loginWithPassword(body: { identifier: string; password: string }): Promise<UserProfile> {
+  const payload = await postApi<{ user: UserProfile }>("/api/auth/login", body);
+  await fetchCsrfToken();
+  return payload.user;
+}
+
+export async function devLogin(body: Partial<UserProfile> = {}): Promise<UserProfile> {
+  const payload = await postApi<{ user: UserProfile }>("/api/auth/dev-login", body);
+  await fetchCsrfToken();
+  return payload.user;
+}
+
+export async function logout(): Promise<void> {
+  await postApi<{ ok: boolean }>("/api/auth/logout", {});
+  setCsrfToken("");
+}
+
+export async function updateMyProfile(body: { nickname?: string; phone?: string; avatarUrl?: string }): Promise<UserProfile> {
+  const payload = await putApi<{ user: UserProfile }>("/api/users/me", body);
   return payload.user;
 }
 

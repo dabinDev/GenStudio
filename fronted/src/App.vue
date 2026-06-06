@@ -47,12 +47,16 @@ import {
   getModelIdentifierError,
   getMissingModelMessage,
   imageGenerationSummary,
+  isGeneratedModelDisplayName,
   mediaPreviewActionLabels,
+  modelDisplayNameForModel,
+  modelDisplayNameFromPrimary,
   pickPrimaryModel,
   renderMarkdownPreview,
   resolveModelName,
   shouldResetConversationForModelSwitch,
   shortText,
+  testResultSummary,
   videoGenerationSummary,
 } from "./utils";
 import {
@@ -66,7 +70,7 @@ import {
   resolveDraftPrimaryModel,
 } from "./modelWizard";
 
-type ViewName = "text" | "images" | "videos" | "settings" | "profile";
+type ViewName = "auth" | "text" | "images" | "videos" | "settings" | "profile";
 type SidebarFilter = Capability | "all";
 type VideoMode = "text" | "reference" | "start-end";
 type DialogMode = "create" | "edit";
@@ -152,6 +156,23 @@ const auth = useAuthStore();
 const view = ref<ViewName>(getViewFromHash());
 const sidebarFilter = ref<SidebarFilter>("all");
 const devAuthCode = ref("dev:alice");
+const authMode = ref<"login" | "register">("login");
+const authForm = reactive({
+  identifier: "",
+  password: "",
+  email: "",
+  phone: "",
+  nickname: "",
+  registerPassword: "",
+  error: "",
+});
+const profileForm = reactive({
+  nickname: "",
+  phone: "",
+  avatarUrl: "",
+  error: "",
+  success: "",
+});
 
 const textModelId = ref("");
 const imageModelId = ref("");
@@ -318,7 +339,7 @@ const currentModelLabel = computed(() => {
   const model = activeModel.value;
   const setting = activeSetting.value;
   if (!model || !setting) return "未选择模型";
-  return `${model.name} / ${resolveModelName(model, setting)}`;
+  return `${modelDisplayName(model)} / ${resolveModelName(model, setting)}`;
 });
 
 const modelWizardProgress = computed(() => getModelWizardProgress(settingsState.draft));
@@ -340,7 +361,7 @@ const draftFetchDisabledTitle = computed(() =>
   canFetchDraftModels.value ? "获取当前密钥可用模型" : "请先填写 baseURL 和 API Key",
 );
 const draftTestDisabledTitle = computed(() =>
-  canTestDraftModel.value ? "测试当前主模型" : "请先填写 baseURL、API Key 和模型标识",
+  canTestDraftModel.value ? "测试当前主模型" : "请先获取模型列表并选择主模型",
 );
 const draftSaveDisabledTitle = computed(() =>
   canSaveDraft() ? "保存模型配置" : `请先填写：${draftMissingFieldsText.value || "必填信息"}`,
@@ -364,8 +385,14 @@ const videoControlSummary = computed(() =>
   }),
 );
 
+const userAccountLabel = computed(() => {
+  if (!auth.state.user) return auth.state.loading ? "登录状态读取中" : "可使用官网授权或本地账号登录";
+  return auth.state.user.email || auth.state.user.phone || "已登录";
+});
+
 onMounted(async () => {
   await initializeSession();
+  syncProfileForm();
   syncInitialModels();
   window.addEventListener("hashchange", () => {
     view.value = getViewFromHash();
@@ -378,9 +405,16 @@ watch(
   { immediate: true },
 );
 
+watch(
+  () => auth.state.user?.id,
+  () => {
+    syncProfileForm();
+  },
+);
+
 function getViewFromHash(): ViewName {
   const hash = window.location.hash.replace(/^#\/?/, "");
-  if (hash === "images" || hash === "videos" || hash === "settings" || hash === "profile" || hash === "text") {
+  if (hash === "auth" || hash === "images" || hash === "videos" || hash === "settings" || hash === "profile" || hash === "text") {
     return hash;
   }
   return "images";
@@ -674,11 +708,30 @@ async function refreshServerModels() {
   store.applyServerModels(models);
 }
 
+async function refreshUserWorkspace() {
+  if (!auth.state.user) return;
+  await refreshServerModels();
+  await refreshConversations();
+  syncInitialModels();
+}
+
+function clearUserWorkspace() {
+  store.clearServerModels();
+  conversationState.conversations = [];
+  conversationState.current = null;
+  conversationState.streamingMessageId = "";
+  conversationState.streamingContent = "";
+}
+
 async function handleDevLogin() {
-  await auth.loginForDevelopment();
-  if (auth.state.user) {
-    await refreshServerModels();
-    await refreshConversations();
+  authForm.error = "";
+  try {
+    await auth.loginForDevelopment();
+    await refreshUserWorkspace();
+    syncProfileForm();
+    navigate("images");
+  } catch (error) {
+    authForm.error = error instanceof Error ? error.message : "开发登录失败。";
   }
 }
 
@@ -686,6 +739,73 @@ function handleAuthCodeLogin() {
   const code = devAuthCode.value.trim();
   if (!code) return;
   window.location.href = `/auth/callback?code=${encodeURIComponent(code)}`;
+}
+
+function syncProfileForm() {
+  profileForm.nickname = auth.state.user?.nickname || "";
+  profileForm.phone = auth.state.user?.phone || "";
+  profileForm.avatarUrl = auth.state.user?.avatarUrl || "";
+  profileForm.error = "";
+  profileForm.success = "";
+}
+
+async function handlePasswordLogin() {
+  authForm.error = "";
+  try {
+    await auth.login({
+      identifier: authForm.identifier,
+      password: authForm.password,
+    });
+    await refreshUserWorkspace();
+    syncProfileForm();
+    navigate("images");
+  } catch (error) {
+    authForm.error = error instanceof Error ? error.message : "登录失败。";
+  }
+}
+
+async function handleRegister() {
+  authForm.error = "";
+  try {
+    await auth.registerWithPassword({
+      email: authForm.email,
+      phone: authForm.phone,
+      password: authForm.registerPassword,
+      nickname: authForm.nickname,
+    });
+    authForm.password = "";
+    authForm.registerPassword = "";
+    await refreshUserWorkspace();
+    syncProfileForm();
+    navigate("images");
+  } catch (error) {
+    authForm.error = error instanceof Error ? error.message : "注册失败。";
+  }
+}
+
+async function handleLogout() {
+  try {
+    await auth.logoutCurrentUser();
+    clearUserWorkspace();
+    navigate("auth");
+  } catch (error) {
+    profileForm.error = error instanceof Error ? error.message : "退出登录失败。";
+  }
+}
+
+async function handleProfileSave() {
+  profileForm.error = "";
+  profileForm.success = "";
+  try {
+    await auth.updateProfile({
+      nickname: profileForm.nickname,
+      phone: profileForm.phone,
+      avatarUrl: profileForm.avatarUrl,
+    });
+    profileForm.success = "个人信息已保存。";
+  } catch (error) {
+    profileForm.error = error instanceof Error ? error.message : "保存个人信息失败。";
+  }
 }
 
 function getSetting(modelId: string): ModelSetting {
@@ -854,7 +974,7 @@ async function handleTextSubmit() {
       id: createLocalId("history"),
       capability: "text",
       modelId: model.id,
-      modelName: model.name,
+      modelName: modelDisplayName(model),
       title: "文案创作",
       status: "success",
       createdAt: Date.now(),
@@ -1251,6 +1371,30 @@ function getDraftModelName(draft: ConfigDraft): string {
   return resolveDraftPrimaryModel(draft);
 }
 
+function getDraftDefaultName(): string {
+  return modelDisplayNameFromPrimary(settingsState.draft.capability, getDraftModelName(settingsState.draft));
+}
+
+function isAutoDraftName(value: string): boolean {
+  return isGeneratedModelDisplayName(value);
+}
+
+function syncDraftAutoName() {
+  if (isAutoDraftName(settingsState.draft.name)) {
+    settingsState.draft.name = getDraftDefaultName();
+  }
+}
+
+function handleDraftCapabilityChange() {
+  settingsState.draft.adapter = getCapabilityDefaultAdapter(settingsState.draft.capability);
+  settingsState.draft.model = "";
+  settingsState.draft.modelNameOverride = "";
+  settingsState.draft.availableModels = [];
+  syncDraftAutoName();
+  delete settingsState.modelListState[settingsState.draft.id];
+  delete settingsState.testState[settingsState.draft.id];
+}
+
 function canSaveDraft(): boolean {
   return canSaveModelDraft(
     settingsState.draft,
@@ -1264,6 +1408,40 @@ function getAvailableModels(model: ModelDefinition): string[] {
   if (latestModels.length) return latestModels;
   if (model.subModels?.length) return model.subModels.map((item) => item.modelName);
   return getSetting(model.id).availableModels || [];
+}
+
+function getModelStatusLabel(model: ModelDefinition, setting: ModelSetting): string {
+  if (settingsState.testState[model.id]?.loading) return "测试中";
+  if (settingsState.testState[model.id]?.result) return `已连接 ${testResultSummary(settingsState.testState[model.id].result).duration}`;
+  if (settingsState.testState[model.id]?.error) return "连接失败";
+  if (!isModelConfigured(model, setting)) return "待配置";
+  return "待测试";
+}
+
+function getModelStatusClass(model: ModelDefinition, setting: ModelSetting): string {
+  if (settingsState.testState[model.id]?.result) return "badge-success";
+  if (settingsState.testState[model.id]?.error) return "badge-danger";
+  if (settingsState.testState[model.id]?.loading || !isModelConfigured(model, setting)) return "badge-warn";
+  return "";
+}
+
+function compactJson(value: unknown): string {
+  return testResultSummary({ raw: value }).rawPreview;
+}
+
+function modelDisplayName(model: ModelDefinition): string {
+  return modelDisplayNameForModel(model, getSetting(model.id));
+}
+
+function modelSummaryText(model: ModelDefinition): string {
+  const setting = getSetting(model.id);
+  const primaryModel = resolveModelName(model, setting);
+  const endpoint = setting.baseUrl || (model.serverManaged ? "数据库密钥" : "未配置地址");
+  return `${CAPABILITY_LABELS[model.capability]} · ${primaryModel || "尚未选择主模型"} · ${endpoint}`;
+}
+
+function testSummaryFor(result: TestRequestResult | null | undefined) {
+  return testResultSummary(result || {});
 }
 
 async function setPrimaryModel(modelId: string, model: ModelDefinition, setting: ModelSetting) {
@@ -1304,6 +1482,7 @@ async function setPrimaryModel(modelId: string, model: ModelDefinition, setting:
 function openCreateDialog() {
   settingsState.dialogMode = "create";
   settingsState.draft = createEmptyDraft();
+  syncDraftAutoName();
   settingsState.dialogOpen = true;
 }
 
@@ -1315,6 +1494,7 @@ function openEditDialog(model: ModelDefinition) {
 
 async function saveDialog() {
   const draft = settingsState.draft;
+  syncDraftAutoName();
   const modelName = getDraftModelName(draft);
   if (
     !draft.name.trim() ||
@@ -1326,7 +1506,7 @@ async function saveDialog() {
   }
   if (auth.state.user) {
     const payload = {
-      name: draft.name.trim(),
+      name: draft.name.trim() || getDraftDefaultName(),
       vendor: draft.vendor.trim() || "自定义",
       capability: draft.capability,
       adapter: draft.adapter,
@@ -1358,7 +1538,7 @@ async function saveDialog() {
   if (settingsState.dialogMode === "create") {
     store.addCustomModel({
       id: draft.id,
-      name: draft.name.trim(),
+      name: draft.name.trim() || getDraftDefaultName(),
       vendor: draft.vendor.trim() || "自定义",
       capability: draft.capability,
       adapter: draft.adapter,
@@ -1369,7 +1549,7 @@ async function saveDialog() {
     const target = store.models.value.find((model) => model.id === draft.id);
     if (target && !target.builtin) {
       store.updateCustomModel(draft.id, {
-        name: draft.name.trim(),
+        name: draft.name.trim() || getDraftDefaultName(),
         vendor: draft.vendor.trim() || "自定义",
         capability: draft.capability,
         adapter: draft.adapter,
@@ -1417,7 +1597,7 @@ async function fetchModelList(model: ModelDefinition, setting: ModelSetting) {
   }
   settingsState.modelListState[model.id] = { ...createIdleState<AvailableModelsResult>(), loading: true };
   try {
-    const result = await postProxy<AvailableModelsResult>("/api/proxy/models", {
+      const result = await postProxy<AvailableModelsResult>("/api/proxy/models", {
       config: { baseUrl: setting.baseUrl, apiKey: setting.apiKey },
     });
     const isDraftModel = model.id === settingsState.draft.id;
@@ -1430,6 +1610,7 @@ async function fetchModelList(model: ModelDefinition, setting: ModelSetting) {
     };
     if (updatedDraft) {
       settingsState.draft = updatedDraft;
+      syncDraftAutoName();
       return;
     }
     store.updateModelSetting(model.id, {
@@ -1539,7 +1720,7 @@ async function batchDelete() {
       <div class="category-tabs">
         <div class="primary-selector">
           <button class="primary-item primary-item-active">大模型</button>
-          <button class="primary-item" @click="navigate('profile')">个人信息</button>
+          <button class="primary-item" @click="navigate(auth.state.user ? 'profile' : 'auth')">个人信息</button>
         </div>
         <div class="secondary-selector">
           <button
@@ -1571,8 +1752,8 @@ async function batchDelete() {
             {{ model.capability === "text" ? "T" : model.capability === "image" ? "I" : "V" }}
           </div>
           <div class="model-info">
-            <strong>{{ model.name }}</strong>
-            <span>{{ model.description }}</span>
+            <strong>{{ modelDisplayName(model) }}</strong>
+            <span>{{ modelSummaryText(model) }}</span>
           </div>
           <span :class="['model-tag', `tag-${model.capability}`]">
             {{ CAPABILITY_LABELS[model.capability] }}
@@ -1584,10 +1765,10 @@ async function batchDelete() {
         <div class="account-avatar">{{ auth.state.user?.nickname?.slice(0, 1) || "S" }}</div>
         <div class="account-copy">
           <strong>{{ auth.state.user?.nickname || "未登录" }}</strong>
-          <span>{{ auth.state.user ? auth.state.user.email || "已通过官网授权" : auth.state.loading ? "登录状态读取中" : "可使用官网授权登录" }}</span>
+          <span>{{ userAccountLabel }}</span>
         </div>
         <button v-if="auth.state.user" class="account-recharge" @click="navigate('profile')">我的</button>
-        <button v-else class="account-recharge" :disabled="auth.state.loading" @click="handleDevLogin">开发登录</button>
+        <button v-else class="account-recharge" :disabled="auth.state.loading" @click="navigate('auth')">登录</button>
       </div>
     </aside>
 
@@ -1601,11 +1782,11 @@ async function batchDelete() {
         <div class="workspace-topbar-actions">
           <span class="topbar-model-label">{{ currentModelLabel }}</span>
           <button class="topbar-icon-button" @click="navigate('settings')">设置</button>
-          <button class="topbar-icon-button" @click="navigate('profile')">个人</button>
+          <button class="topbar-icon-button" @click="navigate(auth.state.user ? 'profile' : 'auth')">个人</button>
         </div>
       </div>
 
-      <section v-if="view !== 'settings' && view !== 'profile'" class="studio-panel">
+      <section v-if="view !== 'auth' && view !== 'settings' && view !== 'profile'" class="studio-panel">
         <div class="studio-canvas">
           <aside v-if="conversationState.listOpen" class="history-drawer">
             <div class="history-drawer-head">
@@ -1686,9 +1867,9 @@ async function batchDelete() {
               </div>
               <div class="empty-canvas-top">
                 <span class="badge badge-accent">{{ activeCapability ? CAPABILITY_LABELS[activeCapability] : "创作" }}</span>
-                <span>{{ activeModel?.name || "未选择模型" }}</span>
+                <span>{{ activeModel ? modelDisplayName(activeModel) : "未选择模型" }}</span>
               </div>
-              <h3>{{ activeModel?.name || "创作模型" }}</h3>
+              <h3>{{ activeModel ? modelDisplayName(activeModel) : "创作模型" }}</h3>
               <p class="muted">{{ activeModel?.description || "选择模型并输入需求开始调试。" }}</p>
               <div class="canvas-hints">
                 <span v-if="view === 'images'">电商海报</span>
@@ -1966,6 +2147,83 @@ async function batchDelete() {
         </div>
       </section>
 
+      <section v-else-if="view === 'auth'" class="auth-page">
+        <section class="auth-panel">
+          <div class="auth-copy">
+            <p class="eyebrow">Account</p>
+            <h2>登录 GenStudio</h2>
+            <p class="muted">账号、密钥、模型、子模型和创作记录都会按用户隔离保存。官网创意工坊跳转过来的 code 登录仍然保留。</p>
+            <div class="auth-security-list">
+              <span>HttpOnly 会话 cookie</span>
+              <span>Argon2 密码哈希</span>
+              <span>CSRF 写请求保护</span>
+            </div>
+          </div>
+
+          <div class="auth-card">
+            <div class="auth-tabs">
+              <button :class="authMode === 'login' ? 'auth-tab-active' : ''" @click="authMode = 'login'">登录</button>
+              <button :class="authMode === 'register' ? 'auth-tab-active' : ''" @click="authMode = 'register'">注册</button>
+            </div>
+
+            <form v-if="authMode === 'login'" class="auth-form" @submit.prevent="handlePasswordLogin">
+              <label class="field">
+                <span>邮箱或手机号</span>
+                <input v-model="authForm.identifier" autocomplete="username" placeholder="name@example.com" />
+              </label>
+              <label class="field">
+                <span>密码</span>
+                <input v-model="authForm.password" autocomplete="current-password" type="password" placeholder="至少 8 位" />
+              </label>
+              <button :disabled="auth.state.loading || !authForm.identifier || !authForm.password" type="submit">
+                {{ auth.state.loading ? "登录中..." : "登录" }}
+              </button>
+            </form>
+
+            <form v-else class="auth-form" @submit.prevent="handleRegister">
+              <label class="field">
+                <span>邮箱</span>
+                <input v-model="authForm.email" autocomplete="email" placeholder="name@example.com" />
+              </label>
+              <label class="field">
+                <span>手机号</span>
+                <input v-model="authForm.phone" autocomplete="tel" placeholder="可选" />
+              </label>
+              <label class="field">
+                <span>昵称</span>
+                <input v-model="authForm.nickname" autocomplete="name" placeholder="创作者名称" />
+              </label>
+              <label class="field">
+                <span>密码</span>
+                <input v-model="authForm.registerPassword" autocomplete="new-password" type="password" placeholder="至少 8 位，包含字母和数字" />
+              </label>
+              <button :disabled="auth.state.loading || (!authForm.email && !authForm.phone) || !authForm.registerPassword" type="submit">
+                {{ auth.state.loading ? "注册中..." : "注册并登录" }}
+              </button>
+            </form>
+
+            <div v-if="authForm.error || auth.state.error" class="inline-message inline-danger">{{ authForm.error || auth.state.error }}</div>
+
+            <div class="auth-code-block">
+              <div>
+                <strong>官网授权 code</strong>
+                <span>用于官网登录后跳转到子站自动登录。</span>
+              </div>
+              <div class="auth-code-form">
+                <input v-model="devAuthCode" placeholder="dev:alice" @keyup.enter="handleAuthCodeLogin" />
+                <button class="button-secondary" type="button" @click="handleAuthCodeLogin">授权登录</button>
+              </div>
+              <div class="settings-row-actions">
+                <button class="button-secondary" type="button" @click="devAuthCode = 'dev:alice'">Alice</button>
+                <button class="button-secondary" type="button" @click="devAuthCode = 'dev:bob'">Bob</button>
+                <button class="button-secondary" type="button" @click="devAuthCode = 'dev:carol'">Carol</button>
+                <button class="button-secondary" type="button" :disabled="auth.state.loading" @click="handleDevLogin">开发登录</button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </section>
+
       <section v-else-if="view === 'profile'" class="settings-page profile-page">
         <section class="settings-hero profile-hero">
           <div>
@@ -1976,7 +2234,7 @@ async function batchDelete() {
           <div class="profile-card">
             <div class="profile-avatar">{{ auth.state.user?.nickname?.slice(0, 1) || "G" }}</div>
             <strong>{{ auth.state.user?.nickname || "未登录用户" }}</strong>
-            <span>{{ auth.state.user?.email || "请通过官网授权或本地模拟登录" }}</span>
+            <span>{{ userAccountLabel }}</span>
           </div>
         </section>
 
@@ -1997,6 +2255,38 @@ async function batchDelete() {
             <span>历史对话</span>
             <strong>{{ conversationState.conversations.length }}</strong>
           </article>
+        </section>
+
+        <section class="settings-list-panel profile-editor">
+          <div class="settings-list-toolbar">
+            <div class="settings-toolbar-copy">
+              <strong>账号资料</strong>
+              <span>本地注册账号和官网授权账号共用同一个用户资料，模型与创作记录继续按用户隔离。</span>
+            </div>
+            <div class="settings-row-actions">
+              <button class="button-secondary" :disabled="!auth.state.user || auth.state.loading" @click="handleProfileSave">
+                {{ auth.state.loading ? "保存中..." : "保存资料" }}
+              </button>
+              <button v-if="auth.state.user" class="button-danger" :disabled="auth.state.loading" @click="handleLogout">退出登录</button>
+              <button v-else @click="navigate('auth')">去登录</button>
+            </div>
+          </div>
+          <div class="profile-form-grid">
+            <label class="field">
+              <span>昵称</span>
+              <input v-model="profileForm.nickname" :disabled="!auth.state.user" placeholder="创作者名称" />
+            </label>
+            <label class="field">
+              <span>手机号</span>
+              <input v-model="profileForm.phone" :disabled="!auth.state.user" placeholder="可选" />
+            </label>
+            <label class="field field-full">
+              <span>头像 URL</span>
+              <input v-model="profileForm.avatarUrl" :disabled="!auth.state.user" placeholder="https://..." />
+            </label>
+          </div>
+          <div v-if="profileForm.error" class="inline-message inline-danger">{{ profileForm.error }}</div>
+          <div v-if="profileForm.success" class="inline-message inline-success">{{ profileForm.success }}</div>
         </section>
 
         <section class="settings-list-panel profile-actions">
@@ -2035,52 +2325,46 @@ async function batchDelete() {
 
         <section class="settings-list-panel">
           <div class="settings-list-toolbar">
+            <div class="settings-toolbar-copy">
+              <strong>已保存模型</strong>
+              <span>每个模型都绑定当前用户自己的密钥、主模型和测试状态。</span>
+            </div>
             <div class="settings-bulk-actions">
               <span class="badge">已选 {{ settingsState.selectedIds.length }} / {{ store.models.value.length }}</span>
               <button class="button-secondary" :disabled="!settingsState.selectedIds.length" @click="batchTest">批量测试</button>
               <button class="button-danger" :disabled="!settingsState.selectedIds.length" @click="batchDelete">批量删除</button>
+              <button @click="openCreateDialog">+ 添加模型</button>
             </div>
-            <button @click="openCreateDialog">+ 添加模型</button>
           </div>
 
-          <div class="settings-table">
-            <div class="settings-table-head">
+          <div class="settings-model-board">
+            <div class="settings-board-head">
               <label class="settings-check-cell">
                 <input type="checkbox" :checked="allSettingsSelected" :indeterminate.prop="partialSettingsSelected" @change="(event) => toggleAllSettings((event.target as HTMLInputElement).checked)" />
               </label>
-              <span>名称</span><span>请求地址</span><span>链接状态</span><span>操作</span>
+              <span>模型</span>
+              <span>主模型</span>
+              <span>状态</span>
+              <span>操作</span>
             </div>
-            <article v-for="model in store.models.value" :key="model.id" class="settings-table-row" :data-model-id="model.id">
+            <article
+              v-for="model in store.models.value"
+              :key="model.id"
+              :class="['settings-model-row', `settings-model-row-${model.capability}`]"
+              :data-model-id="model.id"
+            >
               <label class="settings-check-cell">
                 <input type="checkbox" :checked="settingsState.selectedIds.includes(model.id)" @change="(event) => toggleSelected(model.id, (event.target as HTMLInputElement).checked)" />
               </label>
-              <div class="settings-model-name">
-                <strong>{{ model.name }}</strong>
-                <span>{{ CAPABILITY_LABELS[model.capability] }} · {{ model.vendor }}</span>
-                <span>主模型：{{ resolveModelName(model, getSetting(model.id)) }}</span>
-              </div>
-              <div class="settings-url">{{ getSetting(model.id).baseUrl || "-" }}</div>
-              <div>
-                <span v-if="settingsState.testState[model.id]?.loading" class="badge badge-warn">测试中</span>
-                <span v-else-if="settingsState.testState[model.id]?.result" class="badge badge-success">已连接 {{ settingsState.testState[model.id].result?.durationMs }}ms</span>
-                <span v-else-if="settingsState.testState[model.id]?.error" class="badge badge-danger">连接失败</span>
-                <span v-else-if="!isModelConfigured(model, getSetting(model.id))" class="badge badge-warn">待配置</span>
-                <span v-else class="badge">待测试</span>
-              </div>
-              <div class="settings-row-actions">
-                <button class="button-secondary" @click="fetchModelList(model, getSetting(model.id))">模型列表</button>
-                <button class="button-secondary" @click="testModel(model, getSetting(model.id))">测速</button>
-                <button class="button-secondary icon-button" @click="openEditDialog(model)">编辑</button>
-                <button class="button-danger icon-button" @click="removeModelFromWorkbench(model.id)">删除</button>
-              </div>
-              <div v-if="settingsState.modelListState[model.id]?.error" class="settings-row-detail inline-message inline-danger">{{ settingsState.modelListState[model.id].error }}</div>
-              <div v-if="settingsState.testState[model.id]?.error" class="settings-row-detail inline-message inline-danger">{{ settingsState.testState[model.id].error }}</div>
-              <div v-if="settingsState.modelListState[model.id]?.result || getAvailableModels(model).length" class="settings-row-detail settings-model-list-result">
-                <div class="status-row">
-                  <span class="badge badge-success">已获取 {{ getAvailableModels(model).length }} 个模型</span>
-                  <span v-if="settingsState.modelListState[model.id]?.result" class="history-time">{{ settingsState.modelListState[model.id].result?.durationMs }}ms</span>
+              <div class="settings-model-main">
+                <div :class="['model-avatar', `model-avatar-${model.capability}`]">{{ model.capability === "text" ? "T" : model.capability === "image" ? "I" : "V" }}</div>
+                <div>
+                  <strong>{{ modelDisplayName(model) }}</strong>
+                  <span>{{ modelSummaryText(model) }}</span>
                 </div>
-                <label class="model-select-field">
+              </div>
+              <div class="settings-primary-model">
+                <label v-if="getAvailableModels(model).length" class="inline-model-select">
                   <span>主模型</span>
                   <select
                     :value="resolveModelName(model, getSetting(model.id))"
@@ -2095,82 +2379,178 @@ async function batchDelete() {
                     </option>
                   </select>
                 </label>
+                <template v-else>
+                  <strong>{{ resolveModelName(model, getSetting(model.id)) || "尚未选择" }}</strong>
+                </template>
+                <span>{{ getAvailableModels(model).length || 1 }} 个可用模型</span>
+              </div>
+              <div class="settings-status-cell">
+                <span :class="['badge', getModelStatusClass(model, getSetting(model.id))]">
+                  {{ getModelStatusLabel(model, getSetting(model.id)) }}
+                </span>
+              </div>
+              <div class="settings-row-actions">
+                <button class="button-secondary settings-action-button" @click="fetchModelList(model, getSetting(model.id))">获取模型</button>
+                <button class="button-secondary settings-action-button" @click="testModel(model, getSetting(model.id))">测试</button>
+                <button class="button-secondary settings-action-button" @click="openEditDialog(model)">编辑</button>
+                <button class="button-danger settings-action-button" @click="removeModelFromWorkbench(model.id)">删除</button>
+              </div>
+              <div v-if="settingsState.modelListState[model.id]?.error" class="settings-row-detail inline-message inline-danger">{{ settingsState.modelListState[model.id].error }}</div>
+              <div v-if="settingsState.testState[model.id]?.error" class="settings-row-detail inline-message inline-danger">{{ settingsState.testState[model.id].error }}</div>
+              <div v-if="settingsState.testState[model.id]?.result" class="settings-row-detail test-response-panel">
+                <div><span>状态</span><strong>{{ testSummaryFor(settingsState.testState[model.id].result).status }}</strong></div>
+                <div><span>耗时</span><strong>{{ testSummaryFor(settingsState.testState[model.id].result).duration }}</strong></div>
+                <div class="test-response-url"><span>请求</span><strong>{{ testSummaryFor(settingsState.testState[model.id].result).requestUrl }}</strong></div>
+                <pre>{{ testSummaryFor(settingsState.testState[model.id].result).rawPreview }}</pre>
+              </div>
+              <div v-if="settingsState.modelListState[model.id]?.result" class="settings-row-detail settings-model-list-result">
+                <div class="status-row">
+                  <span class="badge badge-success">已获取 {{ getAvailableModels(model).length }} 个模型</span>
+                  <span v-if="settingsState.modelListState[model.id]?.result" class="history-time">{{ settingsState.modelListState[model.id].result?.durationMs }}ms</span>
+                </div>
               </div>
             </article>
+            <div v-if="!store.models.value.length" class="settings-empty-state">
+              <strong>还没有模型配置</strong>
+              <span>添加一个密钥，先获取模型列表，再选择主模型保存。</span>
+              <button @click="openCreateDialog">添加模型</button>
+            </div>
           </div>
         </section>
 
         <div v-if="settingsState.dialogOpen" class="settings-dialog-backdrop">
           <section class="settings-dialog">
             <div class="settings-dialog-head">
-              <div><p class="eyebrow">Model Config</p><h3>{{ settingsState.dialogMode === "create" ? "添加模型" : "模型配置" }}</h3></div>
+              <div>
+                <p class="eyebrow">Model Config</p>
+                <h3>{{ settingsState.dialogMode === "create" ? "添加模型" : "模型配置" }}</h3>
+                <span>填写密钥后先获取可用模型，再选择一个主模型用于创作。</span>
+              </div>
               <button class="button-secondary icon-button" @click="settingsState.dialogOpen = false">关闭</button>
             </div>
-            <div class="wizard-steps">
-              <article
-                v-for="step in modelWizardProgress"
-                :key="step.step"
-                :class="['wizard-step', step.step === modelWizardStep ? 'wizard-step-active' : '', step.complete ? 'wizard-step-complete' : '']"
-              >
-                <span>{{ step.index }}</span>
-                <div>
-                  <strong>{{ step.label }}</strong>
-                  <small>{{ step.description }}</small>
-                </div>
-              </article>
-            </div>
+            <div class="settings-dialog-workspace">
+              <div class="wizard-steps">
+                <article
+                  v-for="step in modelWizardProgress"
+                  :key="step.step"
+                  :class="['wizard-step', step.step === modelWizardStep ? 'wizard-step-active' : '', step.complete ? 'wizard-step-complete' : '']"
+                >
+                  <span>{{ step.index }}</span>
+                  <div>
+                    <strong>{{ step.label }}</strong>
+                    <small>{{ step.description }}</small>
+                  </div>
+                </article>
+              </div>
 
-            <div class="settings-dialog-sections">
-              <section class="settings-dialog-section">
-                <div class="section-copy">
-                  <strong>1. 连接密钥</strong>
-                  <span>先确认这个配置属于哪类创作能力，以及后端应该用哪个请求地址和密钥。</span>
-                </div>
-                <div class="form-grid settings-dialog-grid">
-                  <label class="field"><span>名称</span><input v-model="settingsState.draft.name" /></label>
-                  <label class="field"><span>备注</span><input v-model="settingsState.draft.description" /></label>
-                  <label class="field"><span>厂商</span><input v-model="settingsState.draft.vendor" /></label>
-                  <label class="field"><span>能力类型</span><select v-model="settingsState.draft.capability" @change="settingsState.draft.adapter = getCapabilityDefaultAdapter(settingsState.draft.capability)"><option value="text">文案创作</option><option value="image">图片创作</option><option value="video">视频创作</option></select></label>
-                  <label class="field field-full"><span>适配器</span><select v-model="settingsState.draft.adapter"><option v-for="adapter in getAdapterOptions(settingsState.draft.capability)" :key="adapter" :value="adapter">{{ ADAPTER_LABELS[adapter] }}</option></select></label>
-                  <label class="field field-full"><span>baseURL</span><input v-model="settingsState.draft.baseUrl" placeholder="例如：https://ai.ai666.net" /></label>
-                  <label class="field field-full"><span>API Key</span><input v-model="settingsState.draft.apiKey" type="password" /></label>
-                </div>
-              </section>
+              <div class="settings-dialog-sections">
+                <section class="settings-dialog-section">
+                  <div class="section-copy">
+                    <strong>连接密钥</strong>
+                    <span>日常只填能力、baseURL 和 API Key。名称、厂商、适配器会自动使用默认值。</span>
+                  </div>
+                  <div class="settings-dialog-quick-grid">
+                    <label class="field field-full">
+                      <span>能力类型</span>
+                      <select v-model="settingsState.draft.capability" @change="handleDraftCapabilityChange">
+                        <option value="text">文案创作</option>
+                        <option value="image">图片创作</option>
+                        <option value="video">视频创作</option>
+                      </select>
+                    </label>
+                    <label class="field field-full"><span>baseURL</span><input v-model="settingsState.draft.baseUrl" placeholder="例如：https://token.example.com" /></label>
+                    <label class="field field-full"><span>API Key</span><input v-model="settingsState.draft.apiKey" type="password" placeholder="sk-..." /></label>
+                    <button class="fetch-model-button" :disabled="!canFetchDraftModels || settingsState.modelListState[settingsState.draft.id]?.loading" :title="draftFetchDisabledTitle" @click="fetchModelList(getDraftModel(), getDraftSetting())">
+                      {{ settingsState.modelListState[settingsState.draft.id]?.loading ? "获取中..." : "获取模型列表" }}
+                    </button>
+                    <details class="advanced-settings">
+                      <summary>高级信息</summary>
+                      <div class="form-grid settings-dialog-grid">
+                        <label class="field"><span>名称</span><input v-model="settingsState.draft.name" :placeholder="getDraftDefaultName()" /></label>
+                        <label class="field"><span>厂商</span><input v-model="settingsState.draft.vendor" placeholder="自定义" /></label>
+                        <label class="field field-full"><span>备注</span><input v-model="settingsState.draft.description" placeholder="用于区分不同密钥或用途" /></label>
+                        <label class="field field-full"><span>适配器</span><select v-model="settingsState.draft.adapter"><option v-for="adapter in getAdapterOptions(settingsState.draft.capability)" :key="adapter" :value="adapter">{{ ADAPTER_LABELS[adapter] }}</option></select></label>
+                      </div>
+                    </details>
+                  </div>
+                </section>
 
-              <section class="settings-dialog-section">
-                <div class="section-copy">
-                  <strong>2. 获取模型并选择主模型</strong>
-                  <span>一个密钥可能返回多个模型，保存后创作会优先使用这里选中的主模型。</span>
-                </div>
-                <div class="form-grid settings-dialog-grid">
-                  <label class="field field-full"><span>模型标识</span><input v-model="settingsState.draft.model" placeholder="例如：gpt-4o" /></label>
-                  <label v-if="settingsState.draft.availableModels.length" class="field field-full">
-                    <span>主模型</span>
-                    <select v-model="settingsState.draft.modelNameOverride" @change="settingsState.draft.model = settingsState.draft.modelNameOverride">
-                      <option
-                        v-for="modelId in settingsState.draft.availableModels"
-                        :key="modelId"
-                        :value="modelId"
-                      >
-                        {{ modelId }}
-                      </option>
-                    </select>
-                  </label>
-                  <label v-else class="field field-full"><span>主模型覆盖</span><input v-model="settingsState.draft.modelNameOverride" placeholder="获取模型列表后可从下拉选择" /></label>
-                </div>
-              </section>
+                <section class="settings-dialog-section">
+                  <div class="section-copy">
+                    <strong>选择主模型</strong>
+                    <span>一个密钥可返回多个模型，保存后创作会使用当前选中的主模型。</span>
+                  </div>
+                  <div v-if="settingsState.draft.availableModels.length" class="model-pick-panel">
+                    <label class="field field-full">
+                      <span>主模型</span>
+                      <select v-model="settingsState.draft.modelNameOverride" @change="settingsState.draft.model = settingsState.draft.modelNameOverride">
+                        <option
+                          v-for="modelId in settingsState.draft.availableModels"
+                          :key="modelId"
+                          :value="modelId"
+                        >
+                          {{ modelId }}
+                        </option>
+                      </select>
+                    </label>
+                    <div class="model-pick-list">
+                      <span v-for="modelId in settingsState.draft.availableModels.slice(0, 8)" :key="modelId">{{ modelId }}</span>
+                    </div>
+                  </div>
+                  <div v-else class="model-fetch-placeholder">
+                    <strong>等待获取模型列表</strong>
+                    <span>先点击“获取模型列表”，这里会出现主模型下拉选择。</span>
+                  </div>
+                </section>
 
-              <section class="settings-dialog-section settings-dialog-review">
+                <section class="settings-dialog-section settings-dialog-review">
                 <div class="section-copy">
-                  <strong>3. 保存确认</strong>
-                  <span>当前主模型：{{ getDraftModelName(settingsState.draft) || "尚未选择" }}</span>
+                  <strong>测试与保存</strong>
+                  <span>测试会真实请求当前主模型，并展示响应摘要。</span>
                 </div>
-                <div class="review-grid">
-                  <span>能力</span><strong>{{ CAPABILITY_LABELS[settingsState.draft.capability] }}</strong>
-                  <span>适配器</span><strong>{{ ADAPTER_LABELS[settingsState.draft.adapter] }}</strong>
-                  <span>模型数量</span><strong>{{ settingsState.draft.availableModels.length || 1 }}</strong>
+                <div class="settings-dialog-review-body">
+                  <div class="review-grid">
+                    <div class="review-item">
+                      <span>能力</span>
+                      <strong>{{ CAPABILITY_LABELS[settingsState.draft.capability] }}</strong>
+                    </div>
+                    <div class="review-item">
+                      <span>主模型</span>
+                      <strong>{{ getDraftModelName(settingsState.draft) || "尚未选择" }}</strong>
+                    </div>
+                    <div class="review-item">
+                      <span>模型数量</span>
+                      <strong>{{ settingsState.draft.availableModels.length || 1 }}</strong>
+                    </div>
+                  </div>
+                  <div v-if="settingsState.testState[settingsState.draft.id]?.result" class="dialog-test-result">
+                    <div class="dialog-test-result-head">
+                      <div>
+                        <span>响应结果</span>
+                        <strong>连接测试已完成</strong>
+                      </div>
+                      <span class="badge badge-success">HTTP {{ testSummaryFor(settingsState.testState[settingsState.draft.id].result).status }}</span>
+                    </div>
+                    <div class="test-response-metrics">
+                      <div>
+                        <span>状态码</span>
+                        <strong>{{ testSummaryFor(settingsState.testState[settingsState.draft.id].result).status }}</strong>
+                      </div>
+                      <div>
+                        <span>耗时</span>
+                        <strong>{{ testSummaryFor(settingsState.testState[settingsState.draft.id].result).duration }}</strong>
+                      </div>
+                    </div>
+                    <div class="test-response-url"><span>请求</span><strong>{{ testSummaryFor(settingsState.testState[settingsState.draft.id].result).requestUrl }}</strong></div>
+                    <div class="response-preview-title">
+                      <span>响应预览</span>
+                      <strong>JSON</strong>
+                    </div>
+                    <pre>{{ testSummaryFor(settingsState.testState[settingsState.draft.id].result).rawPreview }}</pre>
+                  </div>
                 </div>
-              </section>
+                </section>
+              </div>
             </div>
             <div v-if="getModelIdentifierError(settingsState.draft.model)" class="inline-message inline-danger">{{ getModelIdentifierError(settingsState.draft.model) }}</div>
             <div v-if="getModelIdentifierError(settingsState.draft.modelNameOverride)" class="inline-message inline-danger">{{ getModelIdentifierError(settingsState.draft.modelNameOverride) }}</div>
@@ -2182,15 +2562,16 @@ async function batchDelete() {
               </div>
             </div>
             <div class="settings-dialog-actions">
-              <button class="button-secondary" :disabled="!canFetchDraftModels" :title="draftFetchDisabledTitle" @click="fetchModelList(getDraftModel(), getDraftSetting())">获取模型列表</button>
-              <button class="button-secondary" :disabled="!canTestDraftModel" :title="draftTestDisabledTitle" @click="testModel(getDraftModel(), getDraftSetting())">测速</button>
+              <button class="button-secondary" :disabled="!canTestDraftModel || settingsState.testState[settingsState.draft.id]?.loading" :title="draftTestDisabledTitle" @click="testModel(getDraftModel(), getDraftSetting())">
+                {{ settingsState.testState[settingsState.draft.id]?.loading ? "测试中..." : "测试连接" }}
+              </button>
               <button class="button-secondary" @click="settingsState.dialogOpen = false">取消</button>
               <button :disabled="!canSaveDraft()" :title="draftSaveDisabledTitle" @click="saveDialog">保存</button>
             </div>
             <div v-if="settingsState.modelListState[settingsState.draft.id]?.error" class="inline-message inline-danger">{{ settingsState.modelListState[settingsState.draft.id].error }}</div>
             <div v-if="settingsState.testState[settingsState.draft.id]?.error" class="inline-message inline-danger">{{ settingsState.testState[settingsState.draft.id].error }}</div>
             <div v-else-if="settingsState.testState[settingsState.draft.id]?.result" class="inline-message inline-success">
-              测试成功，耗时 {{ settingsState.testState[settingsState.draft.id].result?.durationMs }}ms。
+              测试成功，耗时 {{ testSummaryFor(settingsState.testState[settingsState.draft.id].result).duration }}。
             </div>
           </section>
         </div>

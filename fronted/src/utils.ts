@@ -265,3 +265,55 @@ export function videoGenerationSummary(input: {
   const modeLabel = input.mode === "reference" ? "全能参考" : input.mode === "start-end" ? "首尾帧" : "文生视频";
   return [modeLabel, input.aspectRatio, input.resolution, `${input.duration || "5"}秒`, `${input.count || "1"}条`].join("  ");
 }
+
+export function modelDisplayNameFromPrimary(capability: Capability, primaryModel: string): string {
+  const modelName = primaryModel.trim();
+  const suffix = capability === "text" ? "文案" : capability === "image" ? "图片" : "视频";
+  return modelName ? `${modelName} ${suffix}` : `${suffix}模型`;
+}
+
+export function isGeneratedModelDisplayName(value: string): boolean {
+  const name = value.trim();
+  return (
+    !name ||
+    name === "文案模型配置" ||
+    name === "图片模型配置" ||
+    name === "视频模型配置" ||
+    name === "文案模型" ||
+    name === "图片模型" ||
+    name === "视频模型" ||
+    /^.+\s(文案|图片|视频)$/.test(name)
+  );
+}
+
+export function modelDisplayNameForModel(model: ModelDefinition, setting?: ModelSetting): string {
+  if (model.name && !isGeneratedModelDisplayName(model.name)) return model.name;
+  return modelDisplayNameFromPrimary(model.capability, resolveModelName(model, setting));
+}
+
+export function testResultSummary(value: unknown): {
+  status: string;
+  duration: string;
+  requestUrl: string;
+  rawPreview: string;
+} {
+  const result = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const request = result.request && typeof result.request === "object" ? result.request as Record<string, unknown> : {};
+  const status = result.status;
+  const durationMs = result.durationMs;
+  const raw = Object.prototype.hasOwnProperty.call(result, "raw") ? result.raw : {};
+  const statusText = typeof status === "number" || typeof status === "string" ? String(status).trim() : "";
+  const durationText = typeof durationMs === "number" || typeof durationMs === "string" ? String(durationMs).trim() : "";
+  let rawPreview = "";
+  try {
+    rawPreview = JSON.stringify(raw, null, 2);
+  } catch {
+    rawPreview = String(raw);
+  }
+  return {
+    status: statusText || "未知",
+    duration: durationText ? `${durationText}ms` : "未知",
+    requestUrl: typeof request.url === "string" && request.url.trim() ? request.url : "未知",
+    rawPreview: rawPreview.slice(0, 1400),
+  };
+}

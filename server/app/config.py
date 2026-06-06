@@ -27,6 +27,10 @@ class Settings(BaseModel):
     official_auth_client_id: str = os.getenv("OFFICIAL_AUTH_CLIENT_ID", "genstudio")
     official_auth_client_secret: str = os.getenv("OFFICIAL_AUTH_CLIENT_SECRET", "")
     auto_create_tables: bool = _bool_env("GENSTUDIO_AUTO_CREATE_TABLES", True)
+    enable_dev_login: bool = _bool_env("GENSTUDIO_ENABLE_DEV_LOGIN", True)
+    csrf_ttl_minutes: int = int(os.getenv("GENSTUDIO_CSRF_TTL_MINUTES", "120"))
+    login_max_failed_attempts: int = int(os.getenv("GENSTUDIO_LOGIN_MAX_FAILED_ATTEMPTS", "5"))
+    login_lock_minutes: int = int(os.getenv("GENSTUDIO_LOGIN_LOCK_MINUTES", "15"))
 
 
 @lru_cache

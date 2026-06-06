@@ -45,7 +45,6 @@ describe("model wizard helpers", () => {
           name: "GPT Image",
           baseUrl: "https://token.example.com",
           apiKey: "sk-test",
-          model: "gpt-image-2",
         }),
       ),
     ).toBe("models");
@@ -148,7 +147,7 @@ describe("model wizard helpers", () => {
       "名称",
       "baseURL",
       "API Key",
-      "模型标识",
+      "主模型",
     ]);
   });
 
@@ -165,7 +164,7 @@ describe("model wizard helpers", () => {
     ).toBe(true);
   });
 
-  it("requires credentials and a model identifier before testing", () => {
+  it("requires fetched models and a selected primary model before testing", () => {
     expect(
       canTestModelDraft(
         draft({
@@ -180,6 +179,17 @@ describe("model wizard helpers", () => {
           baseUrl: "https://token.example.com",
           apiKey: "sk-test",
           model: "gpt-5.5",
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      canTestModelDraft(
+        draft({
+          baseUrl: "https://token.example.com",
+          apiKey: "sk-test",
+          model: "gpt-5.5",
+          modelNameOverride: "gpt-5.5",
+          availableModels: ["gpt-5.5", "gpt-image-2"],
         }),
       ),
     ).toBe(true);

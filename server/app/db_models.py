@@ -31,6 +31,7 @@ class User(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
     sessions: Mapped[list[SessionRecord]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    credentials: Mapped[list[UserCredential]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
 class SessionRecord(Base):
@@ -44,6 +45,39 @@ class SessionRecord(Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     user: Mapped[User] = relationship(back_populates="sessions")
+    csrf_tokens: Mapped[list[SessionCsrfToken]] = relationship(back_populates="session", cascade="all, delete-orphan")
+
+
+class SessionCsrfToken(Base):
+    __tablename__ = "session_csrf_tokens"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id("csrf"))
+    session_id: Mapped[str] = mapped_column(String(64), ForeignKey("sessions.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    session: Mapped[SessionRecord] = relationship(back_populates="csrf_tokens")
+
+
+class UserCredential(Base):
+    __tablename__ = "user_credentials"
+    __table_args__ = (UniqueConstraint("provider", "identifier", name="uq_user_credential_provider_identifier"),)
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id("cred"))
+    user_id: Mapped[str] = mapped_column(String(64), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    provider: Mapped[str] = mapped_column(String(32), default="local")
+    identifier: Mapped[str] = mapped_column(String(255), index=True)
+    email: Mapped[str] = mapped_column(String(255), default="")
+    phone: Mapped[str] = mapped_column(String(64), default="")
+    password_hash: Mapped[str] = mapped_column(String(512), default="")
+    failed_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_failed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+    user: Mapped[User] = relationship(back_populates="credentials")
 
 
 class ApiKey(Base):

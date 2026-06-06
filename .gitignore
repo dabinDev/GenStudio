@@ -11,6 +11,7 @@ dist
 coverage
 *.tsbuildinfo
 output
+generated_assets
 test-results
 playwright-report
 server/.venv

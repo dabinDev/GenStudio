@@ -302,6 +302,83 @@ def test_proxy_test_surfaces_upstream_error_message(monkeypatch) -> None:
     assert response.json()["detail"]["message"] == "Invalid API key"
 
 
+def test_proxy_test_omits_html_upstream_raw(monkeypatch) -> None:
+    html = "<html><head><title>504 Gateway Time-out</title></head><body>nginx</body></html>"
+
+    async def fake_forward_json(method, url, api_key, body=None):
+        return httpx.Response(504, text=html), html
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/proxy/test",
+        json={
+            "config": {"baseUrl": "https://token.example.com", "apiKey": "sk-test"},
+            "capability": "image",
+            "adapter": "image-openai",
+            "model": "gpt-image-2",
+        },
+    )
+
+    assert response.status_code == 504
+    detail = response.json()["detail"]
+    assert detail["message"] == "上游服务超时，请稍后重试。"
+    assert detail["request"]["url"] == "https://token.example.com/v1/images/generations"
+    assert detail["durationMs"] >= 0
+    assert "raw" not in detail
+
+
+def test_proxy_test_normalizes_openai_bad_response_status_code(monkeypatch) -> None:
+    async def fake_forward_json(method, url, api_key, body=None):
+        raw = {"error": {"message": "openai_error", "type": "bad_response_status_code", "code": "bad_response_status_code"}}
+        return httpx.Response(502, json=raw), raw
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/proxy/test",
+        json={
+            "config": {"baseUrl": "https://token.example.com", "apiKey": "sk-test"},
+            "capability": "image",
+            "adapter": "image-openai",
+            "model": "gpt-image-2",
+        },
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"]["message"] == "上游模型服务返回异常，请稍后重试或检查模型接口。"
+
+
+def test_proxy_test_normalizes_non_json_upstream_wrapper_error(monkeypatch) -> None:
+    async def fake_forward_json(method, url, api_key, body=None):
+        raw = {
+            "error": {
+                "message": "invalid character '<' looking for beginning of value",
+                "type": "bad_response_body",
+                "code": "bad_response_body",
+            }
+        }
+        return httpx.Response(502, json=raw), raw
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/proxy/test",
+        json={
+            "config": {"baseUrl": "https://token.example.com", "apiKey": "sk-test"},
+            "capability": "image",
+            "adapter": "image-openai",
+            "model": "gpt-image-2",
+        },
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"]["message"] == "上游接口返回了非 JSON 内容，请检查模型接口路径或稍后重试。"
+
+
 def test_proxy_test_accepts_json_payload_returned_as_text(monkeypatch) -> None:
     async def fake_forward_json(method, url, api_key, body=None):
         return (

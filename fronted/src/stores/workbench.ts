@@ -79,6 +79,8 @@ export function useWorkbenchStore() {
       builtin: false,
       serverManaged: true,
       primarySubModelId: item.primarySubModelId,
+      catalogModelId: item.catalogModelId,
+      catalog: item.catalog,
       subModels: item.subModels,
     }));
     items.forEach((item) => {

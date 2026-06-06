@@ -3,15 +3,17 @@ from __future__ import annotations
 import base64
 import binascii
 import copy
+import json
 from pathlib import Path
 import time
 from uuid import uuid4
 from typing import Any
 from urllib.parse import quote, urlparse
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+import httpx
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -34,15 +36,23 @@ from app.conversation_service import (
     add_asset,
     add_message,
     create_conversation,
+    dumps_for_storage,
     ensure_conversation,
     get_conversation,
     list_conversations,
+    make_title,
     reload_conversation,
     serialize_conversation,
     serialize_message,
 )
+from app.catalog_service import (
+    fetch_kkyi_catalog_details,
+    list_catalog_models,
+    serialize_catalog_model,
+    sync_catalog_details,
+)
 from app.database import get_db, init_db
-from app.db_models import CallLog, User
+from app.db_models import CallLog, Conversation, ConversationMessage, GeneratedAsset, User, utcnow
 from app.model_service import (
     create_model_group,
     delete_model_group,
@@ -68,19 +78,23 @@ from app.proxy_utils import (
     pick_error_message,
     pick_text_content,
     pick_video_query_payload,
+    is_non_json_upstream_error,
     resolve_test_path,
     resolve_url,
     resolve_video_create_path,
     resolve_video_query_path,
+    sanitize_error_raw,
     upstream_error,
     validate_config,
     filter_model_ids_for_capability,
+    forward_multipart,
 )
 from app.rate_limit import InMemoryRateLimiter, check_rate_limit
 from app.schemas import (
     ConversationCreate,
     DevLoginRequest,
     LoginRequest,
+    KkyiCatalogSyncRequest,
     ModelCreate,
     ModelUpdate,
     ProfileUpdateRequest,
@@ -92,6 +106,9 @@ from app.storage import create_presigned_put_url
 app = FastAPI(title="GenStudio Server")
 GENERATED_ASSET_DIR = Path(__file__).resolve().parents[2] / "generated_assets"
 GENERATED_ASSET_DIR.mkdir(parents=True, exist_ok=True)
+LOCAL_UPLOAD_DIR = Path(__file__).resolve().parents[2] / "uploaded_assets"
+LOCAL_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+MAX_INLINE_REFERENCE_LENGTH = 10 * 1024 * 1024
 FRONTEND_ROUTES = {"auth", "auth-error", "text", "images", "videos", "settings", "profile"}
 rate_limiter = InMemoryRateLimiter()
 
@@ -140,6 +157,125 @@ def extract_video_prompt(request_body: dict[str, Any]) -> str:
     return ""
 
 
+def is_kkyi_catalog_video_model(sub_model: Any) -> bool:
+    catalog_model = getattr(sub_model, "catalog_model", None)
+    return bool(catalog_model and getattr(catalog_model, "source", "") == "kkyi" and getattr(catalog_model, "capability", "") == "video")
+
+
+def normalize_kkyi_video_body(request_body: dict[str, Any], model_name: str) -> dict[str, Any]:
+    prompt = extract_video_prompt(request_body)
+    normalized: dict[str, Any] = {
+        "model": str(request_body.get("model") or model_name).strip(),
+        "prompt": prompt,
+    }
+    field_map = {
+        "ratio": ("ratio", "aspect_ratio"),
+        "duration": ("duration",),
+        "resolution": ("resolution", "size"),
+        "generate_audio": ("generate_audio", "audio"),
+        "quantity": ("quantity", "n", "count"),
+        "video_mode": ("video_mode", "mode"),
+        "img_url": ("img_url",),
+        "first_frame": ("first_frame",),
+        "last_frame": ("last_frame",),
+        "video_url": ("video_url",),
+        "audio_url": ("audio_url",),
+        "material": ("material",),
+    }
+    for target_key, source_keys in field_map.items():
+        for source_key in source_keys:
+            if source_key in request_body and request_body[source_key] not in (None, ""):
+                normalized[target_key] = request_body[source_key]
+                break
+    if "images" in request_body and request_body["images"]:
+        normalized["img_url"] = request_body["images"]
+    if "image" in request_body and request_body["image"]:
+        normalized["img_url"] = request_body["image"]
+    if not normalized.get("model"):
+        normalized["model"] = model_name
+    normalized.setdefault("quantity", 1)
+    return {key: value for key, value in normalized.items() if value not in (None, "")}
+
+
+def find_video_task_message(conversation: Conversation, task_id: str) -> ConversationMessage | None:
+    for message in conversation.messages:
+        if message.role == "assistant" and message.capability == "video" and message.content == task_id:
+            return message
+    for message in conversation.messages:
+        if message.role != "assistant" or message.capability != "video":
+            continue
+        try:
+            response = json.loads(message.response_json or "{}")
+        except ValueError:
+            response = {}
+        if isinstance(response, dict) and (
+            response.get("id") == task_id
+            or response.get("task_id") == task_id
+            or response.get("taskId") == task_id
+        ):
+            return message
+    return None
+
+
+def delete_duplicate_video_task_messages(db: Session, conversation: Conversation, keep_message: ConversationMessage, task_id: str) -> None:
+    for message in list(conversation.messages):
+        if message.id == keep_message.id:
+            continue
+        if message.role == "assistant" and message.capability == "video" and message.content in {task_id, "completed"}:
+            db.delete(message)
+
+
+def mark_video_task_message(
+    db: Session,
+    conversation: Conversation,
+    user: User,
+    *,
+    task_id: str,
+    model_group_id: str,
+    sub_model_id: str,
+    status: str,
+    content: str,
+    error_message: str = "",
+    can_retry: bool = False,
+    request: Any = None,
+    response: Any = None,
+) -> ConversationMessage:
+    message = find_video_task_message(conversation, task_id)
+    if message is None:
+        message = add_message(
+            db,
+            conversation,
+            user,
+            role="assistant",
+            capability="video",
+            content=content,
+            status=status,
+            error_message=error_message,
+            can_retry=can_retry,
+            model_group_id=model_group_id,
+            sub_model_id=sub_model_id,
+            request=request,
+            response=response,
+        )
+        return message
+
+    message.model_group_id = model_group_id
+    message.sub_model_id = sub_model_id
+    message.content = content
+    message.status = status
+    message.error_message = error_message
+    message.can_retry = can_retry
+    message.request_json = dumps_for_storage(request)
+    message.response_json = dumps_for_storage(response)
+    conversation.capability = "video"
+    conversation.model_group_id = model_group_id or conversation.model_group_id
+    conversation.sub_model_id = sub_model_id or conversation.sub_model_id
+    conversation.updated_at = utcnow()
+    delete_duplicate_video_task_messages(db, conversation, message, task_id)
+    db.flush()
+    return message
+
+
 def persist_generated_image_from_b64(value: str) -> str:
     try:
         image_bytes = base64.b64decode(value, validate=True)
@@ -148,6 +284,122 @@ def persist_generated_image_from_b64(value: str) -> str:
     file_name = f"{uuid4().hex}.png"
     (GENERATED_ASSET_DIR / file_name).write_bytes(image_bytes)
     return f"/api/assets/generated/{file_name}"
+
+
+def safe_upload_file_name(value: str) -> str:
+    raw = value.strip().replace("\\", "/").split("/")[-1] or "upload.bin"
+    sanitized = "".join(char if char.isalnum() or char in "._-" else "-" for char in raw).strip(".-")
+    return sanitized[:120] or "upload.bin"
+
+
+def guess_image_media_type(file_name: str, fallback: str = "application/octet-stream") -> str:
+    suffix = Path(file_name).suffix.lower()
+    if suffix in {".jpg", ".jpeg"}:
+        return "image/jpeg"
+    if suffix == ".png":
+        return "image/png"
+    if suffix == ".webp":
+        return "image/webp"
+    return fallback
+
+
+def local_asset_data_url(value: str) -> str:
+    path_prefixes = {
+        "/api/assets/uploads/": LOCAL_UPLOAD_DIR,
+        "/api/assets/generated/": GENERATED_ASSET_DIR,
+    }
+    for prefix, directory in path_prefixes.items():
+        if not value.startswith(prefix):
+            continue
+        file_name = Path(value.removeprefix(prefix)).name
+        file_path = directory / file_name
+        if not file_path.is_file():
+            raise HTTPException(status_code=404, detail={"message": "Reference image not found."})
+        media_type = guess_image_media_type(file_name, "image/png")
+        encoded = base64.b64encode(file_path.read_bytes()).decode("ascii")
+        return f"data:{media_type};base64,{encoded}"
+    return value
+
+
+def local_asset_file_reference(value: str) -> dict[str, Any] | None:
+    path_prefixes = {
+        "/api/assets/uploads/": LOCAL_UPLOAD_DIR,
+        "/api/assets/generated/": GENERATED_ASSET_DIR,
+    }
+    for prefix, directory in path_prefixes.items():
+        if not value.startswith(prefix):
+            continue
+        file_name = Path(value.removeprefix(prefix)).name
+        file_path = directory / file_name
+        if not file_path.is_file():
+            raise HTTPException(status_code=404, detail={"message": "Reference image not found."})
+        return {
+            "filename": file_name,
+            "content": file_path.read_bytes(),
+            "content_type": guess_image_media_type(file_name, "image/png"),
+        }
+    return None
+
+
+def data_url_file_reference(value: str, index: int) -> dict[str, Any] | None:
+    if not value.startswith("data:") or ";base64," not in value:
+        return None
+    header, encoded = value.split(",", 1)
+    content_type = header.removeprefix("data:").split(";", 1)[0] or "image/png"
+    try:
+        content = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    suffix = "jpg" if content_type == "image/jpeg" else content_type.split("/")[-1] or "png"
+    return {
+        "filename": f"reference-{index}.{suffix}",
+        "content": content,
+        "content_type": content_type,
+    }
+
+
+def collect_image_edit_references(body: dict[str, Any]) -> list[dict[str, Any]]:
+    references = body.get("image")
+    if isinstance(references, str):
+        items = [references]
+    elif isinstance(references, list):
+        items = [item for item in references if isinstance(item, str)]
+    else:
+        return []
+    collected: list[dict[str, Any]] = []
+    for index, item in enumerate(items):
+        local_reference = local_asset_file_reference(item)
+        if local_reference:
+            collected.append(local_reference)
+            continue
+        data_reference = data_url_file_reference(item, index)
+        if data_reference:
+            collected.append(data_reference)
+    return collected
+
+
+def expand_local_image_references(body: dict[str, Any]) -> dict[str, Any]:
+    references = body.get("image")
+    if isinstance(references, str):
+        body["image"] = local_asset_data_url(references)
+        return body
+    if isinstance(references, list):
+        body["image"] = [local_asset_data_url(item) if isinstance(item, str) else item for item in references]
+    return body
+
+
+def expand_local_video_references(value: Any) -> Any:
+    if isinstance(value, dict):
+        expanded: dict[str, Any] = {}
+        for key, item in value.items():
+            if key in {"url", "image", "image_url"} and isinstance(item, str):
+                expanded[key] = local_asset_data_url(item)
+            else:
+                expanded[key] = expand_local_video_references(item)
+        return expanded
+    if isinstance(value, list):
+        return [expand_local_video_references(item) for item in value]
+    return value
 
 
 def extract_images_from_response(raw: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -174,6 +426,82 @@ def extract_images_from_response(raw: dict[str, Any]) -> tuple[list[dict[str, An
             )
     return images, safe_raw
 
+
+def has_oversized_inline_reference(body: dict[str, Any]) -> bool:
+    references = body.get("image")
+    if not isinstance(references, list):
+        references = [references] if isinstance(references, str) else []
+    return any(
+        isinstance(item, str)
+        and item.startswith("data:")
+        and len(item) > MAX_INLINE_REFERENCE_LENGTH
+        for item in references
+    )
+
+
+def safe_conversation_id(value: str) -> str:
+    candidate = value.strip()
+    return candidate if candidate.startswith("cnv_") else ""
+
+
+def transient_conversation_id(value: str) -> str:
+    candidate = value.strip()
+    if candidate.startswith("local-conversation-"):
+        return candidate
+    return f"local-conversation-{uuid4()}"
+
+
+def transient_error_conversation(
+    *,
+    conversation_id: str,
+    capability: str,
+    prompt: str,
+    error_message: str,
+) -> dict[str, Any]:
+    now = utcnow().isoformat()
+    resolved_conversation_id = transient_conversation_id(conversation_id)
+    user_message = {
+        "id": f"local-message-{uuid4()}",
+        "role": "user",
+        "capability": capability,
+        "content": prompt,
+        "status": "success",
+        "errorMessage": "",
+        "canRetry": False,
+        "modelGroupId": None,
+        "subModelId": None,
+        "assets": [],
+        "createdAt": now,
+    }
+    assistant_message = {
+        "id": f"local-message-{uuid4()}",
+        "role": "assistant",
+        "capability": capability,
+        "content": "",
+        "status": "error",
+        "errorMessage": error_message,
+        "canRetry": True,
+        "modelGroupId": None,
+        "subModelId": None,
+        "assets": [],
+        "createdAt": now,
+    }
+    return {
+        "conversation": {
+            "id": resolved_conversation_id,
+            "title": make_title(prompt),
+            "capability": capability,
+            "modelGroupId": None,
+            "subModelId": None,
+            "status": "active",
+            "createdAt": now,
+            "updatedAt": now,
+            "messages": [user_message, assistant_message],
+        },
+        "assistantMessage": assistant_message,
+    }
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_settings().cors_origins,
@@ -181,6 +509,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(HTTPException)
+async def clean_http_exception(_request: Request, exc: HTTPException) -> JSONResponse:
+    detail = exc.detail
+    if isinstance(detail, dict) and "raw" in detail:
+        clean_detail = dict(detail)
+        clean_raw = sanitize_error_raw(clean_detail.get("raw"))
+        if clean_raw is None:
+            clean_detail.pop("raw", None)
+        else:
+            clean_detail["raw"] = clean_raw
+        detail = clean_detail
+    return JSONResponse(status_code=exc.status_code, content={"detail": detail}, headers=exc.headers)
 
 
 @app.on_event("startup")
@@ -213,6 +555,52 @@ async def generated_asset(file_name: str) -> FileResponse:
     if not file_path.is_file():
         raise HTTPException(status_code=404, detail={"message": "Asset not found."})
     return FileResponse(file_path, media_type="image/png")
+
+
+@app.get("/api/assets/uploads/{file_name}")
+async def local_uploaded_asset(file_name: str) -> FileResponse:
+    if "/" in file_name or "\\" in file_name:
+        raise HTTPException(status_code=404, detail={"message": "Asset not found."})
+    file_path = LOCAL_UPLOAD_DIR / file_name
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail={"message": "Asset not found."})
+    return FileResponse(file_path, media_type=guess_image_media_type(file_name))
+
+
+@app.post("/api/upload/local")
+async def local_upload(
+    request: Request,
+    file: UploadFile = File(...),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, str]:
+    check_rate_limit(
+        limiter=rate_limiter,
+        request=request,
+        settings=settings,
+        bucket="upload-local",
+        limit=settings.rate_limit_upload_per_window,
+        user_id="",
+    )
+    content_type = (file.content_type or "application/octet-stream").lower()
+    if content_type == "image/jpg":
+        content_type = "image/jpeg"
+    if content_type not in {"image/png", "image/jpeg", "image/webp"}:
+        raise HTTPException(status_code=400, detail={"message": "Only image references can be uploaded."})
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail={"message": "Upload file is empty."})
+    safe_name = safe_upload_file_name(file.filename or "reference.png")
+    file_name = f"{uuid4().hex}-{safe_name}"
+    file_path = LOCAL_UPLOAD_DIR / file_name
+    file_path.write_bytes(content)
+    public_url = f"/api/assets/uploads/{file_name}"
+    return {
+        "id": f"local-upload-{uuid4()}",
+        "fileName": safe_name,
+        "publicUrl": public_url,
+        "contentType": content_type,
+        "localPreviewUrl": public_url,
+    }
 
 
 @app.get("/api/auth/me")
@@ -398,6 +786,44 @@ async def models(
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     return {"models": [serialize_model(item).model_dump() for item in list_model_groups(db, current_user)]}
+
+
+@app.get("/api/catalog/models")
+async def catalog_models(
+    capability: str = Query(default=""),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    _ = current_user
+    safe_capability = capability if capability in {"", "text", "image", "video"} else ""
+    return {"models": [serialize_catalog_model(item).model_dump() for item in list_catalog_models(db, safe_capability)]}
+
+
+@app.post("/api/catalog/kkyi/sync")
+async def sync_kkyi_catalog(
+    payload: KkyiCatalogSyncRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    _ = current_user
+    bearer_token = payload.bearerToken.strip() or settings.kkyi_catalog_bearer_token
+    if not bearer_token:
+        raise HTTPException(status_code=400, detail={"message": "缺少 KKYi 授权 Token。"})
+    try:
+        details = await fetch_kkyi_catalog_details(
+            base_url=settings.kkyi_catalog_base_url,
+            bearer_token=bearer_token,
+            model_type=payload.modelType,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail={"message": "同步 KKYi 模型目录失败。"}) from exc
+    synced = sync_catalog_details(db, details)
+    return {
+        "synced": len(synced),
+        "models": [serialize_catalog_model(item).model_dump() for item in synced],
+    }
 
 
 @app.post("/api/models")
@@ -594,6 +1020,7 @@ async def proxy_test(
         limit=settings.rate_limit_model_test_per_window,
         user_id=current_user.id if current_user else "",
     )
+    sub_model = None
     if payload.get("subModelId") and not current_user:
         raise HTTPException(status_code=401, detail={"message": "请先登录。"})
     if payload.get("subModelId") and current_user:
@@ -613,8 +1040,12 @@ async def proxy_test(
     if not model:
         raise HTTPException(status_code=400, detail={"message": "缺少模型标识。"})
 
-    target_url = resolve_url(base_url, resolve_test_path(str(capability), str(adapter) if adapter else None))
     body = build_test_body(str(capability), model, str(adapter) if adapter else None)
+    target_path = resolve_test_path(str(capability), str(adapter) if adapter else None)
+    if sub_model and is_kkyi_catalog_video_model(sub_model):
+        target_path = "/v1/video/generations"
+        body = normalize_kkyi_video_body(body, sub_model.model_name)
+    target_url = resolve_url(base_url, target_path)
     started_at = time.perf_counter()
     response, raw = await forward_json("POST", target_url, api_key, body)
     raw = coerce_json_object(raw)
@@ -825,18 +1256,33 @@ async def proxy_image(
     if not model:
         raise HTTPException(status_code=400, detail={"message": "缺少模型标识。"})
 
-    target_url = resolve_url(base_url, "/v1/images/generations")
     body = {"model": model, **(payload.get("requestBody") or {})}
+    edit_references = collect_image_edit_references(body)
+    target_url = resolve_url(base_url, "/v1/images/edits" if edit_references else "/v1/images/generations")
+    if not edit_references:
+        body = expand_local_image_references(body)
     prompt = str(body.get("prompt") or "")
-    if current_user and model_group and sub_model:
+    if has_oversized_inline_reference(body):
+        message = "参考图过大，请重新上传参考图后再生成。"
+        detail: dict[str, Any] = {"message": message}
+        detail.update(
+            transient_error_conversation(
+                conversation_id=str(payload.get("conversationId") or ""),
+                capability="image",
+                prompt=prompt,
+                error_message=message,
+            )
+        )
+        raise HTTPException(status_code=413, detail=detail)
+    if current_user:
         conversation = ensure_conversation(
             db,
             current_user,
-            conversation_id=str(payload.get("conversationId") or ""),
+            conversation_id=safe_conversation_id(str(payload.get("conversationId") or "")),
             title_seed=prompt,
             capability="image",
-            model_group_id=model_group.id,
-            sub_model_id=sub_model.id,
+            model_group_id=model_group.id if model_group else None,
+            sub_model_id=sub_model.id if sub_model else None,
         )
         add_message(
             db,
@@ -845,18 +1291,41 @@ async def proxy_image(
             role="user",
             capability="image",
             content=prompt,
-            model_group_id=model_group.id,
-            sub_model_id=sub_model.id,
+            model_group_id=model_group.id if model_group else None,
+            sub_model_id=sub_model.id if sub_model else None,
             request=body,
         )
     started_at = time.perf_counter()
-    response, raw = await forward_json("POST", target_url, api_key, body)
+    try:
+        if edit_references:
+            edit_data = {
+                key: str(value)
+                for key, value in body.items()
+                if key != "image" and value is not None
+            }
+            edit_files = [
+                ("image", (reference["filename"], reference["content"], reference["content_type"]))
+                for reference in edit_references
+            ]
+            response, raw = await forward_multipart(target_url, api_key, data=edit_data, files=edit_files)
+            if (not response.is_success or not isinstance(raw, dict)) and is_non_json_upstream_error(raw):
+                body = expand_local_image_references(copy.deepcopy(body))
+                target_url = resolve_url(base_url, "/v1/images/generations")
+                response, raw = await forward_json("POST", target_url, api_key, body)
+        else:
+            response, raw = await forward_json("POST", target_url, api_key, body)
+    except httpx.TimeoutException:
+        response = httpx.Response(504, text="504 Gateway Timeout")
+        raw = "504 Gateway Timeout"
+    except httpx.HTTPError:
+        response = httpx.Response(503, text="502 Bad Gateway")
+        raw = "502 Bad Gateway"
     duration_ms = elapsed_ms(started_at)
 
     if not response.is_success or not isinstance(raw, dict):
         message = pick_error_message(raw, "图片请求失败。")
         failed_message = None
-        if current_user and model_group and sub_model:
+        if current_user:
             if conversation:
                 failed_message = add_message(
                     db,
@@ -867,22 +1336,23 @@ async def proxy_image(
                     status="error",
                     error_message=message,
                     can_retry=True,
-                    model_group_id=model_group.id,
-                    sub_model_id=sub_model.id,
+                    model_group_id=model_group.id if model_group else None,
+                    sub_model_id=sub_model.id if sub_model else None,
                     request=body,
                     response=raw,
                 )
-            record_call_log(
-                db,
-                user=current_user,
-                model_group_id=model_group.id,
-                sub_model_id=sub_model.id,
-                capability="image",
-                endpoint="/api/proxy/image",
-                status="error",
-                duration_ms=duration_ms,
-                error_message=message,
-            )
+            if model_group and sub_model:
+                record_call_log(
+                    db,
+                    user=current_user,
+                    model_group_id=model_group.id,
+                    sub_model_id=sub_model.id,
+                    capability="image",
+                    endpoint="/api/proxy/image",
+                    status="error",
+                    duration_ms=duration_ms,
+                    error_message=message,
+                )
         detail = upstream_error(raw, "图片请求失败。", response.status_code).detail
         if conversation and failed_message and current_user:
             db.commit()
@@ -892,12 +1362,22 @@ async def proxy_image(
                 "conversation": serialize_conversation(refreshed).model_dump(mode="json"),
                 "assistantMessage": serialize_message(failed_message).model_dump(mode="json"),
             }
+        elif not current_user and not payload.get("subModelId"):
+            detail = {
+                **detail,
+                **transient_error_conversation(
+                    conversation_id=str(payload.get("conversationId") or ""),
+                    capability="image",
+                    prompt=prompt,
+                    error_message=message,
+                ),
+            }
         raise HTTPException(status_code=response.status_code or 500, detail=detail)
 
     images, safe_raw = extract_images_from_response(raw)
 
     assistant_message = None
-    if current_user and model_group and sub_model:
+    if current_user:
         if conversation:
             assistant_message = add_message(
                 db,
@@ -907,8 +1387,8 @@ async def proxy_image(
                 capability="image",
                 content="",
                 status="success",
-                model_group_id=model_group.id,
-                sub_model_id=sub_model.id,
+                model_group_id=model_group.id if model_group else None,
+                sub_model_id=sub_model.id if sub_model else None,
                 request=body,
                 response=safe_raw,
             )
@@ -922,18 +1402,19 @@ async def proxy_image(
                     url=image["src"],
                     metadata={"revisedPrompt": image.get("revisedPrompt")},
                 )
-        record_call_log(
-            db,
-            user=current_user,
-            model_group_id=model_group.id,
-            sub_model_id=sub_model.id,
-            capability="image",
-            endpoint="/api/proxy/image",
-            status="success",
-            duration_ms=duration_ms,
-            prompt_summary=str(body.get("prompt", ""))[:512],
-            usage=raw.get("usage"),
-        )
+        if model_group and sub_model:
+            record_call_log(
+                db,
+                user=current_user,
+                model_group_id=model_group.id,
+                sub_model_id=sub_model.id,
+                capability="image",
+                endpoint="/api/proxy/image",
+                status="success",
+                duration_ms=duration_ms,
+                prompt_summary=str(body.get("prompt", ""))[:512],
+                usage=raw.get("usage"),
+            )
 
     result = {"images": images, "raw": safe_raw}
     if conversation and current_user:
@@ -976,8 +1457,13 @@ async def proxy_video_create(
     if not adapter:
         raise HTTPException(status_code=400, detail={"message": "缺少视频适配器。"})
 
-    target_url = resolve_url(base_url, resolve_video_create_path(adapter))
     request_body = payload.get("requestBody") or {}
+    if isinstance(request_body, dict):
+        request_body = expand_local_video_references(copy.deepcopy(request_body))
+        if sub_model and is_kkyi_catalog_video_model(sub_model):
+            request_body = normalize_kkyi_video_body(request_body, sub_model.model_name)
+    target_path = "/v1/video/generations" if sub_model and is_kkyi_catalog_video_model(sub_model) else resolve_video_create_path(adapter)
+    target_url = resolve_url(base_url, target_path)
     prompt = extract_video_prompt(request_body if isinstance(request_body, dict) else {})
     if current_user and model_group and sub_model:
         conversation = ensure_conversation(
@@ -1126,7 +1612,12 @@ async def proxy_video_query(
     if not task_id:
         raise HTTPException(status_code=400, detail={"message": "缺少任务 ID。"})
 
-    target_url = resolve_url(base_url, resolve_video_query_path(adapter, task_id))
+    target_path = (
+        f"/v1/video/generations/{quote(task_id)}"
+        if sub_model and is_kkyi_catalog_video_model(sub_model)
+        else resolve_video_query_path(adapter, task_id)
+    )
+    target_url = resolve_url(base_url, target_path)
     started_at = time.perf_counter()
     response, raw = await forward_json("GET", target_url, api_key)
     duration_ms = elapsed_ms(started_at)
@@ -1138,18 +1629,17 @@ async def proxy_video_query(
         if current_user and model_group and sub_model:
             if conversation_id:
                 conversation = get_conversation(db, current_user, conversation_id)
-                failed_message = add_message(
+                failed_message = mark_video_task_message(
                     db,
                     conversation,
                     current_user,
-                    role="assistant",
-                    capability="video",
-                    content=task_id,
-                    status="error",
-                    error_message=message,
-                    can_retry=True,
+                    task_id=task_id,
                     model_group_id=model_group.id,
                     sub_model_id=sub_model.id,
+                    status="error",
+                    content=task_id,
+                    error_message=message,
+                    can_retry=True,
                     request={"taskId": task_id},
                     response=raw,
                 )
@@ -1184,19 +1674,20 @@ async def proxy_video_query(
         and result.get("videoUrl")
     ):
         conversation = get_conversation(db, current_user, conversation_id)
-        assistant_message = add_message(
+        assistant_message = mark_video_task_message(
             db,
             conversation,
             current_user,
-            role="assistant",
-            capability="video",
-            content=str(result.get("status") or ""),
-            status="success" if result.get("status") == "completed" else "processing",
+            task_id=task_id,
             model_group_id=model_group.id,
             sub_model_id=sub_model.id,
+            status="success" if result.get("status") == "completed" else "processing",
+            content=str(result.get("status") or task_id),
+            can_retry=False,
             request={"taskId": task_id},
             response=raw,
         )
+        db.query(GeneratedAsset).filter(GeneratedAsset.message_id == assistant_message.id).delete()
         add_asset(
             db,
             assistant_message,

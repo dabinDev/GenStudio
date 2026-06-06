@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { ModelDefinition, ModelSetting } from "./types";
 import {
   appendLocalConversationMessages,
+  updateLocalConversationMessage,
+  markConversationMessageFailed,
   generatedAssetReferenceFileName,
   findPromptBeforeMessage,
   getModelIdentifierError,
@@ -302,6 +304,63 @@ describe("conversation helpers", () => {
         capability: "image",
       }),
     ]);
+  });
+
+  it("updates a pending assistant message in the local conversation flow", () => {
+    const pending = appendLocalConversationMessages(null, {
+      capability: "image",
+      titleSeed: "生成汽车海报",
+      modelGroupId: "image-model",
+      subModelId: "sub-image",
+      now: "2026-06-06T01:04:00.000Z",
+      messages: [
+        { role: "user", content: "生成汽车海报" },
+        { role: "assistant", content: "", status: "processing" },
+      ],
+    });
+    const pendingAssistant = pending.messages[1];
+
+    const failed = updateLocalConversationMessage(pending, pendingAssistant.id, {
+      status: "error",
+      errorMessage: "上游服务超时，请稍后重试。",
+      canRetry: true,
+      content: "",
+    });
+
+    expect(failed.messages[0]).toMatchObject({ role: "user", content: "生成汽车海报", status: "success" });
+    expect(failed.messages[1]).toMatchObject({
+      role: "assistant",
+      status: "error",
+      errorMessage: "上游服务超时，请稍后重试。",
+      canRetry: true,
+    });
+    expect(failed.updatedAt).not.toBe(pending.updatedAt);
+  });
+
+  it("keeps the local request visible when an image proxy error has no server conversation", () => {
+    const pending = appendLocalConversationMessages(null, {
+      capability: "image",
+      titleSeed: "生成汽车人",
+      modelGroupId: "image-model",
+      subModelId: null,
+      now: "2026-06-06T01:04:00.000Z",
+      messages: [
+        { role: "user", content: "生成汽车人" },
+        { role: "assistant", content: "", status: "processing" },
+      ],
+    });
+
+    const failed = markConversationMessageFailed(pending, pending.messages[1].id, "上游服务超时，请稍后重试。");
+
+    expect(failed?.messages.map((item) => item.role)).toEqual(["user", "assistant"]);
+    expect(failed?.messages[0]).toMatchObject({ content: "生成汽车人", status: "success" });
+    expect(failed?.messages[1]).toMatchObject({
+      role: "assistant",
+      status: "error",
+      errorMessage: "上游服务超时，请稍后重试。",
+      canRetry: true,
+      content: "",
+    });
   });
 });
 

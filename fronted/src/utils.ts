@@ -235,6 +235,41 @@ export function appendLocalConversationMessages(
   };
 }
 
+export function updateLocalConversationMessage(
+  conversation: ConversationDefinition,
+  messageId: string,
+  patch: Partial<Pick<ConversationMessage, "content" | "status" | "errorMessage" | "canRetry" | "assets">>,
+): ConversationDefinition {
+  const now = new Date().toISOString();
+  return {
+    ...conversation,
+    updatedAt: now,
+    messages: conversation.messages.map((message) =>
+      message.id === messageId
+        ? {
+            ...message,
+            ...patch,
+            assets: patch.assets || message.assets,
+          }
+        : message,
+    ),
+  };
+}
+
+export function markConversationMessageFailed(
+  conversation: ConversationDefinition | null,
+  messageId: string,
+  message: string,
+): ConversationDefinition | null {
+  if (!conversation || !messageId) return conversation;
+  return updateLocalConversationMessage(conversation, messageId, {
+    status: "error",
+    errorMessage: message,
+    canRetry: true,
+    content: "",
+  });
+}
+
 export function shouldResetConversationForModelSwitch(
   conversation: { capability?: Capability | string } | null | undefined,
   nextCapability: Capability,

@@ -62,12 +62,34 @@ def coerce_json_object(payload: Any) -> Any:
 
 
 def pick_error_message(payload: Any, fallback: str) -> str:
+    if isinstance(payload, str):
+        lower_payload = payload.lower()
+        if "504 gateway" in lower_payload or "gateway time-out" in lower_payload or "gateway timeout" in lower_payload:
+            return "上游服务超时，请稍后重试。"
+        if "502 bad gateway" in lower_payload or "bad gateway" in lower_payload:
+            return "上游服务暂时不可用，请稍后重试。"
+        if "<html" in lower_payload:
+            return fallback
     if not isinstance(payload, dict):
         return fallback
 
     error_value = payload.get("error")
     if isinstance(error_value, str):
         return error_value
+
+    if isinstance(error_value, dict) and (
+        error_value.get("type") == "bad_response_body"
+        or error_value.get("code") == "bad_response_body"
+        or "invalid character '<'" in str(error_value.get("message", "")).lower()
+    ):
+        return "上游接口返回了非 JSON 内容，请检查模型接口路径或稍后重试。"
+
+    if isinstance(error_value, dict) and (
+        error_value.get("message") == "openai_error"
+        or error_value.get("type") == "bad_response_status_code"
+        or error_value.get("code") == "bad_response_status_code"
+    ):
+        return "上游模型服务返回异常，请稍后重试或检查模型接口。"
 
     if isinstance(error_value, dict) and isinstance(error_value.get("message"), str):
         return error_value["message"]
@@ -76,6 +98,33 @@ def pick_error_message(payload: Any, fallback: str) -> str:
         return payload["message"]
 
     return fallback
+
+
+def is_non_json_upstream_error(payload: Any) -> bool:
+    if isinstance(payload, str):
+        lower_payload = payload.lower()
+        return "<html" in lower_payload or "invalid character '<'" in lower_payload
+    if not isinstance(payload, dict):
+        return False
+    error_value = payload.get("error")
+    if not isinstance(error_value, dict):
+        return False
+    return (
+        error_value.get("type") == "bad_response_body"
+        or error_value.get("code") == "bad_response_body"
+        or "invalid character '<'" in str(error_value.get("message", "")).lower()
+    )
+
+
+def sanitize_error_raw(payload: Any) -> Any:
+    if not isinstance(payload, str):
+        return payload
+    lower_payload = payload.lower()
+    if "<html" in lower_payload or "<body" in lower_payload or "<head" in lower_payload:
+        return None
+    if len(payload) > 2000:
+        return payload[:2000]
+    return payload
 
 
 def _text_from_value(value: Any) -> str:
@@ -122,12 +171,13 @@ def pick_text_content(raw: dict[str, Any]) -> str:
 
 
 def upstream_error(payload: Any, fallback: str, status_code: int = 500) -> HTTPException:
+    detail = {"message": pick_error_message(payload, fallback)}
+    raw = sanitize_error_raw(payload)
+    if raw is not None:
+        detail["raw"] = raw
     return HTTPException(
         status_code=status_code or 500,
-        detail={
-            "message": pick_error_message(payload, fallback),
-            "raw": payload,
-        },
+        detail=detail,
     )
 
 
@@ -298,6 +348,38 @@ async def forward_json(
                         **({"Content-Type": "application/json"} if body is not None else {}),
                     },
                     json=body,
+                )
+            except httpx.HTTPError as exc:
+                last_error = exc
+                if attempt < attempts - 1:
+                    await asyncio.sleep(0.2 * (attempt + 1))
+                    continue
+                raise
+            if response.status_code >= 500 and attempt < attempts - 1:
+                await asyncio.sleep(0.2 * (attempt + 1))
+                continue
+            return response, await parse_upstream(response)
+    raise last_error or RuntimeError("Upstream request failed.")
+
+
+async def forward_multipart(
+    url: str,
+    api_key: str,
+    *,
+    data: dict[str, str],
+    files: list[tuple[str, tuple[str, bytes, str]]],
+) -> tuple[httpx.Response, dict[str, Any] | str]:
+    settings = get_settings()
+    attempts = max(1, settings.upstream_retry_attempts)
+    last_error: httpx.HTTPError | None = None
+    async with httpx.AsyncClient(timeout=settings.request_timeout_seconds, trust_env=False) as client:
+        for attempt in range(attempts):
+            try:
+                response = await client.post(
+                    url,
+                    headers=auth_headers(api_key),
+                    data=data,
+                    files=files,
                 )
             except httpx.HTTPError as exc:
                 last_error = exc

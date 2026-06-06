@@ -90,6 +90,62 @@ class ApiKeyOut(BaseModel):
     createdAt: datetime
 
 
+class CatalogParameterOptionOut(BaseModel):
+    id: str
+    optionName: str
+    optionValue: str
+    description: str
+    maxCount: int | None = None
+    isDefault: bool
+    sortOrder: int
+    priceFactor: str
+
+
+class CatalogParameterOut(BaseModel):
+    id: str
+    displayName: str
+    paramKey: str
+    description: str
+    widgetType: int
+    isRequired: bool
+    defaultValue: str
+    functionTag: str
+    maxCount: int | None = None
+    sortOrder: int
+    options: list[CatalogParameterOptionOut] = Field(default_factory=list)
+
+
+class CatalogChannelGroupOut(BaseModel):
+    id: str
+    channelId: str
+    groupName: str
+    billingType: int
+    inputTokenPrice: str
+    outputTokenPrice: str
+    basePrice: str
+    successRate24h: str
+    avgResponseSeconds24h: str
+    totalSuccessCount: str
+    totalFailCount: str
+    sortOrder: int
+    optionPrices: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class CatalogModelOut(BaseModel):
+    id: str
+    displayName: str
+    modelName: str
+    modelType: int
+    capability: str
+    icon: str
+    description: str
+    inputHint: str
+    successRate: str
+    source: str
+    parameters: list[CatalogParameterOut] = Field(default_factory=list)
+    channelGroups: list[CatalogChannelGroupOut] = Field(default_factory=list)
+
+
 class SubModelOut(BaseModel):
     id: str
     modelName: str
@@ -98,6 +154,8 @@ class SubModelOut(BaseModel):
     adapter: str
     isPrimary: bool
     status: str
+    catalogModelId: str | None = None
+    catalog: CatalogModelOut | None = None
 
 
 class ModelCreate(BaseModel):
@@ -110,6 +168,7 @@ class ModelCreate(BaseModel):
     apiKey: str
     primaryModelName: str
     availableModelNames: list[str] = Field(default_factory=list)
+    catalogModelId: str | None = None
 
 
 class ModelUpdate(BaseModel):
@@ -122,6 +181,7 @@ class ModelUpdate(BaseModel):
     apiKey: str | None = None
     primaryModelName: str | None = None
     availableModelNames: list[str] | None = None
+    catalogModelId: str | None = None
 
 
 class ModelOut(BaseModel):
@@ -135,7 +195,19 @@ class ModelOut(BaseModel):
     baseUrl: str
     primarySubModelId: str
     primaryModelName: str
+    catalogModelId: str | None = None
+    catalog: CatalogModelOut | None = None
     subModels: list[SubModelOut] = Field(default_factory=list)
+
+
+class KkyiCatalogSyncRequest(BaseModel):
+    bearerToken: str = ""
+    modelType: int = 0
+
+
+class KkyiCatalogSyncResult(BaseModel):
+    synced: int
+    models: list[CatalogModelOut]
 
 
 class SyncModelsResult(BaseModel):

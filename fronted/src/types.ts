@@ -21,6 +21,8 @@ export interface ModelDefinition {
   serverManaged?: boolean;
   primarySubModelId?: string;
   subModels?: SubModelDefinition[];
+  catalogModelId?: string | null;
+  catalog?: CatalogModelDefinition | null;
 }
 
 export interface ModelSetting {
@@ -47,6 +49,8 @@ export interface SubModelDefinition {
   adapter: Adapter;
   isPrimary: boolean;
   status: string;
+  catalogModelId?: string | null;
+  catalog?: CatalogModelDefinition | null;
 }
 
 export interface ServerModelDefinition {
@@ -60,7 +64,65 @@ export interface ServerModelDefinition {
   baseUrl: string;
   primarySubModelId: string;
   primaryModelName: string;
+  catalogModelId?: string | null;
+  catalog?: CatalogModelDefinition | null;
   subModels: SubModelDefinition[];
+}
+
+export interface CatalogParameterOptionDefinition {
+  id: string;
+  optionName: string;
+  optionValue: string;
+  description: string;
+  maxCount: number | null;
+  isDefault: boolean;
+  sortOrder: number;
+  priceFactor: string;
+}
+
+export interface CatalogParameterDefinition {
+  id: string;
+  displayName: string;
+  paramKey: string;
+  description: string;
+  widgetType: number;
+  isRequired: boolean;
+  defaultValue: string;
+  functionTag: string;
+  maxCount: number | null;
+  sortOrder: number;
+  options: CatalogParameterOptionDefinition[];
+}
+
+export interface CatalogChannelGroupDefinition {
+  id: string;
+  channelId: string;
+  groupName: string;
+  billingType: number;
+  inputTokenPrice: string;
+  outputTokenPrice: string;
+  basePrice: string;
+  successRate24h: string;
+  avgResponseSeconds24h: string;
+  totalSuccessCount: string;
+  totalFailCount: string;
+  sortOrder: number;
+  optionPrices: Record<string, unknown>[];
+}
+
+export interface CatalogModelDefinition {
+  id: string;
+  displayName: string;
+  modelName: string;
+  modelType: number;
+  capability: Capability;
+  icon: string;
+  description: string;
+  inputHint: string;
+  successRate: string;
+  source: string;
+  parameters: CatalogParameterDefinition[];
+  channelGroups: CatalogChannelGroupDefinition[];
 }
 
 export type ModelSettingsRecord = Record<string, ModelSetting>;

@@ -48,6 +48,7 @@ import {
   getMissingModelMessage,
   imageGenerationSummary,
   isGeneratedModelDisplayName,
+  markConversationMessageFailed,
   mediaPreviewActionLabels,
   modelDisplayNameForModel,
   modelDisplayNameFromPrimary,
@@ -59,6 +60,7 @@ import {
   shouldResetConversationForModelSwitch,
   shortText,
   testResultSummary,
+  updateLocalConversationMessage,
   videoGenerationSummary,
 } from "./utils";
 import {
@@ -145,6 +147,7 @@ interface ConfigDraft {
   apiKey: string;
   modelNameOverride: string;
   availableModels: string[];
+  catalogModelId: string;
 }
 
 const UNIFIED_ADAPTERS: Adapter[] = [
@@ -645,6 +648,12 @@ function updateConversationFromUnknown(payload: unknown) {
   }
 }
 
+function conversationFromUnknown(payload: unknown): ConversationDefinition | null {
+  if (!payload || typeof payload !== "object") return null;
+  const maybeConversation = (payload as { conversation?: ConversationDefinition }).conversation;
+  return maybeConversation?.id ? maybeConversation : null;
+}
+
 function handleRequestError(error: unknown, fallbackMessage: string): string {
   if (error instanceof DOMException && error.name === "AbortError") {
     return "请求已暂停。";
@@ -654,6 +663,25 @@ function handleRequestError(error: unknown, fallbackMessage: string): string {
     return error.message || fallbackMessage;
   }
   return error instanceof Error ? error.message : fallbackMessage;
+}
+
+function resolveRequestErrorMessage(error: unknown, fallbackMessage: string): string {
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return "请求已暂停。";
+  }
+  if (error instanceof ApiRequestError) {
+    return error.message || fallbackMessage;
+  }
+  return error instanceof Error ? error.message : fallbackMessage;
+}
+
+function markLocalAssistantMessageFailed(
+  conversation: ConversationDefinition | null,
+  messageId: string,
+  message: string,
+) {
+  const failedConversation = markConversationMessageFailed(conversation, messageId, message);
+  if (failedConversation) setCurrentConversation(failedConversation);
 }
 
 function createRequestController(): AbortController {
@@ -1113,6 +1141,18 @@ async function handleImageSubmit() {
 
   imageState.loading = true;
   imageState.error = "";
+  const pendingConversation = appendLocalConversationMessages(conversationState.current, {
+    capability: "image",
+    titleSeed: finalPrompt,
+    modelGroupId: model.id,
+    subModelId: model.primarySubModelId || null,
+    messages: [
+      { role: "user", content: finalPrompt },
+      { role: "assistant", content: "", status: "processing" },
+    ],
+  });
+  const pendingAssistantId = pendingConversation.messages[pendingConversation.messages.length - 1]?.id || "";
+  setCurrentConversation(pendingConversation);
   const controller = createRequestController();
   try {
     const extra = parseJsonInput(imageState.extraJson);
@@ -1133,23 +1173,29 @@ async function handleImageSubmit() {
     if (imageState.result.conversation) {
       setCurrentConversation(imageState.result.conversation);
     } else {
-      setCurrentConversation(appendLocalConversationMessages(conversationState.current, {
-        capability: "image",
-        titleSeed: finalPrompt,
-        modelGroupId: model.id,
-        messages: [
-          { role: "user", content: finalPrompt },
-          {
-            role: "assistant",
-            content: `已生成 ${imageState.result.images.length} 张图片。`,
-            status: "success",
-            assets: imageState.result.images.map((image) => ({ assetType: "image", url: image.src })),
-          },
-        ],
+      setCurrentConversation(updateLocalConversationMessage(pendingConversation, pendingAssistantId, {
+        content: `已生成 ${imageState.result.images.length} 张图片。`,
+        status: "success",
+        errorMessage: "",
+        canRetry: false,
+        assets: imageState.result.images.map((image) => ({
+          id: createLocalId("local-asset"),
+          capability: "image",
+          assetType: "image",
+          url: image.src,
+          thumbnailUrl: "",
+          metadata: {},
+          createdAt: new Date().toISOString(),
+        })),
       }));
     }
   } catch (error) {
-    imageState.error = handleRequestError(error, "图片生成失败。");
+    const serverConversation = error instanceof ApiRequestError ? conversationFromUnknown(error.detail) : null;
+    if (serverConversation) {
+      setCurrentConversation(serverConversation);
+    } else {
+      markLocalAssistantMessageFailed(pendingConversation, pendingAssistantId, resolveRequestErrorMessage(error, "图片生成失败。"));
+    }
   } finally {
     clearRequestController(controller);
     imageState.loading = false;
@@ -1407,6 +1453,7 @@ function createEmptyDraft(): ConfigDraft {
     apiKey: "",
     modelNameOverride: "",
     availableModels: [],
+    catalogModelId: "",
   };
 }
 
@@ -1424,6 +1471,7 @@ function createDraftFromModel(model: ModelDefinition): ConfigDraft {
     apiKey: setting.apiKey,
     modelNameOverride: setting.modelNameOverride,
     availableModels: setting.availableModels || [],
+    catalogModelId: model.catalogModelId || getPrimarySubModel(model)?.catalogModelId || "",
   };
 }
 
@@ -1608,6 +1656,7 @@ async function saveDialog() {
       apiKey: draft.apiKey.trim(),
       primaryModelName: modelName,
       availableModelNames: draft.availableModels.length ? draft.availableModels : [modelName],
+      catalogModelId: draft.catalogModelId,
     };
     settingsState.testState[draft.id] = { ...createIdleState<TestRequestResult>(), loading: true };
     try {
@@ -1947,8 +1996,8 @@ async function batchDelete() {
               <p v-else-if="message.content" class="message-content">{{ message.content }}</p>
               <div v-if="message.status === 'processing'" class="long-loading">
                 <span class="loader-dot" />
-                <span>视频任务运行中，可以稍后重新进入历史记录继续查询。</span>
-                <button class="button-secondary" @click="() => handleVideoQuery(message.content)">查询进度</button>
+                <span>{{ message.capability === "video" ? "视频任务运行中，可以稍后重新进入历史记录继续查询。" : "模型正在生成，请保持当前会话打开。" }}</span>
+                <button v-if="message.capability === 'video'" class="button-secondary" @click="() => handleVideoQuery(message.content)">查询进度</button>
               </div>
               <div v-if="message.assets.length" class="message-assets">
                 <article v-for="asset in message.assets" :key="asset.id" class="message-asset-card">

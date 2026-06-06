@@ -298,6 +298,133 @@ def test_image_proxy_records_generated_assets(monkeypatch) -> None:
     assert conversation["messages"][-1]["assets"][0]["assetType"] == "image"
 
 
+def test_image_proxy_normalizes_html_gateway_timeout(monkeypatch) -> None:
+    html = "<html><head><title>504 Gateway Time-out</title></head><body>nginx</body></html>"
+
+    async def fake_forward_json(method, url, api_key, body=None):
+        return httpx.Response(504, text=html), html
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+    sub_model_id = create_model(client, "image", "image-openai", "gpt-image-2")
+
+    response = client.post(
+        "/api/proxy/image",
+        headers=csrf_headers(client),
+        json={"subModelId": sub_model_id, "requestBody": {"prompt": "timeout image"}},
+    )
+
+    assert response.status_code == 504
+    detail = response.json()["detail"]
+    assert detail["message"] == "上游服务超时，请稍后重试。"
+    assert "raw" not in detail
+    assert detail["assistantMessage"]["status"] == "error"
+    assert detail["assistantMessage"]["canRetry"] is True
+    conversation = client.get(f"/api/conversations/{detail['conversation']['id']}").json()["conversation"]
+    assert conversation["messages"][-1]["errorMessage"] == "上游服务超时，请稍后重试。"
+
+
+def test_image_proxy_records_config_path_timeout_in_conversation(monkeypatch) -> None:
+    html = "<html><head><title>504 Gateway Time-out</title></head><body>nginx</body></html>"
+
+    async def fake_forward_json(method, url, api_key, body=None):
+        assert url == "https://token.example.com/v1/images/generations"
+        return httpx.Response(504, text=html), html
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+
+    response = client.post(
+        "/api/proxy/image",
+        headers=csrf_headers(client),
+        json={
+            "config": {"baseUrl": "https://token.example.com", "apiKey": "sk-test"},
+            "model": "gpt-image-2",
+            "conversationId": "local-conversation-a66fec0e-cdca-420c-9e5f-dc68c27e8ac2",
+            "requestBody": {"prompt": "timeout image", "image": ["data:image/jpeg;base64,abc"]},
+        },
+    )
+
+    assert response.status_code == 504
+    detail = response.json()["detail"]
+    assert detail["message"] == "上游服务超时，请稍后重试。"
+    assert "raw" not in detail
+    assert detail["conversation"]["messages"][-1]["status"] == "error"
+    assert detail["conversation"]["messages"][-1]["canRetry"] is True
+    conversation = client.get(f"/api/conversations/{detail['conversation']['id']}").json()["conversation"]
+    assert [message["role"] for message in conversation["messages"]] == ["user", "assistant"]
+    assert conversation["messages"][-1]["errorMessage"] == "上游服务超时，请稍后重试。"
+
+
+def test_image_proxy_returns_transient_conversation_for_anonymous_config_timeout(monkeypatch) -> None:
+    html = "<html><head><title>504 Gateway Time-out</title></head><body>nginx</body></html>"
+
+    async def fake_forward_json(method, url, api_key, body=None):
+        assert url == "https://token.example.com/v1/images/generations"
+        assert api_key == "sk-test"
+        assert body["prompt"] == "timeout image"
+        return httpx.Response(504, text=html), html
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/proxy/image",
+        json={
+            "config": {"baseUrl": "https://token.example.com", "apiKey": "sk-test"},
+            "model": "gpt-image-2",
+            "conversationId": "local-conversation-a66fec0e-cdca-420c-9e5f-dc68c27e8ac2",
+            "requestBody": {"prompt": "timeout image", "image": ["data:image/jpeg;base64,abc"]},
+        },
+    )
+
+    assert response.status_code == 504
+    detail = response.json()["detail"]
+    message = "\u4e0a\u6e38\u670d\u52a1\u8d85\u65f6\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5\u3002"
+    assert detail["message"] == message
+    assert "raw" not in detail
+    conversation = detail["conversation"]
+    assert conversation["id"] == "local-conversation-a66fec0e-cdca-420c-9e5f-dc68c27e8ac2"
+    assert conversation["title"] == "timeout image"
+    assert conversation["capability"] == "image"
+    assert conversation["modelGroupId"] is None
+    assert conversation["subModelId"] is None
+    assert [item["role"] for item in conversation["messages"]] == ["user", "assistant"]
+    assert conversation["messages"][0]["content"] == "timeout image"
+    assistant = detail["assistantMessage"]
+    assert assistant["id"] == conversation["messages"][-1]["id"]
+    assert assistant["status"] == "error"
+    assert assistant["errorMessage"] == message
+    assert assistant["canRetry"] is True
+    assert assistant["assets"] == []
+
+
+def test_image_proxy_rejects_oversized_data_url_reference_before_forwarding(monkeypatch) -> None:
+    async def fail_if_forwarded(method, url, api_key, body=None):
+        raise AssertionError("oversized local references should be rejected before forwarding")
+
+    monkeypatch.setattr(main_module, "forward_json", fail_if_forwarded)
+    client = TestClient(app)
+    large_reference = f"data:image/jpeg;base64,{'a' * (11 * 1024 * 1024)}"
+
+    response = client.post(
+        "/api/proxy/image",
+        json={
+            "config": {"baseUrl": "https://token.example.com", "apiKey": "sk-test"},
+            "model": "gpt-image-2",
+            "conversationId": "local-conversation-large-ref",
+            "requestBody": {"prompt": "edit reference", "image": [large_reference]},
+        },
+    )
+
+    assert response.status_code == 413
+    detail = response.json()["detail"]
+    assert detail["conversation"]["messages"][-1]["status"] == "error"
+    assert detail["assistantMessage"]["canRetry"] is True
+
+
 def test_image_proxy_persists_b64_response_as_generated_asset(monkeypatch) -> None:
     tiny_png = base64.b64encode(b"fake-png").decode("ascii")
     huge_raw = {
@@ -338,15 +465,19 @@ def test_image_proxy_persists_b64_response_as_generated_asset(monkeypatch) -> No
 
 
 def test_image_proxy_sanitizes_large_reference_data_urls_before_storing(monkeypatch) -> None:
-    reference_data_url = f"data:image/jpeg;base64,{'a' * 70000}"
+    reference_data_url = f"data:image/jpeg;base64,{'a' * 8000}"
 
-    async def fake_forward_json(method, url, api_key, body=None):
-        assert body["image"] == [reference_data_url]
+    async def fake_forward_multipart(url, api_key, *, data=None, files=None):
+        assert url == "https://token.example.com/v1/images/edits"
+        assert data["prompt"] == "edit reference"
+        assert files[0][0] == "image"
+        assert files[0][1][0] == "reference-0.jpg"
+        assert files[0][1][2] == "image/jpeg"
         return httpx.Response(200, json={"data": [{"url": "https://cdn.example.com/generated.png"}]}), {
             "data": [{"url": "https://cdn.example.com/generated.png"}]
         }
 
-    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    monkeypatch.setattr(main_module, "forward_multipart", fake_forward_multipart)
     client = TestClient(app)
     login(client, "alice")
     sub_model_id = create_model(client, "image", "image-openai", "gpt-image-2")
@@ -373,6 +504,181 @@ def test_image_proxy_sanitizes_large_reference_data_urls_before_storing(monkeypa
         assert len(messages[0].request_json) < 1000
         assert "<data-url image/jpeg" in messages[0].request_json
         assert "a" * 100 not in messages[0].request_json
+
+
+def test_image_proxy_expands_local_upload_reference_before_forwarding(monkeypatch) -> None:
+    upload_name = "reference-car.jpg"
+    (main_module.LOCAL_UPLOAD_DIR / upload_name).write_bytes(b"fake-jpeg")
+
+    async def fake_forward_multipart(url, api_key, *, data=None, files=None):
+        assert url == "https://token.example.com/v1/images/edits"
+        assert files == [("image", ("reference-car.jpg", b"fake-jpeg", "image/jpeg"))]
+        return httpx.Response(200, json={"data": [{"url": "https://cdn.example.com/generated.png"}]}), {
+            "data": [{"url": "https://cdn.example.com/generated.png"}]
+        }
+
+    monkeypatch.setattr(main_module, "forward_multipart", fake_forward_multipart)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/proxy/image",
+        json={
+            "config": {"baseUrl": "https://token.example.com", "apiKey": "sk-test"},
+            "model": "gpt-image-2",
+            "requestBody": {
+                "prompt": "edit local upload",
+                "image": [f"/api/assets/uploads/{upload_name}"],
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["images"][0]["src"] == "https://cdn.example.com/generated.png"
+
+
+def test_image_proxy_uses_edit_endpoint_for_reference_images(monkeypatch) -> None:
+    upload_name = "reference-edit.jpg"
+    (main_module.LOCAL_UPLOAD_DIR / upload_name).write_bytes(b"fake-jpeg")
+
+    async def fail_json_forward(method, url, api_key, body=None):
+        raise AssertionError("reference image requests should use multipart image edits")
+
+    async def fake_forward_image_edit(url, api_key, *, data=None, files=None):
+        assert url == "https://token.example.com/v1/images/edits"
+        assert api_key == "sk-test"
+        assert data["prompt"] == "edit local upload"
+        assert data["model"] == "gpt-image-2"
+        assert files == [("image", ("reference-edit.jpg", b"fake-jpeg", "image/jpeg"))]
+        return httpx.Response(200, json={"data": [{"url": "https://cdn.example.com/edited.png"}]}), {
+            "data": [{"url": "https://cdn.example.com/edited.png"}]
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fail_json_forward)
+    monkeypatch.setattr(main_module, "forward_multipart", fake_forward_image_edit)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/proxy/image",
+        json={
+            "config": {"baseUrl": "https://token.example.com", "apiKey": "sk-test"},
+            "model": "gpt-image-2",
+            "requestBody": {
+                "prompt": "edit local upload",
+                "image": [f"/api/assets/uploads/{upload_name}"],
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["images"][0]["src"] == "https://cdn.example.com/edited.png"
+
+
+def test_image_proxy_falls_back_to_generation_when_edit_endpoint_returns_html_parse_error(monkeypatch) -> None:
+    upload_name = "reference-fallback.jpg"
+    (main_module.LOCAL_UPLOAD_DIR / upload_name).write_bytes(b"fake-jpeg")
+    calls: list[str] = []
+
+    async def fake_forward_image_edit(url, api_key, *, data=None, files=None):
+        calls.append("edit")
+        assert url == "https://token.example.com/v1/images/edits"
+        assert files == [("image", ("reference-fallback.jpg", b"fake-jpeg", "image/jpeg"))]
+        raw = {
+            "error": {
+                "message": "invalid character '<' looking for beginning of value",
+                "type": "bad_response_body",
+                "code": "bad_response_body",
+            }
+        }
+        return httpx.Response(502, json=raw), raw
+
+    async def fake_forward_generation(method, url, api_key, body=None):
+        calls.append("generation")
+        assert method == "POST"
+        assert url == "https://token.example.com/v1/images/generations"
+        assert body["prompt"] == "edit local upload"
+        assert body["image"][0].startswith("data:image/jpeg;base64,")
+        return httpx.Response(200, json={"data": [{"url": "https://cdn.example.com/fallback.png"}]}), {
+            "data": [{"url": "https://cdn.example.com/fallback.png"}]
+        }
+
+    monkeypatch.setattr(main_module, "forward_multipart", fake_forward_image_edit)
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_generation)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/proxy/image",
+        json={
+            "config": {"baseUrl": "https://token.example.com", "apiKey": "sk-test"},
+            "model": "gpt-image-2",
+            "requestBody": {
+                "prompt": "edit local upload",
+                "image": [f"/api/assets/uploads/{upload_name}"],
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert calls == ["edit", "generation"]
+    assert response.json()["images"][0]["src"] == "https://cdn.example.com/fallback.png"
+
+
+def test_image_proxy_allows_normal_sized_local_jpeg_reference(monkeypatch) -> None:
+    upload_name = "normal-reference.jpg"
+    (main_module.LOCAL_UPLOAD_DIR / upload_name).write_bytes(b"x" * 60426)
+
+    async def fake_forward_multipart(url, api_key, *, data=None, files=None):
+        assert url == "https://token.example.com/v1/images/edits"
+        assert files[0][1][0] == "normal-reference.jpg"
+        assert files[0][1][1] == b"x" * 60426
+        assert files[0][1][2] == "image/jpeg"
+        return httpx.Response(200, json={"data": [{"url": "https://cdn.example.com/generated.png"}]}), {
+            "data": [{"url": "https://cdn.example.com/generated.png"}]
+        }
+
+    monkeypatch.setattr(main_module, "forward_multipart", fake_forward_multipart)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/proxy/image",
+        json={
+            "config": {"baseUrl": "https://token.example.com", "apiKey": "sk-test"},
+            "model": "gpt-image-2",
+            "requestBody": {
+                "prompt": "edit normal local upload",
+                "image": [f"/api/assets/uploads/{upload_name}"],
+            },
+        },
+    )
+
+    assert response.status_code == 200
+
+
+def test_image_proxy_records_http_error_as_retryable_conversation_message(monkeypatch) -> None:
+    async def fake_forward_json(method, url, api_key, body=None):
+        raise httpx.ReadTimeout("upstream timed out")
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+    sub_model_id = create_model(client, "image", "image-openai", "gpt-image-2")
+
+    response = client.post(
+        "/api/proxy/image",
+        headers=csrf_headers(client),
+        json={
+            "subModelId": sub_model_id,
+            "requestBody": {"prompt": "timeout image generation"},
+        },
+    )
+
+    assert response.status_code == 504
+    detail = response.json()["detail"]
+    assert detail["message"] == "上游服务超时，请稍后重试。"
+    assert detail["assistantMessage"]["status"] == "error"
+    assert detail["assistantMessage"]["canRetry"] is True
+    conversation = client.get(f"/api/conversations/{detail['conversation']['id']}").json()["conversation"]
+    assert [message["role"] for message in conversation["messages"]] == ["user", "assistant"]
+    assert conversation["messages"][-1]["errorMessage"] == "上游服务超时，请稍后重试。"
 
 
 def test_image_proxy_returns_latest_messages_when_appending_to_existing_conversation(monkeypatch) -> None:
@@ -526,6 +832,61 @@ def test_video_query_failure_records_retryable_message(monkeypatch) -> None:
     assert conversation["messages"][-1]["errorMessage"] == "Video provider failed"
 
 
+def test_video_query_success_replaces_retryable_message_for_same_task(monkeypatch) -> None:
+    query_attempts = {"count": 0}
+
+    async def fake_forward_json(method, url, api_key, body=None):
+        if method == "POST":
+            return httpx.Response(200, json={"id": "task-retry", "status": "processing"}), {
+                "id": "task-retry",
+                "status": "processing",
+            }
+        query_attempts["count"] += 1
+        if query_attempts["count"] == 1:
+            return httpx.Response(500, json={"error": {"message": "temporary query error"}}), {
+                "error": {"message": "temporary query error"}
+            }
+        return httpx.Response(200, json={"id": "task-retry", "status": "completed", "video_url": "https://cdn.example.com/done.mp4"}), {
+            "id": "task-retry",
+            "status": "completed",
+            "video_url": "https://cdn.example.com/done.mp4",
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+    sub_model_id = create_model(client, "video", "video-unified-generic", "seedance-2.0")
+
+    created = client.post(
+        "/api/proxy/video/create",
+        headers=csrf_headers(client),
+        json={"subModelId": sub_model_id, "requestBody": {"prompt": "retry video"}},
+    )
+    assert created.status_code == 200
+    conversation_id = created.json()["conversation"]["id"]
+
+    failed = client.post(
+        "/api/proxy/video/query",
+        headers=csrf_headers(client),
+        json={"subModelId": sub_model_id, "conversationId": conversation_id, "taskId": "task-retry"},
+    )
+    assert failed.status_code == 500
+
+    recovered = client.post(
+        "/api/proxy/video/query",
+        headers=csrf_headers(client),
+        json={"subModelId": sub_model_id, "conversationId": conversation_id, "taskId": "task-retry"},
+    )
+
+    assert recovered.status_code == 200
+    messages = recovered.json()["conversation"]["messages"]
+    task_messages = [message for message in messages if message["role"] == "assistant" and message["content"] in {"task-retry", "completed"}]
+    assert len(task_messages) == 1
+    assert task_messages[0]["status"] == "success"
+    assert task_messages[0]["canRetry"] is False
+    assert task_messages[0]["assets"][0]["url"] == "https://cdn.example.com/done.mp4"
+
+
 def test_upload_presign_can_use_saved_sub_model_credentials(monkeypatch) -> None:
     async def fake_forward_json(method, url, api_key, body=None):
         assert method == "POST"
@@ -607,6 +968,27 @@ def test_upload_presign_uses_configured_object_storage(monkeypatch) -> None:
     assert payload["publicUrl"].startswith("https://cdn.example.com/genstudio/user-uploads/uploads/")
     assert payload["uploadUrl"].startswith("https://oss.example.com/genstudio/user-uploads/uploads/")
     assert "X-Amz-Signature=" in payload["uploadUrl"]
+
+
+def test_local_upload_fallback_stores_reference_file(monkeypatch) -> None:
+    settings = main_module.get_settings()
+    monkeypatch.setattr(settings, "object_storage_enabled", False)
+
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/upload/local",
+        files={"file": ("reference.png", b"fake-reference", "image/png")},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["fileName"] == "reference.png"
+    assert payload["contentType"] == "image/png"
+    assert payload["publicUrl"].startswith("/api/assets/uploads/")
+    asset_response = client.get(payload["publicUrl"])
+    assert asset_response.status_code == 200
+    assert asset_response.content == b"fake-reference"
 
 
 def test_seedance_video_prompt_uses_text_content_for_title(monkeypatch) -> None:

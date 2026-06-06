@@ -96,12 +96,109 @@ class ApiKey(Base):
     sub_models: Mapped[list[SubModel]] = relationship(back_populates="api_key")
 
 
+class CatalogModel(Base):
+    __tablename__ = "catalog_models"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id("cat"))
+    external_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    display_name: Mapped[str] = mapped_column(String(255))
+    model_name: Mapped[str] = mapped_column(String(255), index=True)
+    model_type: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    capability: Mapped[str] = mapped_column(String(32), default="text", index=True)
+    icon: Mapped[str] = mapped_column(Text, default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    input_hint: Mapped[str] = mapped_column(Text, default="")
+    success_rate: Mapped[str] = mapped_column(String(32), default="")
+    raw_json: Mapped[str] = mapped_column(Text, default="")
+    source: Mapped[str] = mapped_column(String(64), default="kkyi")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+    parameters: Mapped[list[CatalogModelParameter]] = relationship(
+        back_populates="catalog_model",
+        cascade="all, delete-orphan",
+        order_by="CatalogModelParameter.sort_order",
+    )
+    channel_groups: Mapped[list[CatalogModelChannelGroup]] = relationship(
+        back_populates="catalog_model",
+        cascade="all, delete-orphan",
+        order_by="CatalogModelChannelGroup.sort_order",
+    )
+
+
+class CatalogModelParameter(Base):
+    __tablename__ = "catalog_model_parameters"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id("catp"))
+    catalog_model_id: Mapped[str] = mapped_column(String(64), ForeignKey("catalog_models.id", ondelete="CASCADE"), index=True)
+    external_id: Mapped[str] = mapped_column(String(64), default="")
+    display_name: Mapped[str] = mapped_column(String(255), default="")
+    param_key: Mapped[str] = mapped_column(String(128), index=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    widget_type: Mapped[int] = mapped_column(Integer, default=0)
+    is_required: Mapped[bool] = mapped_column(Boolean, default=False)
+    default_value: Mapped[str] = mapped_column(Text, default="")
+    function_tag: Mapped[str] = mapped_column(String(128), default="")
+    max_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    raw_json: Mapped[str] = mapped_column(Text, default="")
+
+    catalog_model: Mapped[CatalogModel] = relationship(back_populates="parameters")
+    options: Mapped[list[CatalogModelParameterOption]] = relationship(
+        back_populates="parameter",
+        cascade="all, delete-orphan",
+        order_by="CatalogModelParameterOption.sort_order",
+    )
+
+
+class CatalogModelParameterOption(Base):
+    __tablename__ = "catalog_model_parameter_options"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id("cato"))
+    parameter_id: Mapped[str] = mapped_column(String(64), ForeignKey("catalog_model_parameters.id", ondelete="CASCADE"), index=True)
+    external_id: Mapped[str] = mapped_column(String(64), default="")
+    option_name: Mapped[str] = mapped_column(String(255), default="")
+    option_value: Mapped[str] = mapped_column(String(255), default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    max_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    price_factor: Mapped[str] = mapped_column(String(64), default="")
+    raw_json: Mapped[str] = mapped_column(Text, default="")
+
+    parameter: Mapped[CatalogModelParameter] = relationship(back_populates="options")
+
+
+class CatalogModelChannelGroup(Base):
+    __tablename__ = "catalog_model_channel_groups"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id("catg"))
+    catalog_model_id: Mapped[str] = mapped_column(String(64), ForeignKey("catalog_models.id", ondelete="CASCADE"), index=True)
+    external_id: Mapped[str] = mapped_column(String(64), default="")
+    channel_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    group_name: Mapped[str] = mapped_column(String(255), default="")
+    billing_type: Mapped[int] = mapped_column(Integer, default=0)
+    input_token_price: Mapped[str] = mapped_column(String(64), default="")
+    output_token_price: Mapped[str] = mapped_column(String(64), default="")
+    base_price: Mapped[str] = mapped_column(String(64), default="")
+    success_rate_24h: Mapped[str] = mapped_column(String(64), default="")
+    avg_response_seconds_24h: Mapped[str] = mapped_column(String(64), default="")
+    total_success_count: Mapped[str] = mapped_column(String(64), default="")
+    total_fail_count: Mapped[str] = mapped_column(String(64), default="")
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    option_prices_json: Mapped[str] = mapped_column(Text, default="[]")
+    raw_json: Mapped[str] = mapped_column(Text, default="")
+
+    catalog_model: Mapped[CatalogModel] = relationship(back_populates="channel_groups")
+
+
 class ModelGroup(Base):
     __tablename__ = "models"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id("mdl"))
     user_id: Mapped[str] = mapped_column(String(64), ForeignKey("users.id", ondelete="CASCADE"), index=True)
     api_key_id: Mapped[str] = mapped_column(String(64), ForeignKey("api_keys.id", ondelete="CASCADE"), index=True)
+    catalog_model_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("catalog_models.id", ondelete="SET NULL"), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(128))
     vendor: Mapped[str] = mapped_column(String(128), default="")
     capability: Mapped[str] = mapped_column(String(32))
@@ -112,6 +209,7 @@ class ModelGroup(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
     api_key: Mapped[ApiKey] = relationship(back_populates="model_groups")
+    catalog_model: Mapped[CatalogModel | None] = relationship()
     sub_models: Mapped[list[SubModel]] = relationship(
         back_populates="model_group",
         cascade="all, delete-orphan",
@@ -125,6 +223,7 @@ class SubModel(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id("sub"))
     model_group_id: Mapped[str] = mapped_column(String(64), ForeignKey("models.id", ondelete="CASCADE"), index=True)
     api_key_id: Mapped[str] = mapped_column(String(64), ForeignKey("api_keys.id", ondelete="CASCADE"), index=True)
+    catalog_model_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("catalog_models.id", ondelete="SET NULL"), nullable=True, index=True)
     model_name: Mapped[str] = mapped_column(String(255))
     display_name: Mapped[str] = mapped_column(String(255))
     capability: Mapped[str] = mapped_column(String(32))
@@ -136,6 +235,7 @@ class SubModel(Base):
 
     api_key: Mapped[ApiKey] = relationship(back_populates="sub_models")
     model_group: Mapped[ModelGroup] = relationship(back_populates="sub_models")
+    catalog_model: Mapped[CatalogModel | None] = relationship()
 
 
 class CallLog(Base):

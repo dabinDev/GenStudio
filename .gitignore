@@ -12,6 +12,8 @@ coverage
 *.tsbuildinfo
 output
 generated_assets
+uploaded_assets
+server/uvicorn.*.log
 test-results
 playwright-report
 server/.venv

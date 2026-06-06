@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiRequestError, fetchCsrfToken, loginWithPassword, postApi, setCsrfToken, shouldFallbackToLocalReference } from "./api";
+import {
+  ApiRequestError,
+  fetchCsrfToken,
+  loginWithPassword,
+  postApi,
+  setCsrfToken,
+  shouldFallbackToLocalReference,
+  uploadAsset,
+} from "./api";
 
 describe("upload helpers", () => {
   it("falls back to local references when upstream presign support is unavailable", () => {
@@ -16,6 +24,57 @@ describe("upload helpers", () => {
     expect(shouldFallbackToLocalReference(error, { mode: "production" })).toBe(false);
     expect(shouldFallbackToLocalReference(error, { env: "production" })).toBe(false);
     expect(shouldFallbackToLocalReference(error, { mode: "development" })).toBe(true);
+  });
+
+  it("falls back for structurally equivalent upload presign errors", () => {
+    const error = {
+      name: "ApiRequestError",
+      message: "获取上传地址失败。",
+      status: 404,
+      detail: {
+        message: "获取上传地址失败。",
+        raw: "404 page not found",
+      },
+    };
+
+    expect(shouldFallbackToLocalReference(error, { mode: "development" })).toBe(true);
+    expect(shouldFallbackToLocalReference(error, { mode: "production" })).toBe(false);
+  });
+
+  it("uploads to the local fallback endpoint instead of returning a data url", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: { message: "404 page not found" } }), { status: 404 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            id: "local-upload-1",
+            fileName: "reference.png",
+            publicUrl: "/api/assets/uploads/reference.png",
+            contentType: "image/png",
+            localPreviewUrl: "/api/assets/uploads/reference.png",
+          }),
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("crypto", { randomUUID: () => "asset-id" });
+
+    const result = await uploadAsset(new File(["fake"], "reference.png", { type: "image/png" }), {
+      baseUrl: "https://token.example.com",
+      apiKey: "sk-test",
+    });
+
+    expect(result.publicUrl).toBe("/api/assets/uploads/reference.png");
+    expect(result.publicUrl.startsWith("data:")).toBe(false);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/upload/local",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "include",
+        body: expect.any(FormData),
+      }),
+    );
   });
 });
 

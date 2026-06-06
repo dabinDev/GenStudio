@@ -1,4 +1,4 @@
-import type { ConversationDefinition, ServerModelDefinition, UploadedAsset, UserProfile } from "./types";
+import type { CatalogModelDefinition, Capability, ConversationDefinition, ServerModelDefinition, UploadedAsset, UserProfile } from "./types";
 import { isProductionRuntime } from "./env";
 
 const CSRF_SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -178,6 +178,19 @@ export async function fetchServerModels(): Promise<ServerModelDefinition[]> {
   return payload.models;
 }
 
+export async function fetchCatalogModels(capability?: Capability): Promise<CatalogModelDefinition[]> {
+  const query = capability ? `?capability=${encodeURIComponent(capability)}` : "";
+  const payload = await getApi<{ models: CatalogModelDefinition[] }>(`/api/catalog/models${query}`);
+  return payload.models;
+}
+
+export async function syncKkyiCatalog(body: { bearerToken?: string; modelType?: number }): Promise<{
+  synced: number;
+  models: CatalogModelDefinition[];
+}> {
+  return postApi("/api/catalog/kkyi/sync", body);
+}
+
 export async function fetchConversations(): Promise<ConversationDefinition[]> {
   const payload = await getApi<{ conversations: ConversationDefinition[] }>("/api/conversations");
   return payload.conversations;
@@ -226,11 +239,32 @@ export async function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
+function isUploadPresignErrorLike(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const maybeError = error as {
+    message?: unknown;
+    name?: unknown;
+    status?: unknown;
+    detail?: { message?: unknown; raw?: unknown } | null;
+  };
+  if (!(error instanceof ApiRequestError) && maybeError.name !== "ApiRequestError") return false;
+
+  const status = typeof maybeError.status === "number" ? maybeError.status : 0;
+  if (status === 404 || status === 405 || status >= 500) return true;
+
+  const message = [maybeError.message, maybeError.detail?.message, maybeError.detail?.raw]
+    .filter((value): value is string => typeof value === "string")
+    .join("\n")
+    .toLowerCase();
+  return message.includes("invalid url") || message.includes("presign") || message.includes("404 page not found");
+}
+
 export function shouldFallbackToLocalReference(
   error: unknown,
   runtime: { mode?: string; env?: string } = {},
 ): boolean {
   if (isProductionRuntime(runtime.mode, runtime.env)) return false;
+  if (isUploadPresignErrorLike(error)) return true;
   if (!(error instanceof ApiRequestError)) return false;
   if (error.status === 404 || error.status === 405 || error.status >= 500) return true;
   const message = error.message.toLowerCase();
@@ -274,6 +308,27 @@ export async function uploadAsset(
   } catch (error) {
     if (!shouldFallbackToLocalReference(error)) {
       throw error;
+    }
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const response = await fetch("/api/upload/local", {
+        method: "POST",
+        credentials: "include",
+        body: formData,
+      });
+      if (response.ok) {
+        const payload = (await response.json()) as UploadedAsset;
+        return {
+          id: payload.id || crypto.randomUUID(),
+          fileName: payload.fileName || file.name,
+          publicUrl: payload.publicUrl,
+          contentType: payload.contentType || file.type || "application/octet-stream",
+          localPreviewUrl: payload.localPreviewUrl || payload.publicUrl,
+        };
+      }
+    } catch {
+      // Last resort for development-only provider upload gaps.
     }
     const dataUrl = await fileToDataUrl(file);
     return {

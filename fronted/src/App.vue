@@ -42,15 +42,20 @@ import {
   combinePrompt,
   createLocalId,
   findPromptBeforeMessage,
+  generatedAssetReferenceFileName,
   getModelIdentifierError,
   pickPrimaryModel,
   renderMarkdownPreview,
   resolveModelName,
+  shouldResetConversationForModelSwitch,
   shortText,
 } from "./utils";
 import {
   applyFetchedModelsToDraft,
+  canFetchModelListForDraft,
   canSaveModelDraft,
+  canTestModelDraft,
+  getModelDraftMissingFieldLabels,
   getModelWizardProgress,
   getModelWizardStep,
   resolveDraftPrimaryModel,
@@ -291,6 +296,28 @@ const currentModelLabel = computed(() => {
 
 const modelWizardProgress = computed(() => getModelWizardProgress(settingsState.draft));
 const modelWizardStep = computed(() => getModelWizardStep(settingsState.draft));
+const draftRequiresServerCredentials = computed(
+  () => Boolean(auth.state.user && settingsState.dialogMode === "create"),
+);
+const draftMissingFieldLabels = computed(() =>
+  getModelDraftMissingFieldLabels(
+    settingsState.draft,
+    getDraftSetting(),
+    draftRequiresServerCredentials.value,
+  ),
+);
+const draftMissingFieldsText = computed(() => draftMissingFieldLabels.value.join("、"));
+const canFetchDraftModels = computed(() => canFetchModelListForDraft(settingsState.draft));
+const canTestDraftModel = computed(() => canTestModelDraft(settingsState.draft));
+const draftFetchDisabledTitle = computed(() =>
+  canFetchDraftModels.value ? "获取当前密钥可用模型" : "请先填写 baseURL 和 API Key",
+);
+const draftTestDisabledTitle = computed(() =>
+  canTestDraftModel.value ? "测试当前主模型" : "请先填写 baseURL、API Key 和模型标识",
+);
+const draftSaveDisabledTitle = computed(() =>
+  canSaveDraft() ? "保存模型配置" : `请先填写：${draftMissingFieldsText.value || "必填信息"}`,
+);
 
 onMounted(async () => {
   await initializeSession();
@@ -477,7 +504,7 @@ function formatConversationTime(value: string): string {
 function useGeneratedAsset(asset: ConversationAsset) {
   const reference: UploadedAsset = {
     id: asset.id,
-    fileName: asset.url.split("/").pop() || "generated-image.png",
+    fileName: generatedAssetReferenceFileName(asset),
     publicUrl: asset.url,
     contentType: asset.assetType === "video" ? "video/mp4" : "image/png",
     localPreviewUrl: asset.thumbnailUrl || asset.url,
@@ -579,6 +606,9 @@ function getModelHref(model: ModelDefinition): ViewName {
 }
 
 function selectModel(model: ModelDefinition) {
+  if (shouldResetConversationForModelSwitch(conversationState.current, model.capability)) {
+    startNewConversation(getModelHref(model));
+  }
   if (model.capability === "text") textModelId.value = model.id;
   if (model.capability === "image") imageModelId.value = model.id;
   if (model.capability === "video") videoModelId.value = model.id;
@@ -1801,7 +1831,7 @@ async function batchDelete() {
             </div>
             <div v-if="getModelIdentifierError(settingsState.draft.model)" class="inline-message inline-danger">{{ getModelIdentifierError(settingsState.draft.model) }}</div>
             <div v-if="getModelIdentifierError(settingsState.draft.modelNameOverride)" class="inline-message inline-danger">{{ getModelIdentifierError(settingsState.draft.modelNameOverride) }}</div>
-            <div v-if="auth.state.user && settingsState.dialogMode === 'create' && (!settingsState.draft.baseUrl.trim() || !settingsState.draft.apiKey.trim())" class="inline-message inline-danger">登录后保存到数据库时需要填写 baseURL 和 API Key。</div>
+            <div v-if="draftMissingFieldLabels.length" class="inline-message inline-warn">请先填写：{{ draftMissingFieldsText }}。</div>
             <div v-if="settingsState.modelListState[settingsState.draft.id]?.result" class="settings-dialog-models">
               <div class="status-row">
                 <span class="badge badge-success">已获取 {{ settingsState.draft.availableModels.length }} 个模型</span>
@@ -1809,10 +1839,10 @@ async function batchDelete() {
               </div>
             </div>
             <div class="settings-dialog-actions">
-              <button class="button-secondary" @click="fetchModelList(getDraftModel(), getDraftSetting())">获取模型列表</button>
-              <button class="button-secondary" @click="testModel(getDraftModel(), getDraftSetting())">测速</button>
+              <button class="button-secondary" :disabled="!canFetchDraftModels" :title="draftFetchDisabledTitle" @click="fetchModelList(getDraftModel(), getDraftSetting())">获取模型列表</button>
+              <button class="button-secondary" :disabled="!canTestDraftModel" :title="draftTestDisabledTitle" @click="testModel(getDraftModel(), getDraftSetting())">测速</button>
               <button class="button-secondary" @click="settingsState.dialogOpen = false">取消</button>
-              <button :disabled="!canSaveDraft()" @click="saveDialog">保存</button>
+              <button :disabled="!canSaveDraft()" :title="draftSaveDisabledTitle" @click="saveDialog">保存</button>
             </div>
             <div v-if="settingsState.modelListState[settingsState.draft.id]?.error" class="inline-message inline-danger">{{ settingsState.modelListState[settingsState.draft.id].error }}</div>
             <div v-if="settingsState.testState[settingsState.draft.id]?.error" class="inline-message inline-danger">{{ settingsState.testState[settingsState.draft.id].error }}</div>

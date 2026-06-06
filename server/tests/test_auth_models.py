@@ -19,6 +19,7 @@ os.environ["GENSTUDIO_SECRET_KEY"] = "test-secret"
 from app.database import Base, engine  # noqa: E402
 import app.main as main_module  # noqa: E402
 from app.main import app  # noqa: E402
+from app.proxy_utils import build_test_body  # noqa: E402
 
 
 def setup_function() -> None:
@@ -148,6 +149,12 @@ def test_proxy_test_surfaces_upstream_error_message(monkeypatch) -> None:
 
     assert response.status_code == 401
     assert response.json()["detail"]["message"] == "Invalid API key"
+
+
+def test_image_proxy_test_uses_provider_safe_default_size() -> None:
+    body = build_test_body("image", "gpt-image-2")
+
+    assert body["size"] == "1024x1024"
 
 
 def test_public_auth_callback_exchanges_code_sets_cookie_and_redirects(monkeypatch) -> None:

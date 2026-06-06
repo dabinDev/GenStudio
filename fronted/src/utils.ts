@@ -1,4 +1,4 @@
-import type { ConversationMessage, ModelDefinition, ModelSetting } from "./types";
+import type { Capability, ConversationMessage, ModelDefinition, ModelSetting } from "./types";
 
 export function createLocalId(prefix: string): string {
   return `${prefix}-${crypto.randomUUID()}`;
@@ -139,4 +139,21 @@ export function findPromptBeforeMessage(messages: ConversationMessage[], message
     }
   }
   return "";
+}
+
+export function shouldResetConversationForModelSwitch(
+  conversation: { capability?: Capability | string } | null | undefined,
+  nextCapability: Capability,
+): boolean {
+  return Boolean(conversation?.capability && conversation.capability !== nextCapability);
+}
+
+export function generatedAssetReferenceFileName(asset: { assetType: string; url: string }): string {
+  if (asset.url.startsWith("data:")) {
+    return asset.assetType === "video" ? "generated-video.mp4" : "generated-image.png";
+  }
+  const path = asset.url.split(/[?#]/, 1)[0];
+  const fileName = decodeURIComponent(path.split("/").pop() || "");
+  if (fileName) return fileName;
+  return asset.assetType === "video" ? "generated-video.mp4" : "generated-image.png";
 }

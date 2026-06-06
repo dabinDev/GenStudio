@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import type { ModelDefinition, ModelSetting } from "./types";
 import {
+  generatedAssetReferenceFileName,
   findPromptBeforeMessage,
   getModelIdentifierError,
   pickPrimaryModel,
   renderMarkdownPreview,
   resolveModelName,
+  shouldResetConversationForModelSwitch,
 } from "./utils";
 import type { ConversationMessage } from "./types";
 
@@ -90,6 +92,27 @@ describe("conversation helpers", () => {
     ];
 
     expect(findPromptBeforeMessage(messages, "m4")).toBe("第二次");
+  });
+
+  it("resets the visible conversation when switching to a different capability model", () => {
+    expect(shouldResetConversationForModelSwitch({ capability: "image" }, "video")).toBe(true);
+    expect(shouldResetConversationForModelSwitch({ capability: "image" }, "image")).toBe(false);
+    expect(shouldResetConversationForModelSwitch(null, "text")).toBe(false);
+  });
+
+  it("uses readable filenames for generated data-url references", () => {
+    expect(
+      generatedAssetReferenceFileName({
+        assetType: "image",
+        url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAE=",
+      }),
+    ).toBe("generated-image.png");
+    expect(
+      generatedAssetReferenceFileName({
+        assetType: "video",
+        url: "https://cdn.example.com/clip.mp4?download=1",
+      }),
+    ).toBe("clip.mp4");
   });
 });
 

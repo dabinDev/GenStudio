@@ -91,6 +91,33 @@ export function canSaveModelDraft(
   return true;
 }
 
+export function getModelDraftMissingFieldLabels(
+  draft: ModelWizardDraft,
+  setting: Pick<ModelSetting, "baseUrl" | "apiKey">,
+  requireServerCredentials: boolean,
+): string[] {
+  const missing: string[] = [];
+  if (!draft.name.trim()) missing.push("名称");
+  if (requireServerCredentials && !setting.baseUrl.trim()) missing.push("baseURL");
+  if (requireServerCredentials && !setting.apiKey.trim()) missing.push("API Key");
+  if (!resolveDraftPrimaryModel(draft)) missing.push("模型标识");
+  return missing;
+}
+
+export function canFetchModelListForDraft(draft: Pick<ModelWizardDraft, "baseUrl" | "apiKey">): boolean {
+  return Boolean(draft.baseUrl.trim() && draft.apiKey.trim());
+}
+
+export function canTestModelDraft(draft: ModelWizardDraft): boolean {
+  const primaryModel = resolveDraftPrimaryModel(draft);
+  return Boolean(
+    canFetchModelListForDraft(draft) &&
+      primaryModel &&
+      !getModelIdentifierError(draft.model) &&
+      !getModelIdentifierError(draft.modelNameOverride),
+  );
+}
+
 function hasConnectionFields(draft: ModelWizardDraft): boolean {
   return Boolean(draft.name.trim() && draft.baseUrl.trim() && draft.apiKey.trim());
 }

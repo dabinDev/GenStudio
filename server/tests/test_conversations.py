@@ -184,6 +184,52 @@ def test_image_proxy_records_generated_assets(monkeypatch) -> None:
     assert conversation["messages"][-1]["assets"][0]["assetType"] == "image"
 
 
+def test_image_proxy_returns_latest_messages_when_appending_to_existing_conversation(monkeypatch) -> None:
+    calls = 0
+
+    async def fake_forward_json(method, url, api_key, body=None):
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, json={"data": [{"url": f"https://cdn.example.com/image-{calls}.png"}]}), {
+            "data": [{"url": f"https://cdn.example.com/image-{calls}.png"}]
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+    sub_model_id = create_model(client, "image", "image-openai", "gpt-image-2")
+
+    first = client.post(
+        "/api/proxy/image",
+        json={
+            "subModelId": sub_model_id,
+            "requestBody": {"prompt": "first image"},
+        },
+    )
+    assert first.status_code == 200
+    first_conversation = first.json()["conversation"]
+
+    second = client.post(
+        "/api/proxy/image",
+        json={
+            "subModelId": sub_model_id,
+            "conversationId": first_conversation["id"],
+            "requestBody": {"prompt": "second image"},
+        },
+    )
+
+    assert second.status_code == 200
+    second_conversation = second.json()["conversation"]
+    assert second_conversation["updatedAt"] != first_conversation["updatedAt"]
+    assert [message["role"] for message in second_conversation["messages"]] == [
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
+    assert second_conversation["messages"][-1]["assets"][0]["url"] == "https://cdn.example.com/image-2.png"
+
+
 def test_video_create_and_query_record_playable_asset(monkeypatch) -> None:
     async def fake_forward_json(method, url, api_key, body=None):
         if method == "POST":

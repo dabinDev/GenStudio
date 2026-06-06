@@ -101,7 +101,7 @@ def build_test_body(capability: str, model: str, adapter: str | None = None) -> 
             "model": model,
             "prompt": "simple ping test image, plain geometric dot",
             "n": 1,
-            "size": "512x512",
+            "size": "1024x1024",
             "response_format": "url",
         }
 

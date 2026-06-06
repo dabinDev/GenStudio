@@ -3,7 +3,10 @@ import { describe, expect, it } from "vitest";
 import type { Capability, ModelSetting } from "./types";
 import {
   applyFetchedModelsToDraft,
+  canFetchModelListForDraft,
   canSaveModelDraft,
+  canTestModelDraft,
+  getModelDraftMissingFieldLabels,
   getModelWizardProgress,
   getModelWizardStep,
   resolveDraftPrimaryModel,
@@ -138,5 +141,47 @@ describe("model wizard helpers", () => {
         true,
       ),
     ).toBe(false);
+  });
+
+  it("summarizes missing required fields for a new server-saved model", () => {
+    expect(getModelDraftMissingFieldLabels(draft(), setting(), true)).toEqual([
+      "名称",
+      "baseURL",
+      "API Key",
+      "模型标识",
+    ]);
+  });
+
+  it("requires credentials before fetching models", () => {
+    expect(canFetchModelListForDraft(draft({ baseUrl: "https://token.example.com" }))).toBe(false);
+    expect(canFetchModelListForDraft(draft({ apiKey: "sk-test" }))).toBe(false);
+    expect(
+      canFetchModelListForDraft(
+        draft({
+          baseUrl: "https://token.example.com",
+          apiKey: "sk-test",
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("requires credentials and a model identifier before testing", () => {
+    expect(
+      canTestModelDraft(
+        draft({
+          baseUrl: "https://token.example.com",
+          apiKey: "sk-test",
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      canTestModelDraft(
+        draft({
+          baseUrl: "https://token.example.com",
+          apiKey: "sk-test",
+          model: "gpt-5.5",
+        }),
+      ),
+    ).toBe(true);
   });
 });

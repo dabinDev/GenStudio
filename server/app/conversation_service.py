@@ -6,7 +6,7 @@ from typing import Any
 from fastapi import HTTPException
 from sqlalchemy.orm import Session, selectinload
 
-from app.db_models import Conversation, ConversationMessage, GeneratedAsset, User
+from app.db_models import Conversation, ConversationMessage, GeneratedAsset, User, utcnow
 from app.schemas import (
     ConversationCreate,
     ConversationMessageOut,
@@ -164,8 +164,14 @@ def add_message(
     conversation.capability = capability
     conversation.model_group_id = model_group_id or conversation.model_group_id
     conversation.sub_model_id = sub_model_id or conversation.sub_model_id
+    conversation.updated_at = utcnow()
     db.flush()
     return message
+
+
+def reload_conversation(db: Session, user: User, conversation_id: str) -> Conversation:
+    db.expire_all()
+    return get_conversation(db, user, conversation_id)
 
 
 def add_asset(

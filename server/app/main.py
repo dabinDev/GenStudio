@@ -25,6 +25,7 @@ from app.conversation_service import (
     ensure_conversation,
     get_conversation,
     list_conversations,
+    reload_conversation,
     serialize_conversation,
     serialize_message,
 )
@@ -450,7 +451,7 @@ async def proxy_text(
         detail = upstream_error(raw, "文案请求失败。", response.status_code).detail
         if conversation and failed_message:
             db.commit()
-            refreshed = get_conversation(db, current_user, conversation.id) if current_user else conversation
+            refreshed = reload_conversation(db, current_user, conversation.id) if current_user else conversation
             detail = {
                 **detail,
                 "conversation": serialize_conversation(refreshed).model_dump(mode="json"),
@@ -500,7 +501,7 @@ async def proxy_text(
     }
     if conversation and current_user:
         db.commit()
-        refreshed = get_conversation(db, current_user, conversation.id)
+        refreshed = reload_conversation(db, current_user, conversation.id)
         result["conversation"] = serialize_conversation(refreshed).model_dump()
         if assistant_message:
             result["assistantMessage"] = serialize_message(assistant_message).model_dump()
@@ -588,7 +589,7 @@ async def proxy_image(
         detail = upstream_error(raw, "图片请求失败。", response.status_code).detail
         if conversation and failed_message and current_user:
             db.commit()
-            refreshed = get_conversation(db, current_user, conversation.id)
+            refreshed = reload_conversation(db, current_user, conversation.id)
             detail = {
                 **detail,
                 "conversation": serialize_conversation(refreshed).model_dump(mode="json"),
@@ -655,7 +656,7 @@ async def proxy_image(
     result = {"images": images, "raw": raw}
     if conversation and current_user:
         db.commit()
-        refreshed = get_conversation(db, current_user, conversation.id)
+        refreshed = reload_conversation(db, current_user, conversation.id)
         result["conversation"] = serialize_conversation(refreshed).model_dump()
         if assistant_message:
             result["assistantMessage"] = serialize_message(assistant_message).model_dump()
@@ -744,7 +745,7 @@ async def proxy_video_create(
         detail = upstream_error(raw, "视频任务提交失败。", response.status_code).detail
         if conversation and failed_message and current_user:
             db.commit()
-            refreshed = get_conversation(db, current_user, conversation.id)
+            refreshed = reload_conversation(db, current_user, conversation.id)
             detail = {
                 **detail,
                 "conversation": serialize_conversation(refreshed).model_dump(mode="json"),
@@ -790,7 +791,7 @@ async def proxy_video_create(
     }
     if conversation and current_user:
         db.commit()
-        refreshed = get_conversation(db, current_user, conversation.id)
+        refreshed = reload_conversation(db, current_user, conversation.id)
         result["conversation"] = serialize_conversation(refreshed).model_dump()
         if assistant_message:
             result["assistantMessage"] = serialize_message(assistant_message).model_dump()
@@ -860,7 +861,7 @@ async def proxy_video_query(
             metadata={"taskId": task_id, "status": result.get("status"), "progress": result.get("progress")},
         )
         db.commit()
-        refreshed = get_conversation(db, current_user, conversation.id)
+        refreshed = reload_conversation(db, current_user, conversation.id)
         result["conversation"] = serialize_conversation(refreshed).model_dump()
         result["assistantMessage"] = serialize_message(assistant_message).model_dump()
 

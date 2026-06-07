@@ -298,6 +298,95 @@ def test_image_proxy_records_generated_assets(monkeypatch) -> None:
     assert conversation["messages"][-1]["assets"][0]["assetType"] == "image"
 
 
+def test_image_proxy_records_async_task_as_processing_message(monkeypatch) -> None:
+    async def fake_forward_json(method, url, api_key, body=None):
+        assert method == "POST"
+        return httpx.Response(200, json={"code": "success", "data": {"task_id": "image-task-1", "status": "processing"}}), {
+            "code": "success",
+            "data": {"task_id": "image-task-1", "status": "processing"},
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+    sub_model_id = create_model(client, "image", "image-openai", "gpt-image-2")
+
+    response = client.post(
+        "/api/proxy/image",
+        headers=csrf_headers(client),
+        json={"subModelId": sub_model_id, "requestBody": {"prompt": "async image"}},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["taskId"] == "image-task-1"
+    assert payload["status"] == "processing"
+    assert payload["images"] == []
+    assert payload["assistantMessage"]["content"] == "image-task-1"
+    assert payload["assistantMessage"]["status"] == "processing"
+    conversation = client.get(f"/api/conversations/{payload['conversation']['id']}").json()["conversation"]
+    assert conversation["messages"][-1]["content"] == "image-task-1"
+    assert conversation["messages"][-1]["status"] == "processing"
+
+
+def test_image_query_updates_processing_message_with_generated_asset(monkeypatch) -> None:
+    async def fake_forward_json(method, url, api_key, body=None):
+        if method == "POST":
+            return httpx.Response(200, json={"code": "success", "data": {"task_id": "image-task-1", "status": "processing"}}), {
+                "code": "success",
+                "data": {"task_id": "image-task-1", "status": "processing"},
+            }
+        assert method == "GET"
+        assert url == "https://token.example.com/v1/images/generations/image-task-1"
+        return httpx.Response(
+            200,
+            json={
+                "id": "image-task-1",
+                "status": "completed",
+                "data": {
+                    "url": "https://cdn.example.com/async-image.png",
+                    "progress": "100%",
+                },
+            },
+        ), {
+            "id": "image-task-1",
+            "status": "completed",
+            "data": {
+                "url": "https://cdn.example.com/async-image.png",
+                "progress": "100%",
+            },
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+    sub_model_id = create_model(client, "image", "image-openai", "gpt-image-2")
+
+    created = client.post(
+        "/api/proxy/image",
+        headers=csrf_headers(client),
+        json={"subModelId": sub_model_id, "requestBody": {"prompt": "async image"}},
+    )
+    assert created.status_code == 200
+    conversation_id = created.json()["conversation"]["id"]
+
+    queried = client.post(
+        "/api/proxy/image/query",
+        headers=csrf_headers(client),
+        json={"subModelId": sub_model_id, "conversationId": conversation_id, "taskId": "image-task-1"},
+    )
+
+    assert queried.status_code == 200
+    payload = queried.json()
+    assert payload["status"] == "completed"
+    assert payload["images"][0]["src"] == "https://cdn.example.com/async-image.png"
+    assert payload["assistantMessage"]["status"] == "success"
+    assert payload["assistantMessage"]["assets"][0]["url"] == "https://cdn.example.com/async-image.png"
+    conversation = client.get(f"/api/conversations/{conversation_id}").json()["conversation"]
+    assert conversation["messages"][-1]["content"] == "completed"
+    assert conversation["messages"][-1]["assets"][0]["assetType"] == "image"
+
+
 def test_image_proxy_normalizes_html_gateway_timeout(monkeypatch) -> None:
     html = "<html><head><title>504 Gateway Time-out</title></head><body>nginx</body></html>"
 
@@ -767,6 +856,124 @@ def test_video_create_and_query_record_playable_asset(monkeypatch) -> None:
 
     assert queried.status_code == 200
     assert queried.json()["assistantMessage"]["assets"][0]["url"] == "https://cdn.example.com/video.mp4"
+
+
+def test_video_create_with_different_sub_model_does_not_reuse_existing_conversation(monkeypatch) -> None:
+    async def fake_forward_json(method, url, api_key, body=None):
+        return httpx.Response(200, json={"id": f"task-{body['model']}", "status": "processing"}), {
+            "id": f"task-{body['model']}",
+            "status": "processing",
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+    veo_sub_model_id = create_model(client, "video", "video-unified-generic", "gemini-veo-3.1")
+    happyhorse_sub_model_id = create_model(client, "video", "video-unified-generic", "happyhorse-1.0-i2v")
+
+    veo_created = client.post(
+        "/api/proxy/video/create",
+        headers=csrf_headers(client),
+        json={"subModelId": veo_sub_model_id, "requestBody": {"model": "gemini-veo-3.1", "prompt": "veo prompt"}},
+    )
+    assert veo_created.status_code == 200
+    veo_conversation_id = veo_created.json()["conversation"]["id"]
+
+    happyhorse_created = client.post(
+        "/api/proxy/video/create",
+        headers=csrf_headers(client),
+        json={
+            "subModelId": happyhorse_sub_model_id,
+            "conversationId": veo_conversation_id,
+            "requestBody": {"model": "happyhorse-1.0-i2v", "prompt": "happyhorse prompt"},
+        },
+    )
+
+    assert happyhorse_created.status_code == 200
+    payload = happyhorse_created.json()
+    assert payload["conversation"]["id"] != veo_conversation_id
+    assert payload["conversation"]["subModelId"] == happyhorse_sub_model_id
+    old_conversation = client.get(f"/api/conversations/{veo_conversation_id}").json()["conversation"]
+    assert [message["content"] for message in old_conversation["messages"] if message["role"] == "user"] == ["veo prompt"]
+
+
+def test_video_query_extracts_nested_veo_result_url(monkeypatch) -> None:
+    async def fake_forward_json(method, url, api_key, body=None):
+        if method == "POST":
+            return httpx.Response(200, json={"id": "task-veo", "status": "processing"}), {
+                "id": "task-veo",
+                "status": "processing",
+            }
+        return httpx.Response(
+            200,
+            json={
+                "code": "success",
+                "data": {
+                    "task_id": "task-veo",
+                    "status": "SUCCESS",
+                    "progress": "100%",
+                    "result_url": "https://ai-api.kkidc.com/v1/videos/task-veo/content",
+                    "data": {
+                        "status": "completed",
+                        "url": "https://accessfree.example.com/task-veo.mp4",
+                        "video_url": "https://accessfree.example.com/task-veo.mp4",
+                        "result": {
+                            "video_url": "https://access3.example.com/task-veo.mp4",
+                            "download_url": "https://access3.example.com/task-veo.mp4",
+                        },
+                        "metadata": {
+                            "video_url": "https://metadata.example.com/task-veo.mp4",
+                        },
+                    },
+                },
+            },
+        ), {
+            "code": "success",
+            "data": {
+                "task_id": "task-veo",
+                "status": "SUCCESS",
+                "progress": "100%",
+                "result_url": "https://ai-api.kkidc.com/v1/videos/task-veo/content",
+                "data": {
+                    "status": "completed",
+                    "url": "https://accessfree.example.com/task-veo.mp4",
+                    "video_url": "https://accessfree.example.com/task-veo.mp4",
+                    "result": {
+                        "video_url": "https://access3.example.com/task-veo.mp4",
+                        "download_url": "https://access3.example.com/task-veo.mp4",
+                    },
+                    "metadata": {
+                        "video_url": "https://metadata.example.com/task-veo.mp4",
+                    },
+                },
+            },
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+    sub_model_id = create_model(client, "video", "video-unified-generic", "gemini-veo-3.1-generate-preview-ref-8s")
+
+    created = client.post(
+        "/api/proxy/video/create",
+        headers=csrf_headers(client),
+        json={"subModelId": sub_model_id, "requestBody": {"prompt": "veo nested video"}},
+    )
+    assert created.status_code == 200
+    conversation_id = created.json()["conversation"]["id"]
+
+    queried = client.post(
+        "/api/proxy/video/query",
+        headers=csrf_headers(client),
+        json={"subModelId": sub_model_id, "conversationId": conversation_id, "taskId": "task-veo"},
+    )
+
+    assert queried.status_code == 200
+    payload = queried.json()
+    assert payload["status"] == "completed"
+    assert payload["videoUrl"] == "https://accessfree.example.com/task-veo.mp4"
+    assert payload["assistantMessage"]["status"] == "success"
+    assert payload["assistantMessage"]["assets"][0]["url"] == "https://accessfree.example.com/task-veo.mp4"
 
 
 def test_video_query_validation_messages_are_readable() -> None:

@@ -34,6 +34,9 @@ import {
   renderMarkdownPreview,
   resolveModelName,
   shouldResetConversationForModelSwitch,
+  shouldContinuePollingTask,
+  conversationAssetsFromImageQueryResult,
+  conversationAssetFromVideoQueryResult,
   supportsCatalogParameter,
   testResultSummary,
   visibleConversationMessages,
@@ -1049,10 +1052,12 @@ describe("conversation helpers", () => {
     expect(findPromptBeforeMessage(messages, "m4")).toBe("第二次");
   });
 
-  it("resets the visible conversation when switching to a different capability model", () => {
-    expect(shouldResetConversationForModelSwitch({ capability: "image" }, "video")).toBe(true);
-    expect(shouldResetConversationForModelSwitch({ capability: "image" }, "image")).toBe(false);
-    expect(shouldResetConversationForModelSwitch(null, "text")).toBe(false);
+  it("resets the visible conversation when switching to a different model context", () => {
+    expect(shouldResetConversationForModelSwitch({ capability: "image" }, { capability: "video" })).toBe(true);
+    expect(shouldResetConversationForModelSwitch({ capability: "video", subModelId: "sub-veo" }, { capability: "video", subModelId: "sub-happyhorse" })).toBe(true);
+    expect(shouldResetConversationForModelSwitch({ capability: "video", modelGroupId: "mdl-veo" }, { capability: "video", modelGroupId: "mdl-happyhorse" })).toBe(true);
+    expect(shouldResetConversationForModelSwitch({ capability: "image", subModelId: "sub-image" }, { capability: "image", subModelId: "sub-image" })).toBe(false);
+    expect(shouldResetConversationForModelSwitch(null, { capability: "text" })).toBe(false);
   });
 
   it("hides the current conversation when it belongs to another active creation type", () => {
@@ -1275,6 +1280,72 @@ describe("conversation helpers", () => {
     expect(videoMessageStatusFromTaskStatus("cancelled")).toBe("error");
     expect(videoMessageStatusFromTaskStatus("processing")).toBe("processing");
     expect(videoMessageStatusFromTaskStatus("queued")).toBe("processing");
+  });
+
+  it("keeps polling only while media tasks are still running", () => {
+    expect(shouldContinuePollingTask("processing")).toBe(true);
+    expect(shouldContinuePollingTask("queued")).toBe(true);
+    expect(shouldContinuePollingTask("completed")).toBe(false);
+    expect(shouldContinuePollingTask("failed")).toBe(false);
+  });
+
+  it("creates a playable video asset from query results", () => {
+    expect(
+      conversationAssetFromVideoQueryResult({
+        taskId: "task-veo",
+        status: "completed",
+        progress: "100%",
+        videoUrl: "https://cdn.example.com/veo.mp4",
+        thumbnailUrl: "https://cdn.example.com/veo.jpg",
+      }),
+    ).toEqual({
+      assetType: "video",
+      url: "https://cdn.example.com/veo.mp4",
+      thumbnailUrl: "https://cdn.example.com/veo.jpg",
+      metadata: {
+        taskId: "task-veo",
+        status: "completed",
+        progress: "100%",
+      },
+    });
+    expect(conversationAssetFromVideoQueryResult({ taskId: "task-veo", status: "processing", videoUrl: null })).toBeNull();
+  });
+
+  it("creates image assets from async image query results", () => {
+    expect(
+      conversationAssetsFromImageQueryResult({
+        taskId: "image-task-1",
+        status: "completed",
+        progress: "100%",
+        images: [
+          { src: "https://cdn.example.com/one.png", revisedPrompt: "one revised" },
+          { src: "https://cdn.example.com/two.png" },
+        ],
+      }),
+    ).toEqual([
+      {
+        assetType: "image",
+        url: "https://cdn.example.com/one.png",
+        thumbnailUrl: "",
+        metadata: {
+          taskId: "image-task-1",
+          status: "completed",
+          progress: "100%",
+          revisedPrompt: "one revised",
+        },
+      },
+      {
+        assetType: "image",
+        url: "https://cdn.example.com/two.png",
+        thumbnailUrl: "",
+        metadata: {
+          taskId: "image-task-1",
+          status: "completed",
+          progress: "100%",
+          revisedPrompt: "",
+        },
+      },
+    ]);
   });
 
   it("keeps the local request visible when an image proxy error has no server conversation", () => {

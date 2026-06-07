@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 
 import {
   ADAPTER_LABELS,
@@ -50,6 +50,8 @@ import {
   catalogRequestKey,
   catalogVideoModeValue,
   combinePrompt,
+  conversationAssetsFromImageQueryResult,
+  conversationAssetFromVideoQueryResult,
   createLocalId,
   findPromptBeforeMessage,
   generatedAssetReferenceFileName,
@@ -74,6 +76,7 @@ import {
   renderMarkdownPreview,
   resolveModelName,
   shouldResetConversationForModelSwitch,
+  shouldContinuePollingTask,
   shortText,
   supportsCatalogParameter,
   testResultSummary,
@@ -108,6 +111,9 @@ type ComposerPopover = "image-settings" | "image-advanced" | "video-mode" | "vid
 
 interface ImageResult {
   images: Array<{ src: string; revisedPrompt?: string }>;
+  taskId?: string;
+  status?: string;
+  progress?: number | string | null;
   raw: Record<string, unknown>;
   conversation?: ConversationDefinition;
   assistantMessage?: ConversationMessage;
@@ -181,6 +187,7 @@ const UNIFIED_ADAPTERS: Adapter[] = [
   "video-unified-veo",
   "video-unified-generic",
 ];
+const TASK_POLL_INTERVAL_MS = 5000;
 
 const store = useWorkbenchStore();
 const auth = useAuthStore();
@@ -269,6 +276,10 @@ const videoState = reactive({
   createResult: null as VideoCreateResult | null,
   taskResult: null as VideoQueryResult | null,
 });
+let imagePollTimer: number | null = null;
+let imagePollTaskId = "";
+let videoPollTimer: number | null = null;
+let videoPollTaskId = "";
 
 const settingsState = reactive({
   selectedIds: [] as string[],
@@ -514,6 +525,11 @@ onMounted(async () => {
     view.value = getViewFromHash();
     sidebarFilter.value = capabilityFilterForView(view.value);
   });
+});
+
+onUnmounted(() => {
+  stopImagePolling();
+  stopVideoPolling();
 });
 
 watch(
@@ -895,6 +911,8 @@ function clearRequestController(controller: AbortController) {
 }
 
 function stopActiveRequest() {
+  stopImagePolling();
+  stopVideoPolling();
   conversationState.activeRequest?.abort();
   conversationState.activeRequest = null;
 }
@@ -978,6 +996,13 @@ function taskIdFromConversation(): string {
     (message) => message.capability === "video" && message.status === "processing" && message.content.trim(),
   );
   return processing?.content.trim() || videoState.createResult?.taskId || "";
+}
+
+function imageTaskIdFromConversation(): string {
+  const processing = [...currentMessages.value].reverse().find(
+    (message) => message.capability === "image" && message.status === "processing" && message.content.trim(),
+  );
+  return processing?.content.trim() || imageState.result?.taskId || "";
 }
 
 function simulateStreamingPreview(message?: ConversationMessage) {
@@ -1135,7 +1160,11 @@ function getModelHref(model: ModelDefinition): ViewName {
 }
 
 function selectModel(model: ModelDefinition) {
-  if (shouldResetConversationForModelSwitch(conversationState.current, model.capability)) {
+  if (shouldResetConversationForModelSwitch(conversationState.current, {
+    capability: model.capability,
+    modelGroupId: model.id,
+    subModelId: model.primarySubModelId || null,
+  })) {
     startNewConversation(getModelHref(model));
   }
   if (model.capability === "text") textModelId.value = model.id;
@@ -1387,6 +1416,18 @@ async function handleImageSubmit() {
         })),
       }));
     }
+    if (imageState.result.taskId && shouldContinuePollingTask(imageState.result.status || "processing")) {
+      if (!imageState.result.conversation) {
+        setCurrentConversation(updateLocalConversationMessage(pendingConversation, pendingAssistantId, {
+          content: imageState.result.taskId,
+          status: "processing",
+          errorMessage: "",
+          canRetry: false,
+          assets: [],
+        }));
+      }
+      startImagePolling(imageState.result.taskId);
+    }
   } catch (error) {
     const serverConversation = error instanceof ApiRequestError ? conversationFromUnknown(error.detail) : null;
     if (serverConversation) {
@@ -1397,6 +1438,89 @@ async function handleImageSubmit() {
   } finally {
     clearRequestController(controller);
     imageState.loading = false;
+  }
+}
+
+function stopImagePolling() {
+  if (imagePollTimer !== null) {
+    window.clearTimeout(imagePollTimer);
+    imagePollTimer = null;
+  }
+  imagePollTaskId = "";
+}
+
+function scheduleImagePolling(taskId: string) {
+  if (!taskId || imagePollTaskId !== taskId) return;
+  if (imagePollTimer !== null) window.clearTimeout(imagePollTimer);
+  imagePollTimer = window.setTimeout(() => {
+    void handleImageQuery(taskId, { fromPoll: true });
+  }, TASK_POLL_INTERVAL_MS);
+}
+
+function startImagePolling(taskId: string) {
+  if (!taskId) return;
+  stopImagePolling();
+  imagePollTaskId = taskId;
+  scheduleImagePolling(taskId);
+}
+
+async function handleImageQuery(taskIdArg?: string, options: { fromPoll?: boolean } = {}) {
+  const model = activeModel.value;
+  const setting = activeSetting.value;
+  const taskId = taskIdArg || imageTaskIdFromConversation();
+  if (!model || !setting || !taskId) {
+    if (!options.fromPoll) imageState.error = "暂无可查询的图片任务 ID。";
+    if (options.fromPoll) stopImagePolling();
+    return;
+  }
+
+  imageState.error = "";
+  const controller = options.fromPoll ? new AbortController() : createRequestController();
+  try {
+    imageState.result = await postProxyWithSignal<ImageResult>("/api/proxy/image/query", buildModelProxyPayload(model, setting, {
+      conversationId: persistedConversationIdFor("image"),
+      taskId,
+    }), controller.signal);
+    if (imageState.result.conversation) {
+      setCurrentConversation(imageState.result.conversation);
+    } else {
+      const messageStatus = videoMessageStatusFromTaskStatus(imageState.result.status || "");
+      setCurrentConversation(appendLocalConversationMessages(conversationState.current, {
+        capability: "image",
+        titleSeed: taskId,
+        modelGroupId: model.id,
+        messages: [
+          {
+            role: "assistant",
+            content: messageStatus === "success" ? String(imageState.result.status || taskId) : taskId,
+            status: messageStatus,
+            errorMessage: messageStatus === "error" ? "图片任务失败，请检查模型后台或重新发送。" : "",
+            canRetry: messageStatus === "error",
+            assets: conversationAssetsFromImageQueryResult({
+              taskId,
+              status: imageState.result.status,
+              progress: imageState.result.progress,
+              images: imageState.result.images || [],
+            }),
+          },
+        ],
+      }));
+    }
+    if (shouldContinuePollingTask(imageState.result.status || "")) {
+      if (options.fromPoll) {
+        scheduleImagePolling(taskId);
+      } else {
+        imagePollTaskId = taskId;
+        scheduleImagePolling(taskId);
+      }
+    } else {
+      stopImagePolling();
+    }
+  } catch (error) {
+    imageState.error = handleRequestError(error, "图片任务查询失败。");
+    stopImagePolling();
+  } finally {
+    if (!options.fromPoll) clearRequestController(controller);
   }
 }
 
@@ -1597,7 +1721,7 @@ async function handleVideoCreate() {
       }));
     }
     if (videoState.autoPoll) {
-      await handleVideoQuery(videoState.createResult.taskId);
+      startVideoPolling(videoState.createResult.taskId);
     }
   } catch (error) {
     const serverConversation = error instanceof ApiRequestError ? conversationFromUnknown(error.detail) : null;
@@ -1614,18 +1738,42 @@ async function handleVideoCreate() {
   }
 }
 
-async function handleVideoQuery(taskIdArg?: string) {
+function stopVideoPolling() {
+  if (videoPollTimer !== null) {
+    window.clearTimeout(videoPollTimer);
+    videoPollTimer = null;
+  }
+  videoPollTaskId = "";
+}
+
+function scheduleVideoPolling(taskId: string) {
+  if (!videoState.autoPoll || !taskId || videoPollTaskId !== taskId) return;
+  if (videoPollTimer !== null) window.clearTimeout(videoPollTimer);
+  videoPollTimer = window.setTimeout(() => {
+    void handleVideoQuery(taskId, { fromPoll: true });
+  }, TASK_POLL_INTERVAL_MS);
+}
+
+function startVideoPolling(taskId: string) {
+  if (!taskId) return;
+  stopVideoPolling();
+  videoPollTaskId = taskId;
+  scheduleVideoPolling(taskId);
+}
+
+async function handleVideoQuery(taskIdArg?: string, options: { fromPoll?: boolean } = {}) {
   const model = activeModel.value;
   const setting = activeSetting.value;
   const taskId = taskIdArg || taskIdFromConversation();
   if (!model || !setting || !taskId) {
     videoState.error = "暂无可查询的任务 ID。";
+    if (options.fromPoll) stopVideoPolling();
     return;
   }
 
   videoState.querying = true;
   videoState.error = "";
-  const controller = createRequestController();
+  const controller = options.fromPoll ? new AbortController() : createRequestController();
   try {
     videoState.taskResult = await postProxyWithSignal<VideoQueryResult>("/api/proxy/video/query", buildModelProxyPayload(model, setting, {
       adapter: model.adapter,
@@ -1647,20 +1795,32 @@ async function handleVideoQuery(taskIdArg?: string) {
             status: messageStatus,
             errorMessage: messageStatus === "error" ? "视频任务失败，请检查模型后台或重新发送。" : "",
             canRetry: messageStatus === "error",
-            assets: videoState.taskResult.videoUrl ? [{
-              assetType: "video",
-              url: videoState.taskResult.videoUrl,
-              thumbnailUrl: videoState.taskResult.thumbnailUrl || "",
-              metadata: { taskId, status: videoState.taskResult.status, progress: videoState.taskResult.progress },
-            }] : [],
+            assets: [conversationAssetFromVideoQueryResult({
+              taskId,
+              status: videoState.taskResult.status,
+              progress: videoState.taskResult.progress,
+              videoUrl: videoState.taskResult.videoUrl,
+              thumbnailUrl: videoState.taskResult.thumbnailUrl,
+            })].filter((asset): asset is NonNullable<typeof asset> => Boolean(asset)),
           },
         ],
       }));
     }
+    if (shouldContinuePollingTask(videoState.taskResult.status || "")) {
+      if (options.fromPoll) {
+        scheduleVideoPolling(taskId);
+      } else if (videoState.autoPoll) {
+        videoPollTaskId = taskId;
+        scheduleVideoPolling(taskId);
+      }
+    } else {
+      stopVideoPolling();
+    }
   } catch (error) {
     videoState.error = handleRequestError(error, "任务查询失败。");
+    if (options.fromPoll) stopVideoPolling();
   } finally {
-    clearRequestController(controller);
+    if (!options.fromPoll) clearRequestController(controller);
     videoState.querying = false;
   }
 }
@@ -2445,6 +2605,7 @@ async function batchDelete() {
                 </div>
               </div>
               <button class="composer-submit-button" :disabled="imageState.loading" @click="handleImageSubmit">生成</button>
+              <button class="button-secondary" :disabled="imageState.loading || !imageTaskIdFromConversation()" @click="() => handleImageQuery()">查询</button>
             </div>
             <div v-if="imageState.error" class="inline-message inline-danger">{{ imageState.error }}</div>
           </div>

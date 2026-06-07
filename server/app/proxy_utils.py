@@ -305,15 +305,28 @@ def resolve_video_query_path(adapter: str, task_id: str) -> str:
     return f"/v1/video/query?id={quote(task_id)}"
 
 
-def normalize_video_status(value: str) -> str:
+def normalize_task_status(value: str) -> str:
     lower = value.lower()
     if "success" in lower or "complete" in lower or "succeed" in lower:
         return "completed"
     if "fail" in lower or "error" in lower or "cancel" in lower:
         return "failed"
-    if "processing" in lower or "progress" in lower or "pending" in lower or "queue" in lower:
+    if (
+        "processing" in lower
+        or "progress" in lower
+        or "pending" in lower
+        or "queue" in lower
+        or "running" in lower
+        or "submitted" in lower
+        or "created" in lower
+        or "in_progress" in lower
+    ):
         return "processing"
     return value
+
+
+def normalize_video_status(value: str) -> str:
+    return normalize_task_status(value)
 
 
 def has_video_task_error(payload: Any) -> bool:
@@ -326,9 +339,44 @@ def has_video_task_error(payload: Any) -> bool:
 def pick_task_id(raw: dict[str, Any]) -> str:
     if isinstance(raw.get("task_id"), str):
         return raw["task_id"]
+    if isinstance(raw.get("taskId"), str):
+        return raw["taskId"]
     if isinstance(raw.get("id"), str):
         return raw["id"]
     return ""
+
+
+def pick_nested_task_id(raw: dict[str, Any], fallback: str = "") -> str:
+    task_id = pick_task_id(raw)
+    if task_id:
+        return task_id
+    return first_string_at_paths(
+        raw,
+        [
+            ("data", "task_id"),
+            ("data", "taskId"),
+            ("data", "id"),
+            ("data", "data", "task_id"),
+            ("data", "data", "taskId"),
+            ("data", "data", "id"),
+            ("result", "task_id"),
+            ("result", "taskId"),
+            ("result", "id"),
+        ],
+    ) or fallback
+
+
+def first_string_at_paths(payload: Any, paths: list[tuple[str, ...]]) -> str | None:
+    for path in paths:
+        cursor = payload
+        for key in path:
+            if not isinstance(cursor, dict):
+                cursor = None
+                break
+            cursor = cursor.get(key)
+        if isinstance(cursor, str) and cursor.strip():
+            return cursor
+    return None
 
 
 def pick_video_query_payload(raw: dict[str, Any], task_id: str) -> dict[str, Any]:
@@ -351,11 +399,47 @@ def pick_video_query_payload(raw: dict[str, Any], task_id: str) -> dict[str, Any
         if isinstance(nested_seedance_data.get("status"), str)
         else "processing"
     )
-    video_url = raw.get("video_url") if isinstance(raw.get("video_url"), str) else seedance_content.get("video_url")
-    thumbnail_url = raw.get("thumbnail_url") if isinstance(raw.get("thumbnail_url"), str) else None
+    video_url = first_string_at_paths(
+        raw,
+        [
+            ("video_url",),
+            ("videoUrl",),
+            ("url",),
+            ("data", "video_url"),
+            ("data", "videoUrl"),
+            ("data", "url"),
+            ("data", "data", "video_url"),
+            ("data", "data", "videoUrl"),
+            ("data", "data", "url"),
+            ("data", "data", "download_url"),
+            ("data", "data", "result", "video_url"),
+            ("data", "data", "result", "download_url"),
+            ("data", "data", "result", "url"),
+            ("data", "data", "metadata", "video_url"),
+            ("data", "data", "metadata", "download_url"),
+            ("data", "data", "metadata", "url"),
+            ("data", "content", "video_url"),
+            ("data", "result_url"),
+        ],
+    )
+    thumbnail_url = first_string_at_paths(
+        raw,
+        [
+            ("thumbnail_url",),
+            ("thumbnailUrl",),
+            ("data", "thumbnail_url"),
+            ("data", "thumbnailUrl"),
+            ("data", "data", "thumbnail_url"),
+            ("data", "data", "thumbnailUrl"),
+            ("data", "data", "cover_url"),
+            ("data", "data", "coverUrl"),
+        ],
+    )
     progress = raw.get("progress")
     if progress is None:
         progress = seedance_data.get("progress")
+    if progress is None:
+        progress = nested_seedance_data.get("progress")
     status = normalize_video_status(str(status_source))
     if status not in {"completed", "processing"} and has_video_task_error(raw):
         status = "failed"

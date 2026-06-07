@@ -75,7 +75,10 @@ from app.proxy_utils import (
     build_test_body,
     coerce_json_object,
     forward_json,
+    first_string_at_paths,
+    normalize_task_status,
     parse_model_ids,
+    pick_nested_task_id,
     pick_task_id,
     pick_error_message,
     pick_text_content,
@@ -362,6 +365,81 @@ def mark_video_task_message(
     return message
 
 
+def find_image_task_message(conversation: Conversation, task_id: str) -> ConversationMessage | None:
+    for message in conversation.messages:
+        if message.role == "assistant" and message.capability == "image" and message.content == task_id:
+            return message
+    for message in conversation.messages:
+        if message.role != "assistant" or message.capability != "image":
+            continue
+        try:
+            response = json.loads(message.response_json or "{}")
+        except ValueError:
+            response = {}
+        if isinstance(response, dict) and pick_nested_task_id(response) == task_id:
+            return message
+    return None
+
+
+def delete_duplicate_image_task_messages(db: Session, conversation: Conversation, keep_message: ConversationMessage, task_id: str) -> None:
+    for message in list(conversation.messages):
+        if message.id == keep_message.id:
+            continue
+        if message.role == "assistant" and message.capability == "image" and message.content in {task_id, "completed"}:
+            db.delete(message)
+
+
+def mark_image_task_message(
+    db: Session,
+    conversation: Conversation,
+    user: User,
+    *,
+    task_id: str,
+    model_group_id: str,
+    sub_model_id: str,
+    status: str,
+    content: str,
+    error_message: str = "",
+    can_retry: bool = False,
+    request: Any = None,
+    response: Any = None,
+) -> ConversationMessage:
+    message = find_image_task_message(conversation, task_id)
+    if message is None:
+        message = add_message(
+            db,
+            conversation,
+            user,
+            role="assistant",
+            capability="image",
+            content=content,
+            status=status,
+            error_message=error_message,
+            can_retry=can_retry,
+            model_group_id=model_group_id,
+            sub_model_id=sub_model_id,
+            request=request,
+            response=response,
+        )
+        return message
+
+    message.model_group_id = model_group_id
+    message.sub_model_id = sub_model_id
+    message.content = content
+    message.status = status
+    message.error_message = error_message
+    message.can_retry = can_retry
+    message.request_json = dumps_for_storage(request)
+    message.response_json = dumps_for_storage(response)
+    conversation.capability = "image"
+    conversation.model_group_id = model_group_id or conversation.model_group_id
+    conversation.sub_model_id = sub_model_id or conversation.sub_model_id
+    conversation.updated_at = utcnow()
+    delete_duplicate_image_task_messages(db, conversation, message, task_id)
+    db.flush()
+    return message
+
+
 def persist_generated_image_from_b64(value: str) -> str:
     try:
         image_bytes = base64.b64decode(value, validate=True)
@@ -494,17 +572,44 @@ def expand_local_video_references(value: Any) -> Any:
 def extract_images_from_response(raw: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     safe_raw = copy.deepcopy(raw)
     images: list[dict[str, Any]] = []
-    data = safe_raw.get("data") if isinstance(safe_raw.get("data"), list) else []
-    for item in data:
+    candidates: list[dict[str, Any]] = []
+
+    def collect(value: Any) -> None:
+        if isinstance(value, list):
+            for item in value:
+                collect(item)
+            return
+        if not isinstance(value, dict):
+            return
+        if any(isinstance(value.get(key), str) for key in ("url", "image_url", "imageUrl", "b64_json")):
+            candidates.append(value)
+        for key in ("data", "result", "output", "content", "metadata"):
+            nested = value.get(key)
+            if isinstance(nested, (dict, list)):
+                collect(nested)
+
+    collect(safe_raw.get("data"))
+    for key in ("result", "output", "content", "metadata"):
+        collect(safe_raw.get(key))
+    if not candidates:
+        collect(safe_raw)
+
+    seen_sources: set[str] = set()
+    for item in candidates:
         if not isinstance(item, dict):
             continue
-        src = item.get("url") if isinstance(item.get("url"), str) else ""
+        src = ""
+        for key in ("url", "image_url", "imageUrl", "download_url"):
+            if isinstance(item.get(key), str) and item[key].strip():
+                src = item[key].strip()
+                break
         if not src and isinstance(item.get("b64_json"), str):
             src = persist_generated_image_from_b64(item["b64_json"])
             item.pop("b64_json", None)
             item["url"] = src
             item["source"] = "b64_json_saved"
-        if src:
+        if src and src not in seen_sources:
+            seen_sources.add(src)
             images.append(
                 {
                     "src": src,
@@ -514,6 +619,44 @@ def extract_images_from_response(raw: dict[str, Any]) -> tuple[list[dict[str, An
                 }
             )
     return images, safe_raw
+
+
+def pick_image_query_payload(raw: dict[str, Any], task_id: str) -> dict[str, Any]:
+    task_status = first_string_at_paths(
+        raw,
+        [
+            ("status",),
+            ("code",),
+            ("data", "status"),
+            ("data", "data", "status"),
+            ("result", "status"),
+            ("output", "status"),
+        ],
+    ) or ("completed" if extract_images_from_response(raw)[0] else "processing")
+    progress = raw.get("progress")
+    data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
+    nested_data = data.get("data") if isinstance(data.get("data"), dict) else {}
+    if progress is None:
+        progress = data.get("progress")
+    if progress is None:
+        progress = nested_data.get("progress")
+    images, safe_raw = extract_images_from_response(raw)
+    status = normalize_task_status(str(task_status))
+    if images and status not in {"failed", "error"}:
+        status = "completed"
+    if status not in {"completed", "processing"} and pick_video_task_error_message(raw, ""):
+        status = "failed"
+    return {
+        "taskId": pick_nested_task_id(raw, task_id),
+        "status": status,
+        "progress": progress if isinstance(progress, (str, int, float)) else None,
+        "images": images,
+        "raw": safe_raw,
+    }
+
+
+def resolve_image_query_path(task_id: str) -> str:
+    return f"/v1/images/generations/{quote(task_id)}"
 
 
 def has_oversized_inline_reference(body: dict[str, Any]) -> bool:
@@ -1470,6 +1613,19 @@ async def proxy_image(
         raise HTTPException(status_code=response.status_code or 500, detail=detail)
 
     images, safe_raw = extract_images_from_response(raw)
+    task_id = pick_nested_task_id(raw)
+    task_status_source = first_string_at_paths(
+        raw,
+        [
+            ("status",),
+            ("data", "status"),
+            ("data", "data", "status"),
+            ("result", "status"),
+            ("output", "status"),
+        ],
+    )
+    task_status = normalize_task_status(str(task_status_source or "processing"))
+    is_async_image_task = bool(task_id and not images and task_status != "failed")
 
     assistant_message = None
     if current_user:
@@ -1480,8 +1636,9 @@ async def proxy_image(
                 current_user,
                 role="assistant",
                 capability="image",
-                content="",
-                status="success",
+                content=task_id if is_async_image_task else "",
+                status="processing" if is_async_image_task else "success",
+                can_retry=False,
                 model_group_id=model_group.id if model_group else None,
                 sub_model_id=sub_model.id if sub_model else None,
                 request=body,
@@ -1511,13 +1668,164 @@ async def proxy_image(
                 usage=raw.get("usage"),
             )
 
-    result = {"images": images, "raw": safe_raw}
+    result = {
+        "images": images,
+        "raw": safe_raw,
+        **({"taskId": task_id, "status": "processing"} if is_async_image_task else {}),
+    }
     if conversation and current_user:
         db.commit()
         refreshed = reload_conversation(db, current_user, conversation.id)
         result["conversation"] = serialize_conversation(refreshed).model_dump()
         if assistant_message:
             result["assistantMessage"] = serialize_message(assistant_message).model_dump()
+    return result
+
+
+@app.post("/api/proxy/image/query")
+async def proxy_image_query(
+    payload: dict[str, Any],
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_current_user),
+    settings: Settings = Depends(get_settings),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    check_rate_limit(
+        limiter=rate_limiter,
+        request=request,
+        settings=settings,
+        bucket="generation-image-query",
+        limit=settings.rate_limit_generation_per_window,
+        user_id=current_user.id if current_user else "",
+    )
+    model_group = None
+    sub_model = None
+    conversation_id = str(payload.get("conversationId") or "").strip()
+    if payload.get("subModelId") and not current_user:
+        raise HTTPException(status_code=401, detail={"message": "璇峰厛鐧诲綍銆?"})
+    if payload.get("subModelId") and current_user:
+        model_group, sub_model, api_key_record, api_key = get_sub_model_for_user(db, current_user, str(payload["subModelId"]))
+        base_url = api_key_record.base_url
+    else:
+        base_url, api_key = validate_config(payload.get("config"))
+    task_id = str(payload.get("taskId", "")).strip()
+    if not task_id:
+        raise HTTPException(status_code=400, detail={"message": "缂哄皯浠诲姟 ID銆?"})
+
+    target_url = resolve_url(base_url, resolve_image_query_path(task_id))
+    started_at = time.perf_counter()
+    response, raw = await forward_json("GET", target_url, api_key)
+    duration_ms = elapsed_ms(started_at)
+
+    if not response.is_success or not isinstance(raw, dict):
+        message = pick_error_message(raw, "鍥剧墖浠诲姟鏌ヨ澶辫触銆?")
+        failed_message = None
+        conversation = None
+        if current_user and model_group and sub_model:
+            if conversation_id:
+                conversation = get_conversation(db, current_user, conversation_id)
+                failed_message = mark_image_task_message(
+                    db,
+                    conversation,
+                    current_user,
+                    task_id=task_id,
+                    model_group_id=model_group.id,
+                    sub_model_id=sub_model.id,
+                    status="error",
+                    content=task_id,
+                    error_message=message,
+                    can_retry=True,
+                    request={"taskId": task_id},
+                    response=raw,
+                )
+            record_call_log(
+                db,
+                user=current_user,
+                model_group_id=model_group.id,
+                sub_model_id=sub_model.id,
+                capability="image",
+                endpoint="/api/proxy/image/query",
+                status="error",
+                duration_ms=duration_ms,
+                error_message=message,
+            )
+        detail = upstream_error(raw, "鍥剧墖浠诲姟鏌ヨ澶辫触銆?", response.status_code).detail
+        if conversation and failed_message and current_user:
+            db.commit()
+            refreshed = reload_conversation(db, current_user, conversation.id)
+            detail = {
+                **detail,
+                "conversation": serialize_conversation(refreshed).model_dump(mode="json"),
+                "assistantMessage": serialize_message(failed_message).model_dump(mode="json"),
+            }
+        raise HTTPException(status_code=response.status_code or 500, detail=detail)
+
+    result = pick_image_query_payload(raw, task_id)
+    if current_user and model_group and sub_model and conversation_id:
+        conversation = get_conversation(db, current_user, conversation_id)
+        task_status = str(result.get("status") or "")
+        message_status = (
+            "success"
+            if task_status == "completed"
+            else "error"
+            if task_status == "failed"
+            else "processing"
+        )
+        task_error_message = (
+            pick_video_task_error_message(raw, "鍥剧墖浠诲姟澶辫触锛岃妫€鏌ユā鍨嬪悗鍙版垨绋嶅悗閲嶈瘯銆?")
+            if message_status == "error"
+            else ""
+        )
+        assistant_message = mark_image_task_message(
+            db,
+            conversation,
+            current_user,
+            task_id=task_id,
+            model_group_id=model_group.id,
+            sub_model_id=sub_model.id,
+            status=message_status,
+            content=str(result.get("status") or task_id) if message_status == "success" else task_id,
+            error_message=task_error_message,
+            can_retry=message_status == "error",
+            request={"taskId": task_id},
+            response=raw,
+        )
+        if result.get("images") and message_status == "success":
+            db.query(GeneratedAsset).filter(GeneratedAsset.message_id == assistant_message.id).delete()
+            for image in result["images"]:
+                add_asset(
+                    db,
+                    assistant_message,
+                    current_user,
+                    capability="image",
+                    asset_type="image",
+                    url=str(image.get("src") or ""),
+                    metadata={
+                        "taskId": task_id,
+                        "status": result.get("status"),
+                        "progress": result.get("progress"),
+                        "revisedPrompt": image.get("revisedPrompt"),
+                    },
+                )
+        db.commit()
+        refreshed = reload_conversation(db, current_user, conversation.id)
+        result["conversation"] = serialize_conversation(refreshed).model_dump()
+        result["assistantMessage"] = serialize_message(assistant_message).model_dump()
+        record_call_log(
+            db,
+            user=current_user,
+            model_group_id=model_group.id,
+            sub_model_id=sub_model.id,
+            capability="image",
+            endpoint="/api/proxy/image/query",
+            status="error" if message_status == "error" else "success",
+            duration_ms=duration_ms,
+            prompt_summary=task_id,
+            usage=None,
+            error_message=task_error_message,
+        )
+
     return result
 
 

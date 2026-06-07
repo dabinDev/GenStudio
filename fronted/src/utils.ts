@@ -623,11 +623,60 @@ export function videoMessageStatusFromTaskStatus(status: string): ConversationMe
   return "processing";
 }
 
+export function shouldContinuePollingTask(status: string): boolean {
+  return videoMessageStatusFromTaskStatus(status) === "processing";
+}
+
+export function conversationAssetFromVideoQueryResult(input: {
+  taskId: string;
+  status?: string | null;
+  progress?: number | string | null;
+  videoUrl?: string | null;
+  thumbnailUrl?: string | null;
+}): (Partial<ConversationAsset> & { assetType: string; url: string }) | null {
+  if (!input.videoUrl) return null;
+  return {
+    assetType: "video",
+    url: input.videoUrl,
+    thumbnailUrl: input.thumbnailUrl || "",
+    metadata: {
+      taskId: input.taskId,
+      status: input.status || "",
+      progress: input.progress ?? null,
+    },
+  };
+}
+
+export function conversationAssetsFromImageQueryResult(input: {
+  taskId: string;
+  status?: string | null;
+  progress?: number | string | null;
+  images: Array<{ src: string; revisedPrompt?: string | null }>;
+}): Array<Partial<ConversationAsset> & { assetType: string; url: string }> {
+  return input.images
+    .filter((image) => Boolean(image.src))
+    .map((image) => ({
+      assetType: "image",
+      url: image.src,
+      thumbnailUrl: "",
+      metadata: {
+        taskId: input.taskId,
+        status: input.status || "",
+        progress: input.progress ?? null,
+        revisedPrompt: image.revisedPrompt || "",
+      },
+    }));
+}
+
 export function shouldResetConversationForModelSwitch(
-  conversation: { capability?: Capability | string } | null | undefined,
-  nextCapability: Capability,
+  conversation: { capability?: Capability | string; modelGroupId?: string | null; subModelId?: string | null } | null | undefined,
+  nextModel: { capability: Capability; modelGroupId?: string | null; subModelId?: string | null },
 ): boolean {
-  return Boolean(conversation?.capability && conversation.capability !== nextCapability);
+  if (!conversation?.capability) return false;
+  if (conversation.capability !== nextModel.capability) return true;
+  if (conversation.subModelId && nextModel.subModelId && conversation.subModelId !== nextModel.subModelId) return true;
+  if (conversation.modelGroupId && nextModel.modelGroupId && conversation.modelGroupId !== nextModel.modelGroupId) return true;
+  return false;
 }
 
 export function visibleConversationMessages(

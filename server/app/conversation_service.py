@@ -149,7 +149,12 @@ def ensure_conversation(
     sub_model_id: str | None = None,
 ) -> Conversation:
     if conversation_id:
-        return get_conversation(db, user, conversation_id)
+        conversation = get_conversation(db, user, conversation_id)
+        matches_capability = conversation.capability == capability
+        matches_model_group = not model_group_id or not conversation.model_group_id or conversation.model_group_id == model_group_id
+        matches_sub_model = not sub_model_id or not conversation.sub_model_id or conversation.sub_model_id == sub_model_id
+        if matches_capability and matches_model_group and matches_sub_model:
+            return conversation
     conversation = Conversation(
         user_id=user.id,
         title=make_title(title_seed),

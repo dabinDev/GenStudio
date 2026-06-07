@@ -85,6 +85,28 @@ def normalize_model_names(primary_model_name: str, available_model_names: list[s
     return names
 
 
+def backfill_catalog_links(db: Session, models: list[ModelGroup]) -> bool:
+    changed = False
+    for model in models:
+        if not model.catalog_model:
+            primary = next((item for item in model.sub_models if item.id == model.primary_sub_model_id), None)
+            if primary:
+                catalog_model = find_catalog_model_by_name(db, primary.model_name, model.capability)
+                if catalog_model:
+                    model.catalog_model_id = catalog_model.id
+                    changed = True
+        for sub_model in model.sub_models:
+            if sub_model.catalog_model:
+                continue
+            catalog_model = find_catalog_model_by_name(db, sub_model.model_name, sub_model.capability)
+            if catalog_model:
+                sub_model.catalog_model_id = catalog_model.id
+                changed = True
+    if changed:
+        db.flush()
+    return changed
+
+
 def create_model_group(db: Session, user: User, payload: ModelCreate) -> ModelGroup:
     catalog_model = get_catalog_model_by_external_id(db, payload.catalogModelId)
     api_key = ApiKey(
@@ -145,17 +167,37 @@ def get_model_group_for_user_id(db: Session, user_id: str, model_id: str) -> Mod
     )
     if not model:
         raise HTTPException(status_code=404, detail={"message": "模型不存在。"})
+    if backfill_catalog_links(db, [model]):
+        db.commit()
+        db.expire_all()
+        model = (
+            db.query(ModelGroup)
+            .options(*catalog_loader_options())
+            .filter(ModelGroup.id == model_id, ModelGroup.user_id == user_id)
+            .one()
+        )
     return model
 
 
 def list_model_groups(db: Session, user: User) -> list[ModelGroup]:
-    return (
+    models = (
         db.query(ModelGroup)
         .options(*catalog_loader_options())
         .filter(ModelGroup.user_id == user.id)
         .order_by(ModelGroup.created_at.desc())
         .all()
     )
+    if backfill_catalog_links(db, models):
+        db.commit()
+        db.expire_all()
+        models = (
+            db.query(ModelGroup)
+            .options(*catalog_loader_options())
+            .filter(ModelGroup.user_id == user.id)
+            .order_by(ModelGroup.created_at.desc())
+            .all()
+        )
+    return models
 
 
 def list_api_keys(db: Session, user: User) -> list[ApiKey]:

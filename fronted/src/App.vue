@@ -40,10 +40,18 @@ import type {
 } from "./types";
 import {
   appendLocalConversationMessages,
+  catalogDefaultValue,
+  catalogMaxCount,
+  catalogOptionItems,
+  catalogParameterSignature,
+  catalogRequestKey,
   combinePrompt,
   createLocalId,
   findPromptBeforeMessage,
   generatedAssetReferenceFileName,
+  getPrimarySubModel,
+  hasCatalogParameter,
+  hasCatalogParameters,
   getModelIdentifierError,
   getMissingModelMessage,
   imageGenerationSummary,
@@ -59,6 +67,7 @@ import {
   resolveModelName,
   shouldResetConversationForModelSwitch,
   shortText,
+  supportsCatalogParameter,
   testResultSummary,
   updateLocalConversationMessage,
   videoGenerationSummary,
@@ -281,9 +290,11 @@ const modelSelectState = reactive({
 
 const IMAGE_RATIO_OPTIONS = ["1:1", "16:9", "9:16", "4:3", "3:4"];
 const IMAGE_RESOLUTION_OPTIONS = ["1k", "2k", "4k"];
+const IMAGE_SIZE_OPTIONS = ["1024x1024"];
 const VIDEO_RATIO_OPTIONS = ["21:9", "3:4", "4:3", "1:1", "16:9", "9:16"];
 const VIDEO_RESOLUTION_OPTIONS = ["480p", "720p", "1080p"];
 const VIDEO_DURATION_OPTIONS = ["4", "5", "8", "10", "12", "15"];
+const VIDEO_QUANTITY_OPTIONS = ["1", "2", "3", "4"];
 const VIDEO_MODE_OPTIONS: Array<{ value: VideoMode; label: string }> = [
   { value: "text", label: "文生视频" },
   { value: "reference", label: "全能参考" },
@@ -386,21 +397,53 @@ const draftSaveDisabledTitle = computed(() =>
   canSaveDraft() ? "保存模型配置" : `请先填写：${draftMissingFieldsText.value || "必填信息"}`,
 );
 
+const imageSizeOptions = computed(() => catalogOptionItems(activeModel.value, "size", IMAGE_SIZE_OPTIONS));
+const imageQualityOptions = computed(() => catalogOptionItems(activeModel.value, "quality", ["auto", "standard", "hd"]));
+const imageQuantityOptions = computed(() => catalogOptionItems(activeModel.value, "quantity", ["1", "2", "3", "4"]));
+const imageReferenceLimit = computed(() => catalogMaxCount(activeModel.value, ["images", "image"], 14));
+const imageHasCatalogParameters = computed(() => hasCatalogParameters(activeModel.value));
+const imageUsesSizeControls = computed(() => hasCatalogParameter(activeModel.value, "size"));
+const imageUsesRatioControls = computed(() => !imageUsesSizeControls.value && supportsCatalogParameter(activeModel.value, "ratio", "aspect_ratio"));
+const imageUsesResolutionControls = computed(() => !imageUsesSizeControls.value && supportsCatalogParameter(activeModel.value, "resolution", "size"));
+const imageUsesQualityControls = computed(() => supportsCatalogParameter(activeModel.value, "quality"));
+const imageUsesQuantityControls = computed(() => supportsCatalogParameter(activeModel.value, "quantity"));
+const imageRatioOptions = computed(() => catalogOptionItems(activeModel.value, ["ratio", "aspect_ratio"], IMAGE_RATIO_OPTIONS));
+const imageResolutionOptions = computed(() => catalogOptionItems(activeModel.value, ["resolution", "size"], IMAGE_RESOLUTION_OPTIONS));
+const videoModeOptions = computed(() => {
+  if (!hasCatalogParameter(activeModel.value, "video_mode")) return VIDEO_MODE_OPTIONS;
+  return catalogOptionItems(activeModel.value, "video_mode", VIDEO_MODE_OPTIONS.map((item) => item.value)).map((item) => ({
+    value: catalogVideoModeValue(item.value),
+    label: item.label,
+  }));
+});
+const videoHasCatalogParameters = computed(() => hasCatalogParameters(activeModel.value));
+const videoUsesModeControls = computed(() => supportsCatalogParameter(activeModel.value, "video_mode"));
+const videoUsesRatioControls = computed(() => supportsCatalogParameter(activeModel.value, "ratio", "aspect_ratio"));
+const videoUsesResolutionControls = computed(() => supportsCatalogParameter(activeModel.value, "resolution", "size"));
+const videoUsesDurationControls = computed(() => supportsCatalogParameter(activeModel.value, "duration"));
+const videoUsesQuantityControls = computed(() => supportsCatalogParameter(activeModel.value, "quantity"));
+const videoUsesAudioControls = computed(() => supportsCatalogParameter(activeModel.value, "generate_audio", "audio"));
+const videoUsesSeedControls = computed(() => supportsCatalogParameter(activeModel.value, "seed"));
+const videoRatioOptions = computed(() => catalogOptionItems(activeModel.value, ["ratio", "aspect_ratio"], VIDEO_RATIO_OPTIONS));
+const videoResolutionOptions = computed(() => catalogOptionItems(activeModel.value, ["resolution", "size"], VIDEO_RESOLUTION_OPTIONS));
+const videoDurationOptions = computed(() => catalogOptionItems(activeModel.value, "duration", VIDEO_DURATION_OPTIONS));
+const videoQuantityOptions = computed(() => catalogOptionItems(activeModel.value, "quantity", VIDEO_QUANTITY_OPTIONS));
+
 const imageControlSummary = computed(() =>
   imageGenerationSummary({
-    ratio: imageState.ratio,
-    resolution: imageState.resolution,
-    count: imageState.count,
+    ratio: imageUsesSizeControls.value ? imageState.size : imageUsesRatioControls.value ? imageState.ratio : "",
+    resolution: imageUsesQualityControls.value ? imageState.quality : imageUsesResolutionControls.value ? imageState.resolution : "",
+    count: imageUsesQuantityControls.value ? imageState.count : "",
   }),
 );
 
 const videoControlSummary = computed(() =>
   videoGenerationSummary({
-    mode: videoState.mode,
-    aspectRatio: videoState.aspectRatio,
-    resolution: videoState.resolution,
-    duration: videoState.duration,
-    count: videoState.count,
+    mode: videoUsesModeControls.value ? videoState.mode : "",
+    aspectRatio: videoUsesRatioControls.value ? videoState.aspectRatio : "",
+    resolution: videoUsesResolutionControls.value ? videoState.resolution : "",
+    duration: videoUsesDurationControls.value ? videoState.duration : "",
+    count: videoUsesQuantityControls.value ? videoState.count : "",
   }),
 );
 
@@ -429,6 +472,17 @@ watch(
   () => {
     syncProfileForm();
   },
+);
+
+watch(
+  () => [
+    activeModel.value?.id || "",
+    activeModel.value?.primarySubModelId || "",
+    activeModel.value ? getPrimarySubModel(activeModel.value)?.catalogModelId || "" : "",
+    activeModel.value ? catalogParameterSignature(activeModel.value) : "",
+  ].join(":"),
+  () => syncComposerParametersFromCatalog(true),
+  { immediate: true },
 );
 
 function getViewFromHash(): ViewName {
@@ -587,6 +641,109 @@ function closeModelSelect() {
 
 function filteredModelSelectOptions(options: string[], selectedModel = ""): string[] {
   return prioritizeModelOptions(filterModelOptions(options, modelSelectState.query), selectedModel);
+}
+
+function optionValues(options: Array<{ value: string }>): string[] {
+  return options.map((item) => item.value).filter(Boolean);
+}
+
+function normalizeOptionValue(current: string, options: Array<{ value: string }>, fallback: string): string {
+  const values = optionValues(options);
+  if (values.includes(current)) return current;
+  return values.includes(fallback) ? fallback : values[0] || fallback;
+}
+
+function catalogVideoModeValue(value: string): VideoMode {
+  if (value === "reference" || value === "first_frame") return "reference";
+  if (value === "first_last_frame" || value === "start-end") return "start-end";
+  return "text";
+}
+
+function normalizeVideoMode(current: VideoMode, options: Array<{ value: VideoMode }>, fallback: VideoMode): VideoMode {
+  const values = options.map((item) => item.value);
+  if (values.includes(current)) return current;
+  return values.includes(fallback) ? fallback : values[0] || fallback;
+}
+
+function videoModeParamValue(mode: VideoMode): string {
+  if (mode === "reference") return "reference";
+  if (mode === "start-end") return "first_last_frame";
+  return "text";
+}
+
+function modelSupportsParameter(model: ModelDefinition, ...keys: string[]): boolean {
+  return supportsCatalogParameter(model, ...keys);
+}
+
+function addPayloadField(
+  payload: Record<string, unknown>,
+  model: ModelDefinition,
+  keys: string[],
+  outputKey: string,
+  value: unknown,
+) {
+  if (modelSupportsParameter(model, ...keys)) {
+    payload[catalogRequestKey(model, keys, outputKey)] = value;
+  }
+}
+
+function buildImageRequestBody(model: ModelDefinition, finalPrompt: string, extra: Record<string, unknown>) {
+  const body: Record<string, unknown> = {
+    prompt: finalPrompt,
+    response_format: "url",
+  };
+  if (modelSupportsParameter(model, "image", "images")) {
+    body[catalogRequestKey(model, ["image", "images"], "image")] = imageState.references.map((item) => item.publicUrl);
+  }
+  const quantity = Number(imageState.count) || 1;
+  addPayloadField(body, model, ["quantity"], "n", quantity);
+  if (catalogRequestKey(model, ["quantity"], "n") !== "n") {
+    addPayloadField(body, model, ["quantity"], "quantity", quantity);
+  }
+  addPayloadField(body, model, ["size"], "size", imageState.size);
+  addPayloadField(body, model, ["ratio", "aspect_ratio"], "ratio", imageState.ratio);
+  addPayloadField(body, model, ["resolution", "size"], "resolution", imageState.resolution);
+  addPayloadField(body, model, ["quality"], "quality", imageState.quality);
+  return { ...body, ...extra };
+}
+
+function addSeedParameter(payload: Record<string, unknown>, model: ModelDefinition) {
+  if (modelSupportsParameter(model, "seed")) {
+    payload.seed = Number(videoState.seed) || 0;
+  }
+}
+
+function syncComposerParametersFromCatalog(resetToCatalogDefaults = false) {
+  const model = activeModel.value;
+  if (!model) return;
+  if (model.capability === "image") {
+    const defaultSize = catalogDefaultValue(model, "size", imageState.size || "1024x1024");
+    const defaultQuality = catalogDefaultValue(model, "quality", imageState.quality || "auto");
+    const defaultCount = catalogDefaultValue(model, "quantity", imageState.count || "1");
+    const defaultRatio = catalogDefaultValue(model, ["ratio", "aspect_ratio"], imageState.ratio || "16:9");
+    const defaultResolution = catalogDefaultValue(model, ["resolution", "size"], imageState.resolution || "2k");
+    imageState.size = normalizeOptionValue(resetToCatalogDefaults ? defaultSize : imageState.size, imageSizeOptions.value, defaultSize);
+    imageState.quality = normalizeOptionValue(resetToCatalogDefaults ? defaultQuality : imageState.quality, imageQualityOptions.value, defaultQuality);
+    imageState.count = normalizeOptionValue(resetToCatalogDefaults ? defaultCount : imageState.count, imageQuantityOptions.value, defaultCount);
+    imageState.ratio = normalizeOptionValue(resetToCatalogDefaults ? defaultRatio : imageState.ratio, imageRatioOptions.value, defaultRatio);
+    imageState.resolution = normalizeOptionValue(resetToCatalogDefaults ? defaultResolution : imageState.resolution, imageResolutionOptions.value, defaultResolution);
+    imageState.references = imageState.references.slice(0, imageReferenceLimit.value);
+  }
+  if (model.capability === "video") {
+    const defaultMode = catalogVideoModeValue(catalogDefaultValue(model, "video_mode", videoState.mode));
+    const defaultRatio = catalogDefaultValue(model, ["ratio", "aspect_ratio"], videoState.aspectRatio || "16:9");
+    const defaultResolution = catalogDefaultValue(model, ["resolution", "size"], videoState.resolution || "720p");
+    const defaultDuration = catalogDefaultValue(model, "duration", videoState.duration || "5");
+    const defaultCount = catalogDefaultValue(model, "quantity", videoState.count || "1");
+    videoState.mode = normalizeVideoMode(resetToCatalogDefaults ? defaultMode : videoState.mode, videoModeOptions.value, defaultMode);
+    videoState.aspectRatio = normalizeOptionValue(resetToCatalogDefaults ? defaultRatio : videoState.aspectRatio, videoRatioOptions.value, defaultRatio);
+    videoState.resolution = normalizeOptionValue(resetToCatalogDefaults ? defaultResolution : videoState.resolution, videoResolutionOptions.value, defaultResolution);
+    videoState.duration = normalizeOptionValue(resetToCatalogDefaults ? defaultDuration : videoState.duration, videoDurationOptions.value, defaultDuration);
+    videoState.count = normalizeOptionValue(resetToCatalogDefaults ? defaultCount : videoState.count, videoQuantityOptions.value, defaultCount);
+    if (resetToCatalogDefaults || videoHasCatalogParameters.value) {
+      videoState.audio = catalogDefaultValue(model, ["generate_audio", "audio"], String(videoState.audio)) === "true";
+    }
+  }
 }
 
 async function chooseRowPrimaryModel(modelId: string, model: ModelDefinition) {
@@ -973,16 +1130,6 @@ function isModelConfigured(model: ModelDefinition, setting: ModelSetting): boole
   return model.serverManaged ? Boolean(model.primarySubModelId) : Boolean(setting.baseUrl.trim() && setting.apiKey.trim());
 }
 
-function getPrimarySubModel(model: ModelDefinition): SubModelDefinition | null {
-  if (!model.serverManaged) return null;
-  return (
-    model.subModels?.find((item) => item.id === model.primarySubModelId) ||
-    model.subModels?.find((item) => item.isPrimary) ||
-    model.subModels?.[0] ||
-    null
-  );
-}
-
 function buildModelProxyPayload(
   model: ModelDefinition,
   setting: ModelSetting,
@@ -1158,17 +1305,7 @@ async function handleImageSubmit() {
     const extra = parseJsonInput(imageState.extraJson);
     imageState.result = await postProxyWithSignal<ImageResult>("/api/proxy/image", buildModelProxyPayload(model, setting, {
       conversationId: conversationIdFor("image"),
-      requestBody: {
-        prompt: finalPrompt,
-        n: Number(imageState.count) || 1,
-        size: imageState.size,
-        ratio: imageState.ratio,
-        resolution: imageState.resolution,
-        quality: imageState.quality,
-        response_format: "url",
-        image: imageState.references.map((item) => item.publicUrl),
-        ...extra,
-      },
+      requestBody: buildImageRequestBody(model, finalPrompt, extra),
     }), controller.signal);
     if (imageState.result.conversation) {
       setCurrentConversation(imageState.result.conversation);
@@ -1239,41 +1376,57 @@ async function uploadVideoFiles(event: Event, target: "unified" | "first" | "las
 }
 
 function buildVideoRequestBody(model: ModelDefinition, modelName: string, finalPrompt: string, extra: Record<string, unknown>) {
+  const mediaImages = videoState.mode === "text" ? [] : videoState.unifiedImages.map((item) => item.publicUrl);
+  const addVideoParameter = (
+    payload: Record<string, unknown>,
+    keys: string[],
+    outputKey: string,
+    value: unknown,
+  ) => addPayloadField(payload, model, keys, outputKey, value);
+  const addSharedVideoParameters = (payload: Record<string, unknown>, options: { useSize?: boolean; includeAudio?: boolean } = {}) => {
+    addVideoParameter(payload, ["video_mode"], "video_mode", videoModeParamValue(videoState.mode));
+    addVideoParameter(payload, ["ratio", "aspect_ratio"], "aspect_ratio", videoState.aspectRatio);
+    addVideoParameter(payload, ["duration"], "duration", Number(videoState.duration) || 5);
+    addVideoParameter(payload, ["quantity"], "quantity", Number(videoState.count) || 1);
+    addVideoParameter(payload, options.useSize ? ["size", "resolution"] : ["resolution", "size"], options.useSize ? "size" : "resolution", videoState.resolution);
+    if (options.includeAudio) addVideoParameter(payload, ["generate_audio", "audio"], "audio", videoState.audio);
+  };
   if (model.adapter === "video-unified-jimeng") {
-    return {
+    const body: Record<string, unknown> = {
       model: modelName,
       prompt: finalPrompt,
-      images: videoState.mode === "text" ? [] : videoState.unifiedImages.map((item) => item.publicUrl),
-      aspect_ratio: videoState.aspectRatio,
-      size: videoState.size,
-      ...extra,
+      images: mediaImages,
     };
+    addVideoParameter(body, ["video_mode"], "video_mode", videoModeParamValue(videoState.mode));
+    addVideoParameter(body, ["ratio", "aspect_ratio"], "aspect_ratio", videoState.aspectRatio);
+    addVideoParameter(body, ["resolution", "size"], "size", videoState.resolution);
+    addVideoParameter(body, ["quantity"], "quantity", Number(videoState.count) || 1);
+    return { ...body, ...extra };
   }
   if (model.adapter === "video-unified-vidu") {
-    return {
+    const body: Record<string, unknown> = {
       model: modelName,
       prompt: finalPrompt,
-      images: videoState.mode === "text" ? [] : videoState.unifiedImages.map((item) => item.publicUrl),
-      aspect_ratio: videoState.aspectRatio,
-      duration: Number(videoState.duration) || 5,
-      resolution: videoState.resolution,
-      audio: videoState.audio,
-      seed: Number(videoState.seed) || 0,
-      ...extra,
+      images: mediaImages,
     };
+    addSharedVideoParameters(body, { includeAudio: true });
+    addSeedParameter(body, model);
+    return { ...body, ...extra };
   }
   if (model.adapter === "video-unified-veo") {
-    return {
+    const body: Record<string, unknown> = {
       model: modelName,
       prompt: finalPrompt,
-      images: videoState.mode === "text" ? [] : videoState.unifiedImages.map((item) => item.publicUrl),
       orientation: videoState.aspectRatio === "9:16" ? "portrait" : "landscape",
-      size: videoState.size,
-      duration: Number(videoState.duration) || 8,
-      aspect_ratio: videoState.aspectRatio,
       enable_upsample: videoState.upsample,
-      ...extra,
+      images: mediaImages,
     };
+    addVideoParameter(body, ["video_mode"], "video_mode", videoModeParamValue(videoState.mode));
+    addVideoParameter(body, ["resolution", "size"], "size", videoState.resolution);
+    addVideoParameter(body, ["duration"], "duration", Number(videoState.duration) || 8);
+    addVideoParameter(body, ["quantity"], "quantity", Number(videoState.count) || 1);
+    addVideoParameter(body, ["ratio", "aspect_ratio"], "aspect_ratio", videoState.aspectRatio);
+    return { ...body, ...extra };
   }
   if (model.adapter === "video-seedance") {
     const content: Array<Record<string, unknown>> = [{ type: "text", text: finalPrompt }];
@@ -1290,31 +1443,30 @@ function buildVideoRequestBody(model: ModelDefinition, modelName: string, finalP
         content.push({ type: "image_url", image_url: { url: videoState.seedanceLast.publicUrl }, role: "last_frame" });
       }
     }
+    const metadata: Record<string, unknown> = {};
+    addVideoParameter(metadata, ["duration"], "duration", Number(videoState.duration) || 5);
+    addVideoParameter(metadata, ["resolution", "size"], "resolution", videoState.resolution);
+    addVideoParameter(metadata, ["ratio", "aspect_ratio"], "ratio", videoState.aspectRatio);
+    addVideoParameter(metadata, ["generate_audio", "audio"], "generate_audio", videoState.audio);
+    addVideoParameter(metadata, ["quantity"], "quantity", Number(videoState.count) || 1);
+    addVideoParameter(metadata, ["video_mode"], "video_mode", videoModeParamValue(videoState.mode));
+    addSeedParameter(metadata, model);
     return {
       model: modelName,
       content,
-      metadata: {
-        duration: Number(videoState.duration) || 5,
-        resolution: videoState.resolution,
-        ratio: videoState.aspectRatio,
-        generate_audio: videoState.audio,
-        seed: Number(videoState.seed) || 0,
-      },
+      metadata,
       ...extra,
     };
   }
-  return {
+  const body: Record<string, unknown> = {
     model: modelName,
     prompt: finalPrompt,
-    images: videoState.mode === "text" ? [] : videoState.unifiedImages.map((item) => item.publicUrl),
-    aspect_ratio: videoState.aspectRatio,
-    duration: Number(videoState.duration) || 5,
-    size: videoState.size,
-    resolution: videoState.resolution,
-    audio: videoState.audio,
-    seed: Number(videoState.seed) || 0,
-    ...extra,
+    images: mediaImages,
   };
+  addSharedVideoParameters(body, { includeAudio: true });
+  addVideoParameter(body, ["size"], "size", videoState.resolution);
+  addSeedParameter(body, model);
+  return { ...body, ...extra };
 }
 
 async function handleVideoCreate() {
@@ -2082,7 +2234,7 @@ async function batchDelete() {
                 {{ imageState.uploading ? "上传中" : "+ 参考图" }}
                 <input hidden type="file" accept="image/png,image/jpeg,image/jpg,image/webp" multiple @change="handleImageUpload" />
               </label>
-              <textarea v-model="imageState.prompt" class="composer-input" placeholder="描述你想要生成的图片内容，支持上传参考图片进行图生图，最多14张" />
+              <textarea v-model="imageState.prompt" class="composer-input" :placeholder="`描述你想要生成的图片内容，支持上传参考图片进行图生图，最多${imageReferenceLimit}张`" />
             </div>
             <div v-if="imageState.references.length" class="reference-strip">
               <article v-for="asset in imageState.references" :key="asset.id" class="reference-thumb">
@@ -2103,35 +2255,66 @@ async function batchDelete() {
                   </button>
                   <section v-if="composerUiState.popover === 'image-settings'" class="composer-popover image-options-popover">
                     <div class="popover-title-row"><strong>图片参数</strong><button class="button-link" @click="closeComposerPopover">关闭</button></div>
-                    <div class="popover-section">
+                    <div v-if="imageUsesRatioControls" class="popover-section">
                       <span>图片比例</span>
                       <div class="segmented-grid">
                         <button
-                          v-for="ratio in IMAGE_RATIO_OPTIONS"
-                          :key="ratio"
-                          :class="['segmented-option', imageState.ratio === ratio ? 'segmented-option-active' : '']"
-                          @click="imageState.ratio = ratio"
+                          v-for="ratio in imageRatioOptions"
+                          :key="ratio.value"
+                          :class="['segmented-option', imageState.ratio === ratio.value ? 'segmented-option-active' : '']"
+                          @click="imageState.ratio = ratio.value"
                         >
-                          {{ ratio }}
+                          {{ ratio.label }}
                         </button>
                       </div>
                     </div>
-                    <div class="popover-section">
+                    <div v-if="imageUsesResolutionControls" class="popover-section">
                       <span>分辨率</span>
                       <div class="segmented-grid segmented-grid-compact">
                         <button
-                          v-for="resolution in IMAGE_RESOLUTION_OPTIONS"
-                          :key="resolution"
-                          :class="['segmented-option', imageState.resolution === resolution ? 'segmented-option-active' : '']"
-                          @click="imageState.resolution = resolution"
+                          v-for="resolution in imageResolutionOptions"
+                          :key="resolution.value"
+                          :class="['segmented-option', imageState.resolution === resolution.value ? 'segmented-option-active' : '']"
+                          @click="imageState.resolution = resolution.value"
                         >
-                          {{ resolution }}
+                          {{ resolution.label }}
                         </button>
                       </div>
                     </div>
-                    <div class="popover-section popover-two-col">
-                      <label><span>生成数量</span><input v-model="imageState.count" type="number" min="1" max="4" /></label>
-                      <label><span>尺寸</span><input v-model="imageState.size" placeholder="1024x1024" /></label>
+                    <div v-if="imageUsesSizeControls" class="popover-section">
+                      <span>尺寸</span>
+                      <div class="segmented-grid">
+                        <button
+                          v-for="size in imageSizeOptions"
+                          :key="size.value"
+                          :class="['segmented-option', imageState.size === size.value ? 'segmented-option-active' : '']"
+                          @click="imageState.size = size.value"
+                        >
+                          {{ size.label }}
+                        </button>
+                      </div>
+                    </div>
+                    <div v-if="imageUsesQualityControls" class="popover-section">
+                      <span>质量</span>
+                      <div class="segmented-grid segmented-grid-compact">
+                        <button
+                          v-for="quality in imageQualityOptions"
+                          :key="quality.value"
+                          :class="['segmented-option', imageState.quality === quality.value ? 'segmented-option-active' : '']"
+                          @click="imageState.quality = quality.value"
+                        >
+                          {{ quality.label }}
+                        </button>
+                      </div>
+                    </div>
+                    <div v-if="imageUsesQuantityControls || (!imageHasCatalogParameters && !imageUsesSizeControls)" class="popover-section popover-two-col">
+                      <label v-if="imageUsesQuantityControls">
+                        <span>生成数量</span>
+                        <select v-model="imageState.count">
+                          <option v-for="count in imageQuantityOptions" :key="count.value" :value="count.value">{{ count.label }}</option>
+                        </select>
+                      </label>
+                      <label v-if="!imageHasCatalogParameters && !imageUsesSizeControls"><span>尺寸</span><input v-model="imageState.size" placeholder="1024x1024" /></label>
                     </div>
                   </section>
                 </div>
@@ -2200,7 +2383,7 @@ async function batchDelete() {
             </div>
             <div class="composer-footer-bar">
               <div class="composer-quick-fields composer-quick-fields-wide composer-control-cluster">
-                <div class="composer-popover-anchor">
+                <div v-if="videoUsesModeControls" class="composer-popover-anchor">
                   <button
                     :class="['composer-pill', composerUiState.popover === 'video-mode' ? 'composer-pill-active' : '']"
                     :aria-expanded="composerUiState.popover === 'video-mode'"
@@ -2211,7 +2394,7 @@ async function batchDelete() {
                   <section v-if="composerUiState.popover === 'video-mode'" class="composer-popover composer-menu-popover">
                     <strong>生成模式</strong>
                     <button
-                      v-for="mode in VIDEO_MODE_OPTIONS"
+                      v-for="mode in videoModeOptions"
                       :key="mode.value"
                       :class="['composer-menu-option', videoState.mode === mode.value ? 'composer-menu-option-active' : '']"
                       @click="selectVideoMode(mode.value)"
@@ -2231,50 +2414,55 @@ async function batchDelete() {
                   </button>
                   <section v-if="composerUiState.popover === 'video-settings'" class="composer-popover video-options-popover">
                     <div class="popover-title-row"><strong>视频参数</strong><button class="button-link" @click="closeComposerPopover">关闭</button></div>
-                    <div class="popover-section">
+                    <div v-if="videoUsesRatioControls" class="popover-section">
                       <span>视频比例</span>
                       <div class="segmented-grid">
                         <button
-                          v-for="ratio in VIDEO_RATIO_OPTIONS"
-                          :key="ratio"
-                          :class="['segmented-option', videoState.aspectRatio === ratio ? 'segmented-option-active' : '']"
-                          @click="videoState.aspectRatio = ratio"
+                          v-for="ratio in videoRatioOptions"
+                          :key="ratio.value"
+                          :class="['segmented-option', videoState.aspectRatio === ratio.value ? 'segmented-option-active' : '']"
+                          @click="videoState.aspectRatio = ratio.value"
                         >
-                          {{ ratio }}
+                          {{ ratio.label }}
                         </button>
                       </div>
                     </div>
-                    <div class="popover-section">
+                    <div v-if="videoUsesResolutionControls" class="popover-section">
                       <span>分辨率</span>
                       <div class="segmented-grid segmented-grid-compact">
                         <button
-                          v-for="resolution in VIDEO_RESOLUTION_OPTIONS"
-                          :key="resolution"
-                          :class="['segmented-option', videoState.resolution === resolution ? 'segmented-option-active' : '']"
-                          @click="videoState.resolution = resolution"
+                          v-for="resolution in videoResolutionOptions"
+                          :key="resolution.value"
+                          :class="['segmented-option', videoState.resolution === resolution.value ? 'segmented-option-active' : '']"
+                          @click="videoState.resolution = resolution.value"
                         >
-                          {{ resolution }}
+                          {{ resolution.label }}
                         </button>
                       </div>
                     </div>
-                    <div class="popover-section">
+                    <div v-if="videoUsesDurationControls" class="popover-section">
                       <span>视频时长</span>
                       <div class="segmented-grid segmented-grid-duration">
                         <button
-                          v-for="duration in VIDEO_DURATION_OPTIONS"
-                          :key="duration"
-                          :class="['segmented-option', videoState.duration === duration ? 'segmented-option-active' : '']"
-                          @click="videoState.duration = duration"
+                          v-for="duration in videoDurationOptions"
+                          :key="duration.value"
+                          :class="['segmented-option', videoState.duration === duration.value ? 'segmented-option-active' : '']"
+                          @click="videoState.duration = duration.value"
                         >
-                          {{ duration }}秒
+                          {{ duration.label }}
                         </button>
                       </div>
                     </div>
-                    <div class="popover-section popover-two-col">
-                      <label><span>生成数量</span><input v-model="videoState.count" type="number" min="1" max="4" /></label>
-                      <label><span>种子</span><input v-model="videoState.seed" /></label>
+                    <div v-if="videoUsesQuantityControls || videoUsesSeedControls" class="popover-section popover-two-col">
+                      <label v-if="videoUsesQuantityControls">
+                        <span>生成数量</span>
+                        <select v-model="videoState.count">
+                          <option v-for="count in videoQuantityOptions" :key="count.value" :value="count.value">{{ count.label }}</option>
+                        </select>
+                      </label>
+                      <label v-if="videoUsesSeedControls"><span>种子</span><input v-model="videoState.seed" /></label>
                     </div>
-                    <label class="checkbox-inline"><input v-model="videoState.audio" type="checkbox" />生成音频</label>
+                    <label v-if="videoUsesAudioControls" class="checkbox-inline"><input v-model="videoState.audio" type="checkbox" />生成音频</label>
                   </section>
                 </div>
                 <div class="composer-popover-anchor">

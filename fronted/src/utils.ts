@@ -1,4 +1,5 @@
 import type {
+  CatalogParameterDefinition,
   Capability,
   ConversationAsset,
   ConversationDefinition,
@@ -47,6 +48,92 @@ export function prioritizeModelOptions(options: string[], selectedModel: string)
   const selected = selectedModel.trim();
   if (!selected || !options.includes(selected)) return options;
   return [selected, ...options.filter((option) => option !== selected)];
+}
+
+export interface CatalogOptionItem {
+  label: string;
+  value: string;
+}
+
+export function getPrimarySubModel(model: ModelDefinition) {
+  return (
+    model.subModels?.find((item) => item.id === model.primarySubModelId) ||
+    model.subModels?.find((item) => item.isPrimary) ||
+    model.subModels?.[0] ||
+    null
+  );
+}
+
+export function modelCatalogParameters(model?: ModelDefinition | null): CatalogParameterDefinition[] {
+  if (!model) return [];
+  const subCatalog = getPrimarySubModel(model)?.catalog;
+  const catalog = subCatalog || model.catalog;
+  return catalog?.parameters || [];
+}
+
+export function hasCatalogParameters(model?: ModelDefinition | null): boolean {
+  return modelCatalogParameters(model).length > 0;
+}
+
+export function catalogParameterSignature(model?: ModelDefinition | null): string {
+  return modelCatalogParameters(model)
+    .map((parameter) => {
+      const options = [...parameter.options]
+        .sort((left, right) => left.sortOrder - right.sortOrder)
+        .map((option) => `${option.optionValue}:${option.isDefault ? "1" : "0"}`)
+        .join(",");
+      return `${parameter.paramKey}:${parameter.defaultValue}:${parameter.maxCount || ""}:${options}`;
+    })
+    .join("|");
+}
+
+type CatalogParameterKeyInput = string | string[];
+
+function catalogParameterKeys(key: CatalogParameterKeyInput): string[] {
+  return Array.isArray(key) ? key : [key];
+}
+
+export function catalogParameter(model: ModelDefinition | null | undefined, key: CatalogParameterKeyInput): CatalogParameterDefinition | null {
+  const keys = catalogParameterKeys(key);
+  return modelCatalogParameters(model).find((item) => keys.includes(item.paramKey)) || null;
+}
+
+export function hasCatalogParameter(model: ModelDefinition | null | undefined, key: CatalogParameterKeyInput): boolean {
+  return Boolean(catalogParameter(model, key));
+}
+
+export function supportsCatalogParameter(model: ModelDefinition | null | undefined, ...keys: string[]): boolean {
+  if (!hasCatalogParameters(model)) return true;
+  return Boolean(catalogParameter(model, keys));
+}
+
+export function catalogOptionItems(model: ModelDefinition | null | undefined, key: CatalogParameterKeyInput, fallback: string[]): CatalogOptionItem[] {
+  const parameter = catalogParameter(model, key);
+  if (!parameter?.options.length) {
+    return fallback.map((value) => ({ label: value, value }));
+  }
+  return [...parameter.options]
+    .sort((left, right) => left.sortOrder - right.sortOrder)
+    .map((option) => ({
+      label: option.optionName || option.optionValue,
+      value: option.optionValue,
+    }))
+    .filter((item) => item.value);
+}
+
+export function catalogDefaultValue(model: ModelDefinition | null | undefined, key: CatalogParameterKeyInput, fallback: string): string {
+  const parameter = catalogParameter(model, key);
+  if (!parameter) return fallback;
+  const defaultOption = [...parameter.options].sort((left, right) => left.sortOrder - right.sortOrder).find((option) => option.isDefault);
+  return defaultOption?.optionValue || parameter.defaultValue || fallback;
+}
+
+export function catalogMaxCount(model: ModelDefinition | null | undefined, key: CatalogParameterKeyInput, fallback: number): number {
+  return catalogParameter(model, key)?.maxCount || fallback;
+}
+
+export function catalogRequestKey(model: ModelDefinition | null | undefined, key: CatalogParameterKeyInput, fallback: string): string {
+  return catalogParameter(model, key)?.paramKey || fallback;
 }
 
 export function getModelIdentifierError(value: string): string {
@@ -299,7 +386,11 @@ export function imageGenerationSummary(input: {
   resolution: string;
   count: string;
 }): string {
-  return [input.ratio, input.resolution, `${input.count || "1"}张`].join("  ");
+  return [
+    input.ratio,
+    input.resolution,
+    input.count ? `${input.count}张` : "",
+  ].filter(Boolean).join("  ") || "参数";
 }
 
 export function videoGenerationSummary(input: {
@@ -309,8 +400,16 @@ export function videoGenerationSummary(input: {
   duration: string;
   count?: string;
 }): string {
-  const modeLabel = input.mode === "reference" ? "全能参考" : input.mode === "start-end" ? "首尾帧" : "文生视频";
-  return [modeLabel, input.aspectRatio, input.resolution, `${input.duration || "5"}秒`, `${input.count || "1"}条`].join("  ");
+  const modeLabel = input.mode
+    ? input.mode === "reference" ? "全能参考" : input.mode === "start-end" ? "首尾帧" : "文生视频"
+    : "";
+  return [
+    modeLabel,
+    input.aspectRatio,
+    input.resolution,
+    input.duration ? `${input.duration}秒` : "",
+    input.count ? `${input.count}条` : "",
+  ].filter(Boolean).join("  ") || "参数";
 }
 
 export function modelDisplayNameFromPrimary(capability: Capability, primaryModel: string): string {

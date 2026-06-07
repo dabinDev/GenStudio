@@ -379,12 +379,13 @@ def collect_image_edit_references(body: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def expand_local_image_references(body: dict[str, Any]) -> dict[str, Any]:
-    references = body.get("image")
+    reference_key = "image" if "image" in body else "images" if "images" in body else "image"
+    references = body.get(reference_key)
     if isinstance(references, str):
-        body["image"] = local_asset_data_url(references)
+        body[reference_key] = local_asset_data_url(references)
         return body
     if isinstance(references, list):
-        body["image"] = [local_asset_data_url(item) if isinstance(item, str) else item for item in references]
+        body[reference_key] = [local_asset_data_url(item) if isinstance(item, str) else item for item in references]
     return body
 
 
@@ -429,6 +430,8 @@ def extract_images_from_response(raw: dict[str, Any]) -> tuple[list[dict[str, An
 
 def has_oversized_inline_reference(body: dict[str, Any]) -> bool:
     references = body.get("image")
+    if references is None:
+        references = body.get("images")
     if not isinstance(references, list):
         references = [references] if isinstance(references, str) else []
     return any(

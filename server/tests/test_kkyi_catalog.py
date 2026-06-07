@@ -128,6 +128,24 @@ def kkyi_video_detail() -> dict:
     }
 
 
+def kkyi_image_detail() -> dict:
+    return {
+        "id": "10029",
+        "display_name": "GPT-Image-2",
+        "model_name": "gpt-image-2",
+        "model_type": 2,
+        "icon": "OpenAI",
+        "description": "Image model",
+        "input_hint": "Use image parameters",
+        "parameters": [
+            {"id": "10201", "display_name": "尺寸", "param_key": "size", "widget_type": 3, "is_required": True, "default_value": "auto", "options": []},
+            {"id": "10202", "display_name": "质量", "param_key": "quality", "widget_type": 3, "is_required": False, "default_value": "auto", "options": []},
+            {"id": "10203", "display_name": "参考图", "param_key": "images", "widget_type": 6, "is_required": False, "default_value": "", "max_count": 4, "options": []},
+        ],
+        "channel_groups": [],
+    }
+
+
 def test_upsert_kkyi_catalog_detail_persists_parameters_and_channel_groups() -> None:
     with SessionLocal() as db:
         model = upsert_catalog_model_detail(db, kkyi_detail())
@@ -176,6 +194,38 @@ def test_model_create_can_link_sub_model_to_catalog_parameters() -> None:
     assert model["subModels"][0]["catalogModelId"] == "10024"
     assert model["subModels"][0]["catalog"]["parameters"][0]["paramKey"] == "attachments"
     assert model["subModels"][0]["catalog"]["channelGroups"][0]["groupName"] == "Official"
+
+
+def test_model_list_backfills_catalog_link_for_existing_sub_models() -> None:
+    client = TestClient(app)
+    client.post("/api/auth/dev-login", json={"externalUserId": "official-1"})
+
+    created = client.post(
+        "/api/models",
+        headers=csrf_headers(client),
+        json={
+            "name": "Legacy GPT",
+            "vendor": "KKYi",
+            "capability": "text",
+            "adapter": "text-chat",
+            "baseUrl": "https://ai-api.kkidc.com",
+            "apiKey": "sk-test",
+            "primaryModelName": "gpt-5.4",
+        },
+    )
+    assert created.status_code == 200
+    assert created.json()["model"]["subModels"][0]["catalog"] is None
+
+    with SessionLocal() as db:
+        upsert_catalog_model_detail(db, kkyi_detail())
+        db.commit()
+
+    listed = client.get("/api/models")
+
+    assert listed.status_code == 200
+    model = listed.json()["models"][0]
+    assert model["subModels"][0]["catalogModelId"] == "10024"
+    assert model["subModels"][0]["catalog"]["parameters"][0]["paramKey"] == "attachments"
 
 
 def test_catalog_sync_api_fetches_list_details_and_returns_models(monkeypatch) -> None:
@@ -265,6 +315,117 @@ def test_catalog_video_model_uses_kkyi_generation_path_and_flat_parameters(monke
         "generate_audio": False,
         "quantity": 1,
     }
+
+
+def test_catalog_image_model_accepts_catalog_images_parameter(monkeypatch) -> None:
+    with SessionLocal() as db:
+        upsert_catalog_model_detail(db, kkyi_image_detail())
+        db.commit()
+
+    captured: dict[str, object] = {}
+
+    async def fake_forward_json(method, url, api_key, body=None):
+        captured.update({"method": method, "url": url, "body": body})
+        return httpx.Response(200, json={"data": [{"url": "https://cdn.example.com/image.png"}]}), {"data": [{"url": "https://cdn.example.com/image.png"}]}
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    client.post("/api/auth/dev-login", json={"externalUserId": "official-1"})
+    created = client.post(
+        "/api/models",
+        headers=csrf_headers(client),
+        json={
+            "name": "GPT Image",
+            "vendor": "KKYi",
+            "capability": "image",
+            "adapter": "image-openai",
+            "baseUrl": "https://ai-api.kkidc.com",
+            "apiKey": "sk-test",
+            "primaryModelName": "gpt-image-2",
+            "catalogModelId": "10029",
+        },
+    )
+    assert created.status_code == 200
+    sub_model_id = created.json()["model"]["primarySubModelId"]
+
+    response = client.post(
+        "/api/proxy/image",
+        headers=csrf_headers(client),
+        json={
+            "subModelId": sub_model_id,
+            "requestBody": {
+                "prompt": "image test",
+                "size": "auto",
+                "quality": "auto",
+                "images": ["https://cdn.example.com/reference.png"],
+                "response_format": "url",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["url"] == "https://ai-api.kkidc.com/v1/images/generations"
+    assert captured["body"] == {
+        "model": "gpt-image-2",
+        "prompt": "image test",
+        "size": "auto",
+        "quality": "auto",
+        "images": ["https://cdn.example.com/reference.png"],
+        "response_format": "url",
+    }
+
+
+def test_catalog_image_model_expands_local_references_from_images_parameter(monkeypatch) -> None:
+    with SessionLocal() as db:
+        upsert_catalog_model_detail(db, kkyi_image_detail())
+        db.commit()
+
+    upload_name = "catalog-reference.png"
+    upload_path = main_module.LOCAL_UPLOAD_DIR / upload_name
+    upload_path.write_bytes(b"\x89PNG\r\n\x1a\n")
+    captured: dict[str, object] = {}
+
+    async def fake_forward_json(method, url, api_key, body=None):
+        captured.update({"method": method, "url": url, "body": body})
+        return httpx.Response(200, json={"data": [{"url": "https://cdn.example.com/image.png"}]}), {"data": [{"url": "https://cdn.example.com/image.png"}]}
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    client.post("/api/auth/dev-login", json={"externalUserId": "official-1"})
+    created = client.post(
+        "/api/models",
+        headers=csrf_headers(client),
+        json={
+            "name": "GPT Image",
+            "vendor": "KKYi",
+            "capability": "image",
+            "adapter": "image-openai",
+            "baseUrl": "https://ai-api.kkidc.com",
+            "apiKey": "sk-test",
+            "primaryModelName": "gpt-image-2",
+            "catalogModelId": "10029",
+        },
+    )
+    assert created.status_code == 200
+    sub_model_id = created.json()["model"]["primarySubModelId"]
+
+    response = client.post(
+        "/api/proxy/image",
+        headers=csrf_headers(client),
+        json={
+            "subModelId": sub_model_id,
+            "requestBody": {
+                "prompt": "image test",
+                "images": [f"/api/assets/uploads/{upload_name}"],
+                "response_format": "url",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = captured["body"]
+    assert isinstance(body, dict)
+    assert str(body["images"][0]).startswith("data:image/png;base64,")
 
 
 def test_catalog_video_model_test_uses_kkyi_generation_path_and_flat_parameters(monkeypatch) -> None:

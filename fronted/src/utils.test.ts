@@ -13,12 +13,19 @@ import {
   mediaPreviewActionLabels,
   pickPrimaryModel,
   filterModelOptions,
+  catalogDefaultValue,
+  catalogOptionItems,
+  catalogParameterSignature,
+  catalogRequestKey,
+  hasCatalogParameters,
+  hasCatalogParameter,
   prioritizeModelOptions,
   modelDisplayNameFromPrimary,
   modelDisplayNameForModel,
   renderMarkdownPreview,
   resolveModelName,
   shouldResetConversationForModelSwitch,
+  supportsCatalogParameter,
   testResultSummary,
   videoGenerationSummary,
 } from "./utils";
@@ -80,6 +87,254 @@ describe("model selection helpers", () => {
       ),
     ).toEqual(["doubao-seedance-2-0-fast", "claude-haiku", "gpt-image-2"]);
     expect(prioritizeModelOptions(["gpt-5.5", "gpt-image-2"], "missing")).toEqual(["gpt-5.5", "gpt-image-2"]);
+  });
+
+  it("reads generation controls from the selected sub-model catalog", () => {
+    const catalogModel: ModelDefinition = {
+      ...textModel,
+      id: "video-model",
+      capability: "video",
+      adapter: "video-unified-generic",
+      primarySubModelId: "sub-video",
+      subModels: [
+        {
+          id: "sub-video",
+          modelName: "kuaikuai-2-flash-pro",
+          displayName: "Seed Video",
+          capability: "video",
+          adapter: "video-unified-generic",
+          isPrimary: true,
+          status: "active",
+          catalog: {
+            id: "10028",
+            displayName: "Seed Video",
+            modelName: "kuaikuai-2-flash-pro",
+            modelType: 3,
+            capability: "video",
+            icon: "",
+            description: "",
+            inputHint: "",
+            successRate: "",
+            source: "kkyi",
+            channelGroups: [],
+            parameters: [
+              {
+                id: "ratio",
+                displayName: "视频比例",
+                paramKey: "ratio",
+                description: "",
+                widgetType: 3,
+                isRequired: true,
+                defaultValue: "16:9",
+                functionTag: "",
+                maxCount: null,
+                sortOrder: 1,
+                options: [
+                  { id: "ratio-1", optionName: "竖屏 9:16", optionValue: "9:16", description: "", maxCount: null, isDefault: false, sortOrder: 1, priceFactor: "1" },
+                  { id: "ratio-2", optionName: "横屏 16:9", optionValue: "16:9", description: "", maxCount: null, isDefault: true, sortOrder: 2, priceFactor: "1" },
+                ],
+              },
+              {
+                id: "duration",
+                displayName: "视频时长",
+                paramKey: "duration",
+                description: "",
+                widgetType: 3,
+                isRequired: true,
+                defaultValue: "5",
+                functionTag: "",
+                maxCount: null,
+                sortOrder: 2,
+                options: [
+                  { id: "duration-1", optionName: "4秒", optionValue: "4", description: "", maxCount: null, isDefault: false, sortOrder: 1, priceFactor: "1" },
+                  { id: "duration-2", optionName: "5秒", optionValue: "5", description: "", maxCount: null, isDefault: true, sortOrder: 2, priceFactor: "1" },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+      builtin: false,
+    };
+
+    expect(hasCatalogParameter(catalogModel, "ratio")).toBe(true);
+    expect(catalogDefaultValue(catalogModel, "ratio", "1:1")).toBe("16:9");
+    expect(catalogOptionItems(catalogModel, "ratio", ["1:1"]).map((item) => item.value)).toEqual(["9:16", "16:9"]);
+    expect(catalogOptionItems(catalogModel, "ratio", ["1:1"])[1].label).toBe("横屏 16:9");
+    expect(catalogDefaultValue(catalogModel, "duration", "8")).toBe("5");
+  });
+
+  it("uses catalog parameters as the supported composer parameter contract", () => {
+    const catalogModel: ModelDefinition = {
+      ...textModel,
+      id: "image-model",
+      capability: "image",
+      adapter: "image-openai",
+      primarySubModelId: "sub-image",
+      subModels: [
+        {
+          id: "sub-image",
+          modelName: "gpt-image-2",
+          displayName: "GPT Image 2",
+          capability: "image",
+          adapter: "image-openai",
+          isPrimary: true,
+          status: "active",
+          catalog: {
+            id: "10029",
+            displayName: "GPT Image 2",
+            modelName: "gpt-image-2",
+            modelType: 2,
+            capability: "image",
+            icon: "",
+            description: "",
+            inputHint: "",
+            successRate: "",
+            source: "kkyi",
+            channelGroups: [],
+            parameters: [
+              {
+                id: "size",
+                displayName: "尺寸",
+                paramKey: "size",
+                description: "",
+                widgetType: 3,
+                isRequired: true,
+                defaultValue: "auto",
+                functionTag: "",
+                maxCount: null,
+                sortOrder: 1,
+                options: [
+                  { id: "size-auto", optionName: "自动", optionValue: "auto", description: "", maxCount: null, isDefault: true, sortOrder: 1, priceFactor: "1" },
+                  { id: "size-square", optionName: "正方形", optionValue: "1024x1024", description: "", maxCount: null, isDefault: false, sortOrder: 2, priceFactor: "1" },
+                ],
+              },
+              {
+                id: "quality",
+                displayName: "质量",
+                paramKey: "quality",
+                description: "",
+                widgetType: 3,
+                isRequired: false,
+                defaultValue: "auto",
+                functionTag: "",
+                maxCount: null,
+                sortOrder: 2,
+                options: [],
+              },
+            ],
+          },
+        },
+      ],
+      builtin: false,
+    };
+
+    expect(hasCatalogParameters(catalogModel)).toBe(true);
+    expect(supportsCatalogParameter(catalogModel, "size")).toBe(true);
+    expect(supportsCatalogParameter(catalogModel, "ratio")).toBe(false);
+    expect(supportsCatalogParameter({ ...catalogModel, subModels: [] }, "ratio")).toBe(true);
+    expect(catalogParameterSignature(catalogModel)).toContain("size:auto");
+    expect(catalogParameterSignature(catalogModel)).not.toBe(catalogParameterSignature({
+      ...catalogModel,
+      subModels: catalogModel.subModels?.map((subModel) => ({
+        ...subModel,
+        catalog: subModel.catalog ? {
+          ...subModel.catalog,
+          parameters: subModel.catalog.parameters.map((parameter) =>
+            parameter.paramKey === "size" ? { ...parameter, defaultValue: "1024x1024" } : parameter,
+          ),
+        } : null,
+      })),
+    }));
+  });
+
+  it("reads aliased catalog parameter names and preserves the request key from the selected model", () => {
+    const catalogModel: ModelDefinition = {
+      ...textModel,
+      id: "alias-video-model",
+      capability: "video",
+      adapter: "video-unified-generic",
+      primarySubModelId: "sub-video-alias",
+      subModels: [
+        {
+          id: "sub-video-alias",
+          modelName: "alias-video",
+          displayName: "Alias Video",
+          capability: "video",
+          adapter: "video-unified-generic",
+          isPrimary: true,
+          status: "active",
+          catalog: {
+            id: "90001",
+            displayName: "Alias Video",
+            modelName: "alias-video",
+            modelType: 3,
+            capability: "video",
+            icon: "",
+            description: "",
+            inputHint: "",
+            successRate: "",
+            source: "kkyi",
+            channelGroups: [],
+            parameters: [
+              {
+                id: "aspect",
+                displayName: "Aspect Ratio",
+                paramKey: "aspect_ratio",
+                description: "",
+                widgetType: 3,
+                isRequired: true,
+                defaultValue: "9:16",
+                functionTag: "",
+                maxCount: null,
+                sortOrder: 1,
+                options: [
+                  { id: "aspect-1", optionName: "Vertical", optionValue: "9:16", description: "", maxCount: null, isDefault: true, sortOrder: 1, priceFactor: "1" },
+                  { id: "aspect-2", optionName: "Wide", optionValue: "16:9", description: "", maxCount: null, isDefault: false, sortOrder: 2, priceFactor: "1" },
+                ],
+              },
+              {
+                id: "size",
+                displayName: "Size",
+                paramKey: "size",
+                description: "",
+                widgetType: 3,
+                isRequired: false,
+                defaultValue: "1080p",
+                functionTag: "",
+                maxCount: null,
+                sortOrder: 2,
+                options: [
+                  { id: "size-1", optionName: "720p", optionValue: "720p", description: "", maxCount: null, isDefault: false, sortOrder: 1, priceFactor: "1" },
+                  { id: "size-2", optionName: "1080p", optionValue: "1080p", description: "", maxCount: null, isDefault: true, sortOrder: 2, priceFactor: "1" },
+                ],
+              },
+              {
+                id: "audio",
+                displayName: "Audio",
+                paramKey: "audio",
+                description: "",
+                widgetType: 5,
+                isRequired: false,
+                defaultValue: "false",
+                functionTag: "",
+                maxCount: null,
+                sortOrder: 3,
+                options: [],
+              },
+            ],
+          },
+        },
+      ],
+      builtin: false,
+    };
+
+    expect(hasCatalogParameter(catalogModel, ["ratio", "aspect_ratio"])).toBe(true);
+    expect(catalogDefaultValue(catalogModel, ["ratio", "aspect_ratio"], "16:9")).toBe("9:16");
+    expect(catalogOptionItems(catalogModel, ["resolution", "size"], ["720p"]).map((item) => item.value)).toEqual(["720p", "1080p"]);
+    expect(catalogRequestKey(catalogModel, ["generate_audio", "audio"], "audio")).toBe("audio");
+    expect(catalogRequestKey(catalogModel, ["resolution", "size"], "resolution")).toBe("size");
+    expect(catalogRequestKey({ ...catalogModel, subModels: [] }, ["resolution", "size"], "resolution")).toBe("resolution");
   });
 
   it("rejects URL-shaped model identifiers before saving or testing", () => {

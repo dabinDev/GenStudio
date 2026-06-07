@@ -25,6 +25,7 @@ from app.auth import (
     get_current_user,
     get_optional_current_user,
     issue_csrf_token,
+    is_admin_user,
     register_local_user,
     require_csrf,
     serialize_user,
@@ -59,6 +60,7 @@ from app.model_service import (
     delete_model_group,
     elapsed_ms,
     get_model_group,
+    find_prompt_optimizer_sub_model,
     get_sub_model_for_user,
     list_api_keys,
     list_model_groups,
@@ -103,13 +105,14 @@ from app.schemas import (
     KkyiCatalogSyncRequest,
     ModelCreate,
     ModelUpdate,
+    PromptOptimizeRequest,
     ProfileUpdateRequest,
     RegisterRequest,
 )
 from app.security import decrypt_secret
 from app.storage import create_presigned_put_url
 
-app = FastAPI(title="GenStudio Server")
+app = FastAPI(title="塞隆studio Server")
 GENERATED_ASSET_DIR = Path(__file__).resolve().parents[2] / "generated_assets"
 GENERATED_ASSET_DIR.mkdir(parents=True, exist_ok=True)
 LOCAL_UPLOAD_DIR = Path(__file__).resolve().parents[2] / "uploaded_assets"
@@ -161,6 +164,36 @@ def extract_video_prompt(request_body: dict[str, Any]) -> str:
     if isinstance(content, str):
         return content
     return ""
+
+
+def build_prompt_optimize_messages(payload: PromptOptimizeRequest) -> list[dict[str, str]]:
+    capability_labels = {"text": "文案创作", "image": "图片创作", "video": "视频创作"}
+    parameter_lines = [
+        f"- {key}: {value}"
+        for key, value in payload.parameters.items()
+        if value not in (None, "", [])
+    ]
+    context = [
+        f"创作类型：{capability_labels.get(payload.capability, payload.capability)}",
+        f"原始提示词：{payload.prompt}",
+    ]
+    if payload.keywords:
+        context.append(f"关键词：{payload.keywords}")
+    if payload.referenceCount:
+        context.append(f"参考素材数量：{payload.referenceCount}")
+    if parameter_lines:
+        context.append("已选参数：\n" + "\n".join(parameter_lines))
+    return [
+        {
+            "role": "system",
+            "content": (
+                "你是塞隆studio的专业提示词优化助手。请把用户的简短需求扩写成更准确、可执行的创作提示词。"
+                "必须保留用户原意和主体，不要添加无关品牌、网址、上游平台信息。"
+                "只输出优化后的提示词正文，不要解释过程，不要使用标题。"
+            ),
+        },
+        {"role": "user", "content": "\n\n".join(context)},
+    ]
 
 
 def is_kkyi_catalog_video_model(sub_model: Any) -> bool:
@@ -1016,19 +1049,24 @@ async def api_keys(
 
 @app.get("/api/models")
 async def models(
-    current_user: User = Depends(get_current_user),
+    current_user: User | None = Depends(get_optional_current_user),
+    settings: Settings = Depends(get_settings),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    return {"models": [serialize_model(item).model_dump() for item in list_model_groups(db, current_user)]}
+    is_admin = is_admin_user(current_user, settings)
+    return {
+        "models": [
+            serialize_model(item, current_user, is_admin=is_admin).model_dump()
+            for item in list_model_groups(db, current_user)
+        ]
+    }
 
 
 @app.get("/api/catalog/models")
 async def catalog_models(
     capability: str = Query(default=""),
-    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    _ = current_user
     safe_capability = capability if capability in {"", "text", "image", "video"} else ""
     return {"models": [serialize_catalog_model(item).model_dump() for item in list_catalog_models(db, safe_capability)]}
 
@@ -1069,10 +1107,12 @@ async def create_model(
     payload: ModelCreate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
     _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
-    model = create_model_group(db, current_user, payload)
-    return {"model": serialize_model(model).model_dump()}
+    is_admin = is_admin_user(current_user, settings)
+    model = create_model_group(db, current_user, payload, is_admin=is_admin)
+    return {"model": serialize_model(model, current_user, is_admin=is_admin).model_dump()}
 
 
 @app.put("/api/models/{model_id}")
@@ -1081,10 +1121,12 @@ async def update_model(
     payload: ModelUpdate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
     _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
-    model = update_model_group(db, current_user, model_id, payload)
-    return {"model": serialize_model(model).model_dump()}
+    is_admin = is_admin_user(current_user, settings)
+    model = update_model_group(db, current_user, model_id, payload, is_admin=is_admin)
+    return {"model": serialize_model(model, current_user, is_admin=is_admin).model_dump()}
 
 
 @app.delete("/api/models/{model_id}")
@@ -1092,9 +1134,10 @@ async def delete_model(
     model_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
     _csrf: None = Depends(require_csrf),
 ) -> dict[str, bool]:
-    delete_model_group(db, current_user, model_id)
+    delete_model_group(db, current_user, model_id, is_admin=is_admin_user(current_user, settings))
     return {"ok": True}
 
 
@@ -1104,13 +1147,15 @@ async def set_model_primary(
     payload: dict[str, Any],
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
     _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
     sub_model_id = str(payload.get("subModelId") or "").strip()
     if not sub_model_id:
         raise HTTPException(status_code=400, detail={"message": "缺少子模型 ID。"})
-    model = set_primary_sub_model(db, current_user, model_id, sub_model_id)
-    return {"model": serialize_model(model).model_dump()}
+    is_admin = is_admin_user(current_user, settings)
+    model = set_primary_sub_model(db, current_user, model_id, sub_model_id, is_admin=is_admin)
+    return {"model": serialize_model(model, current_user, is_admin=is_admin).model_dump()}
 
 
 @app.post("/api/models/{model_id}/sync")
@@ -1118,9 +1163,11 @@ async def sync_model_list(
     model_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
     _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
-    model = get_model_group(db, current_user, model_id)
+    is_admin = is_admin_user(current_user, settings)
+    model = get_model_group(db, current_user, model_id, is_admin=is_admin, require_edit=True)
     api_key = model.api_key
     target_url = resolve_url(api_key.base_url, "/v1/models")
     started_at = time.perf_counter()
@@ -1128,7 +1175,7 @@ async def sync_model_list(
     duration_ms = elapsed_ms(started_at)
     if not response.is_success or not isinstance(raw, dict):
         raise upstream_error(raw, "获取模型列表失败。", response.status_code)
-    result = sync_models_from_raw(db, model, raw, duration_ms)
+    result = sync_models_from_raw(db, model, raw, duration_ms, user=current_user, is_admin=is_admin)
     return result.model_dump()
 
 
@@ -1259,9 +1306,7 @@ async def proxy_test(
         user_id=current_user.id if current_user else "",
     )
     sub_model = None
-    if payload.get("subModelId") and not current_user:
-        raise HTTPException(status_code=401, detail={"message": "请先登录。"})
-    if payload.get("subModelId") and current_user:
+    if payload.get("subModelId"):
         model_group, sub_model, api_key_record, api_key = get_sub_model_for_user(db, current_user, str(payload["subModelId"]))
         base_url = api_key_record.base_url
         capability = sub_model.capability
@@ -1310,6 +1355,46 @@ async def proxy_test(
     }
 
 
+@app.post("/api/proxy/prompt/optimize")
+async def proxy_prompt_optimize(
+    payload: PromptOptimizeRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_current_user),
+    settings: Settings = Depends(get_settings),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    check_rate_limit(
+        limiter=rate_limiter,
+        request=request,
+        settings=settings,
+        bucket="prompt-optimize",
+        limit=settings.rate_limit_generation_per_window,
+        user_id=current_user.id if current_user else "",
+    )
+    if not payload.prompt:
+        raise HTTPException(status_code=400, detail={"message": "请先输入需要优化的提示词。"})
+    optimizer = find_prompt_optimizer_sub_model(db, current_user, payload.subModelId)
+    if not optimizer:
+        raise HTTPException(status_code=404, detail={"message": "当前没有可用的公共文案模型用于优化提示词。"})
+
+    _model_group, sub_model, api_key_record, api_key = optimizer
+    body = {
+        "model": sub_model.model_name,
+        "messages": build_prompt_optimize_messages(payload),
+        "stream": False,
+        "temperature": 0.35,
+        "max_tokens": 1200,
+    }
+    response, raw = await forward_json("POST", resolve_url(api_key_record.base_url, "/v1/chat/completions"), api_key, body)
+    if not response.is_success or not isinstance(raw, dict):
+        raise upstream_error(raw, "提示词优化失败。", response.status_code)
+    optimized = pick_text_content(raw).strip()
+    if not optimized:
+        raise HTTPException(status_code=502, detail={"message": "提示词优化没有返回有效内容。"})
+    return {"prompt": optimized, "raw": raw}
+
+
 @app.post("/api/proxy/text")
 async def proxy_text(
     payload: dict[str, Any],
@@ -1330,9 +1415,7 @@ async def proxy_text(
     model_group = sub_model = None
     conversation = None
     user_prompt = ""
-    if payload.get("subModelId") and not current_user:
-        raise HTTPException(status_code=401, detail={"message": "请先登录。"})
-    if payload.get("subModelId") and current_user:
+    if payload.get("subModelId"):
         model_group, sub_model, api_key_record, api_key = get_sub_model_for_user(db, current_user, str(payload["subModelId"]))
         base_url = api_key_record.base_url
         model = sub_model.model_name
@@ -1482,9 +1565,7 @@ async def proxy_image(
     )
     model_group = sub_model = None
     conversation = None
-    if payload.get("subModelId") and not current_user:
-        raise HTTPException(status_code=401, detail={"message": "请先登录。"})
-    if payload.get("subModelId") and current_user:
+    if payload.get("subModelId"):
         model_group, sub_model, api_key_record, api_key = get_sub_model_for_user(db, current_user, str(payload["subModelId"]))
         base_url = api_key_record.base_url
         model = sub_model.model_name
@@ -1702,9 +1783,7 @@ async def proxy_image_query(
     model_group = None
     sub_model = None
     conversation_id = str(payload.get("conversationId") or "").strip()
-    if payload.get("subModelId") and not current_user:
-        raise HTTPException(status_code=401, detail={"message": "璇峰厛鐧诲綍銆?"})
-    if payload.get("subModelId") and current_user:
+    if payload.get("subModelId"):
         model_group, sub_model, api_key_record, api_key = get_sub_model_for_user(db, current_user, str(payload["subModelId"]))
         base_url = api_key_record.base_url
     else:
@@ -1848,9 +1927,7 @@ async def proxy_video_create(
     )
     model_group = sub_model = None
     conversation = None
-    if payload.get("subModelId") and not current_user:
-        raise HTTPException(status_code=401, detail={"message": "请先登录。"})
-    if payload.get("subModelId") and current_user:
+    if payload.get("subModelId"):
         model_group, sub_model, api_key_record, api_key = get_sub_model_for_user(db, current_user, str(payload["subModelId"]))
         base_url = api_key_record.base_url
         adapter = sub_model.adapter
@@ -2000,9 +2077,7 @@ async def proxy_video_query(
     model_group = None
     sub_model = None
     conversation_id = str(payload.get("conversationId") or "").strip()
-    if payload.get("subModelId") and not current_user:
-        raise HTTPException(status_code=401, detail={"message": "请先登录。"})
-    if payload.get("subModelId") and current_user:
+    if payload.get("subModelId"):
         model_group, sub_model, api_key_record, api_key = get_sub_model_for_user(db, current_user, str(payload["subModelId"]))
         base_url = api_key_record.base_url
         adapter = sub_model.adapter
@@ -2153,8 +2228,6 @@ async def proxy_upload_presign(
         limit=settings.rate_limit_upload_per_window,
         user_id=current_user.id if current_user else "",
     )
-    if payload.get("subModelId") and not current_user:
-        raise HTTPException(status_code=401, detail={"message": "请先登录。"})
     file_name = str(payload.get("fileName") or "upload.bin")
     content_type = str(payload.get("contentType") or "application/octet-stream")
     if settings.object_storage_enabled:
@@ -2165,7 +2238,7 @@ async def proxy_upload_presign(
             expires_in=900,
         )
 
-    if payload.get("subModelId") and current_user:
+    if payload.get("subModelId"):
         _model_group, _sub_model, api_key_record, api_key = get_sub_model_for_user(db, current_user, str(payload["subModelId"]))
         base_url = api_key_record.base_url
     else:

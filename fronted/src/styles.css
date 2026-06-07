@@ -111,12 +111,22 @@ a {
 }
 
 .logo-mark {
-  width: 36px;
-  height: 36px;
-  color: #0f0f12;
-  border-radius: 8px;
-  background: linear-gradient(135deg, #29c3bb, #7dcc16);
-  font-weight: 900;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 30% 25%, rgba(102, 220, 255, 0.3), transparent 44%),
+    linear-gradient(145deg, rgba(8, 16, 28, 0.95), rgba(9, 43, 80, 0.86));
+  box-shadow: 0 10px 24px rgba(0, 140, 255, 0.18);
+  overflow: hidden;
+}
+
+.logo-mark img {
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+  transform: translateY(1px);
 }
 
 .sidebar-logo strong,
@@ -202,6 +212,23 @@ a {
 .sidebar-model-item:hover {
   background: linear-gradient(90deg, rgba(125, 204, 22, 0.18), rgba(41, 195, 187, 0.08));
   border-color: rgba(125, 204, 22, 0.34);
+}
+
+.sidebar-model-public {
+  border-color: rgba(41, 195, 187, 0.28);
+  box-shadow: inset 0 0 0 1px rgba(41, 195, 187, 0.08);
+}
+
+.sidebar-public-tag {
+  justify-self: start;
+  width: fit-content;
+  padding: 3px 7px;
+  color: #c9fff7;
+  border: 1px solid rgba(41, 195, 187, 0.36);
+  border-radius: 999px;
+  background: rgba(41, 195, 187, 0.12);
+  font-size: 11px;
+  line-height: 1;
 }
 
 .model-avatar {
@@ -1222,6 +1249,45 @@ a {
   resize: vertical;
 }
 
+.prompt-input-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.prompt-input-wrap .composer-input {
+  width: 100%;
+  padding-right: 52px;
+}
+
+.prompt-ai-button {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+  color: #071312;
+  border: 1px solid rgba(41, 195, 187, 0.52);
+  border-radius: 50%;
+  background: linear-gradient(135deg, #7dcc16, #29c3bb);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0;
+  box-shadow: 0 10px 22px rgba(41, 195, 187, 0.18);
+}
+
+.prompt-ai-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+  box-shadow: none;
+}
+
 .asset-grid-compact {
   max-height: 180px;
   overflow: auto;
@@ -1752,6 +1818,11 @@ a {
   border: 1px solid rgba(183, 199, 210, 0.11);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.032);
+}
+
+.settings-model-row-public {
+  border-color: rgba(41, 195, 187, 0.3);
+  background: linear-gradient(90deg, rgba(41, 195, 187, 0.08), rgba(255, 255, 255, 0.032));
 }
 
 .settings-model-main {

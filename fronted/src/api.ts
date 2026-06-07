@@ -219,6 +219,10 @@ export async function syncServerModel(modelId: string): Promise<{ model: ServerM
   return postApi(`/api/models/${modelId}/sync`, {});
 }
 
+export async function optimizePrompt(body: Record<string, unknown>): Promise<{ prompt: string; raw?: Record<string, unknown> }> {
+  return postApi("/api/proxy/prompt/optimize", body);
+}
+
 export async function setServerPrimaryModel(modelId: string, subModelId: string): Promise<ServerModelDefinition> {
   const payload = await postApi<{ model: ServerModelDefinition }>(`/api/models/${modelId}/primary`, { subModelId });
   return payload.model;
@@ -259,11 +263,30 @@ function isUploadPresignErrorLike(error: unknown): boolean {
   return message.includes("invalid url") || message.includes("presign") || message.includes("404 page not found");
 }
 
+function uploadFallbackMessage(error: unknown): string {
+  if (!error || typeof error !== "object") return "";
+  const maybeError = error as {
+    message?: unknown;
+    detail?: { message?: unknown; raw?: unknown } | null;
+  };
+  return [maybeError.message, maybeError.detail?.message, maybeError.detail?.raw]
+    .filter((value): value is string => typeof value === "string")
+    .join("\n")
+    .toLowerCase();
+}
+
 export function shouldFallbackToLocalReference(
   error: unknown,
   runtime: { mode?: string; env?: string } = {},
 ): boolean {
-  if (isProductionRuntime(runtime.mode, runtime.env)) return false;
+  const fallbackMessage = uploadFallbackMessage(error);
+  if (
+    isProductionRuntime(runtime.mode, runtime.env) &&
+    !fallbackMessage.includes("object storage") &&
+    !fallbackMessage.includes("对象存储")
+  ) {
+    return false;
+  }
   if (isUploadPresignErrorLike(error)) return true;
   if (!(error instanceof ApiRequestError)) return false;
   if (error.status === 404 || error.status === 405 || error.status >= 500) return true;

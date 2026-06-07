@@ -19,6 +19,8 @@ export interface ModelDefinition {
   description: string;
   builtin: boolean;
   serverManaged?: boolean;
+  isPublic?: boolean;
+  canEdit?: boolean;
   primarySubModelId?: string;
   subModels?: SubModelDefinition[];
   catalogModelId?: string | null;
@@ -39,6 +41,7 @@ export interface UserProfile {
   phone: string;
   nickname: string;
   avatarUrl: string;
+  isAdmin?: boolean;
 }
 
 export interface SubModelDefinition {
@@ -64,6 +67,8 @@ export interface ServerModelDefinition {
   baseUrl: string;
   primarySubModelId: string;
   primaryModelName: string;
+  isPublic: boolean;
+  canEdit: boolean;
   catalogModelId?: string | null;
   catalog?: CatalogModelDefinition | null;
   subModels: SubModelDefinition[];

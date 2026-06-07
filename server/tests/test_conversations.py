@@ -82,6 +82,25 @@ def create_model(client: TestClient, capability: str, adapter: str, model_name: 
     return response.json()["model"]["primarySubModelId"]
 
 
+def create_public_model(admin: TestClient, capability: str, adapter: str, model_name: str) -> dict:
+    response = admin.post(
+        "/api/models",
+        headers=csrf_headers(admin),
+        json={
+            "name": f"Public {capability} model",
+            "vendor": "Test",
+            "capability": capability,
+            "adapter": adapter,
+            "baseUrl": "https://token.example.com",
+            "apiKey": "sk-test",
+            "primaryModelName": model_name,
+            "isPublic": True,
+        },
+    )
+    assert response.status_code == 200
+    return response.json()["model"]
+
+
 def test_conversations_are_isolated_per_user() -> None:
     alice = TestClient(app)
     bob = TestClient(app)
@@ -146,6 +165,118 @@ def test_text_proxy_records_successful_conversation_message(monkeypatch) -> None
     assert summary.json()["summary"]["total"] == 1
     assert summary.json()["summary"]["success"] == 1
     assert summary.json()["summary"]["byCapability"]["text"]["success"] == 1
+
+
+def test_public_text_model_records_assistant_message_for_non_admin_user(monkeypatch) -> None:
+    async def fake_forward_json(method, url, api_key, body=None):
+        return (
+            httpx.Response(200, json={"choices": [{"message": {"content": "优化后的公开模型回复"}}]}),
+            {"choices": [{"message": {"content": "优化后的公开模型回复"}}]},
+        )
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    admin = TestClient(app)
+    login(admin, "admin")
+    admin.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": "admin-public", "email": "cage_ben@sina.com", "nickname": "Admin"},
+    )
+    public_model = create_public_model(admin, "text", "text-chat", "gpt-5.5")
+
+    normal = TestClient(app)
+    login(normal, "normal-user")
+    visible_public = next(item for item in normal.get("/api/models").json()["models"] if item["id"] == public_model["id"])
+
+    response = normal.post(
+        "/api/proxy/text",
+        headers=csrf_headers(normal),
+        json={
+            "subModelId": visible_public["primarySubModelId"],
+            "requestBody": {"messages": [{"role": "user", "content": "写一段公开模型测试"}]},
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["assistantMessage"]["content"] == "优化后的公开模型回复"
+    conversation = normal.get(f"/api/conversations/{payload['conversation']['id']}").json()["conversation"]
+    assert [message["role"] for message in conversation["messages"]] == ["user", "assistant"]
+    assert conversation["messages"][-1]["content"] == "优化后的公开模型回复"
+
+
+def test_public_image_model_records_generated_asset_for_non_admin_user(monkeypatch) -> None:
+    async def fake_forward_json(method, url, api_key, body=None):
+        return httpx.Response(200, json={"data": [{"url": "https://cdn.example.com/public-image.png"}]}), {
+            "data": [{"url": "https://cdn.example.com/public-image.png"}]
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    admin = TestClient(app)
+    login(admin, "admin")
+    admin.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": "admin-public", "email": "cage_ben@sina.com", "nickname": "Admin"},
+    )
+    public_model = create_public_model(admin, "image", "image-openai", "gpt-image-2")
+
+    normal = TestClient(app)
+    login(normal, "normal-user")
+    visible_public = next(item for item in normal.get("/api/models").json()["models"] if item["id"] == public_model["id"])
+
+    response = normal.post(
+        "/api/proxy/image",
+        headers=csrf_headers(normal),
+        json={
+            "subModelId": visible_public["primarySubModelId"],
+            "requestBody": {"prompt": "生成公开模型图片"},
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    conversation = normal.get(f"/api/conversations/{payload['conversation']['id']}").json()["conversation"]
+    assert conversation["messages"][-1]["assets"][0]["url"] == "https://cdn.example.com/public-image.png"
+
+
+def test_prompt_optimize_uses_public_gpt_model_without_creating_conversation(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_forward_json(method, url, api_key, body=None):
+        captured["method"] = method
+        captured["url"] = url
+        captured["api_key"] = api_key
+        captured["body"] = body
+        return (
+            httpx.Response(200, json={"choices": [{"message": {"content": "一辆小米 SU7 变形成蓝色未来机甲，保留车身线条。"}}]}),
+            {"choices": [{"message": {"content": "一辆小米 SU7 变形成蓝色未来机甲，保留车身线条。"}}]},
+        )
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    admin = TestClient(app)
+    login(admin, "admin")
+    admin.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": "admin-public", "email": "cage_ben@sina.com", "nickname": "Admin"},
+    )
+    create_public_model(admin, "text", "text-chat", "gpt-5.5")
+
+    guest = TestClient(app)
+    response = guest.post(
+        "/api/proxy/prompt/optimize",
+        json={
+            "capability": "image",
+            "prompt": "生成小米 SU7 变形金刚",
+            "parameters": {"ratio": "16:9", "resolution": "2k"},
+            "referenceCount": 1,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["prompt"].startswith("一辆小米 SU7")
+    assert captured["method"] == "POST"
+    assert captured["url"] == "https://token.example.com/v1/chat/completions"
+    assert (captured["body"] or {})["model"] == "gpt-5.5"
+    assert guest.get("/api/conversations").status_code == 401
 
 
 def test_text_proxy_extracts_content_from_part_array(monkeypatch) -> None:

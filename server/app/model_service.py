@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import Any
 
 from fastapi import HTTPException
+from sqlalchemy import or_
 from sqlalchemy.orm import Session, selectinload
 
 from app.catalog_service import find_catalog_model_by_name, get_catalog_model_by_external_id, serialize_catalog_model
@@ -55,21 +57,40 @@ def serialize_sub_model(sub_model: SubModel, primary_id: str = "") -> SubModelOu
     )
 
 
-def serialize_model(model: ModelGroup) -> ModelOut:
+def can_edit_model(model: ModelGroup, user: User | None = None, *, is_admin: bool = False) -> bool:
+    if not user:
+        return False
+    if is_admin:
+        return True
+    return model.user_id == user.id and not model.is_public
+
+
+def safe_model_description(model: ModelGroup, *, editable: bool) -> str:
+    if editable:
+        return model.description
+    if model.is_public:
+        return "平台公共模型，可直接用于创作。"
+    return re.sub(r"https?://[^\s)）]+", "", model.description or "").strip()
+
+
+def serialize_model(model: ModelGroup, user: User | None = None, *, is_admin: bool = False) -> ModelOut:
     primary = next((item for item in model.sub_models if item.id == model.primary_sub_model_id), None)
     if not primary:
         primary = next((item for item in model.sub_models if item.is_primary), None)
+    editable = can_edit_model(model, user, is_admin=is_admin)
     return ModelOut(
         id=model.id,
         name=model.name,
         vendor=model.vendor,
         capability=model.capability,
         adapter=model.adapter,
-        description=model.description,
+        description=safe_model_description(model, editable=editable),
         apiKeyId=model.api_key_id,
-        baseUrl=model.api_key.base_url,
+        baseUrl=model.api_key.base_url if editable else "",
         primarySubModelId=model.primary_sub_model_id,
         primaryModelName=primary.model_name if primary else "",
+        isPublic=bool(model.is_public),
+        canEdit=editable,
         catalogModelId=catalog_external_id(model.catalog_model),
         catalog=serialize_catalog_model(model.catalog_model) if model.catalog_model else None,
         subModels=[serialize_sub_model(item, model.primary_sub_model_id) for item in model.sub_models],
@@ -114,7 +135,13 @@ def backfill_all_catalog_links(db: Session) -> int:
     return len(models)
 
 
-def create_model_group(db: Session, user: User, payload: ModelCreate) -> ModelGroup:
+def should_default_public_model(payload: ModelCreate) -> bool:
+    names = normalize_model_names(payload.primaryModelName, payload.availableModelNames)
+    candidates = [payload.name, payload.primaryModelName, *names]
+    return payload.capability == "text" and any("gpt-5.5" in item.strip().lower() for item in candidates)
+
+
+def create_model_group(db: Session, user: User, payload: ModelCreate, *, is_admin: bool = False) -> ModelGroup:
     catalog_model = get_catalog_model_by_external_id(db, payload.catalogModelId)
     api_key = ApiKey(
         user_id=user.id,
@@ -133,6 +160,7 @@ def create_model_group(db: Session, user: User, payload: ModelCreate) -> ModelGr
         adapter=payload.adapter,
         description=payload.description.strip(),
         catalog_model_id=catalog_model.id if catalog_model else None,
+        is_public=bool(is_admin and (payload.isPublic or should_default_public_model(payload))),
     )
     db.add(model)
     db.flush()
@@ -158,39 +186,51 @@ def create_model_group(db: Session, user: User, payload: ModelCreate) -> ModelGr
         if sub_model.is_primary:
             model.primary_sub_model_id = sub_model.id
     db.commit()
-    return get_model_group(db, user, model.id)
+    return get_model_group(db, user, model.id, is_admin=is_admin)
 
 
-def get_model_group(db: Session, user: User, model_id: str) -> ModelGroup:
-    return get_model_group_for_user_id(db, user.id, model_id)
+def get_model_group(db: Session, user: User, model_id: str, *, is_admin: bool = False, require_edit: bool = False) -> ModelGroup:
+    return get_model_group_for_user_id(db, user.id, model_id, is_admin=is_admin, require_edit=require_edit)
 
 
-def get_model_group_for_user_id(db: Session, user_id: str, model_id: str) -> ModelGroup:
+def get_model_group_for_user_id(
+    db: Session,
+    user_id: str,
+    model_id: str,
+    *,
+    is_admin: bool = False,
+    require_edit: bool = False,
+) -> ModelGroup:
     model = (
         db.query(ModelGroup)
         .options(*catalog_loader_options())
-        .filter(ModelGroup.id == model_id, ModelGroup.user_id == user_id)
+        .filter(ModelGroup.id == model_id, or_(ModelGroup.user_id == user_id, ModelGroup.is_public.is_(True)))
         .one_or_none()
     )
     if not model:
         raise HTTPException(status_code=404, detail={"message": "模型不存在。"})
+    if require_edit and not (is_admin or (model.user_id == user_id and not model.is_public)):
+        raise HTTPException(status_code=403, detail={"message": "公共模型只有管理员可以编辑。"})
     if backfill_catalog_links(db, [model]):
         db.commit()
         db.expire_all()
         model = (
             db.query(ModelGroup)
             .options(*catalog_loader_options())
-            .filter(ModelGroup.id == model_id, ModelGroup.user_id == user_id)
+            .filter(ModelGroup.id == model_id)
             .one()
         )
     return model
 
 
-def list_model_groups(db: Session, user: User) -> list[ModelGroup]:
+def list_model_groups(db: Session, user: User | None = None) -> list[ModelGroup]:
+    query = db.query(ModelGroup).options(*catalog_loader_options())
+    if user:
+        query = query.filter(or_(ModelGroup.user_id == user.id, ModelGroup.is_public.is_(True)))
+    else:
+        query = query.filter(ModelGroup.is_public.is_(True))
     models = (
-        db.query(ModelGroup)
-        .options(*catalog_loader_options())
-        .filter(ModelGroup.user_id == user.id)
+        query
         .order_by(ModelGroup.created_at.desc())
         .all()
     )
@@ -198,9 +238,7 @@ def list_model_groups(db: Session, user: User) -> list[ModelGroup]:
         db.commit()
         db.expire_all()
         models = (
-            db.query(ModelGroup)
-            .options(*catalog_loader_options())
-            .filter(ModelGroup.user_id == user.id)
+            query
             .order_by(ModelGroup.created_at.desc())
             .all()
         )
@@ -211,8 +249,8 @@ def list_api_keys(db: Session, user: User) -> list[ApiKey]:
     return db.query(ApiKey).filter(ApiKey.user_id == user.id).order_by(ApiKey.created_at.desc()).all()
 
 
-def update_model_group(db: Session, user: User, model_id: str, payload: ModelUpdate) -> ModelGroup:
-    model = get_model_group(db, user, model_id)
+def update_model_group(db: Session, user: User, model_id: str, payload: ModelUpdate, *, is_admin: bool = False) -> ModelGroup:
+    model = get_model_group(db, user, model_id, is_admin=is_admin, require_edit=True)
     selected_catalog_model = model.catalog_model
     if payload.name is not None:
         model.name = payload.name.strip()
@@ -228,6 +266,10 @@ def update_model_group(db: Session, user: User, model_id: str, payload: ModelUpd
     if payload.catalogModelId is not None:
         selected_catalog_model = get_catalog_model_by_external_id(db, payload.catalogModelId)
         model.catalog_model_id = selected_catalog_model.id if selected_catalog_model else None
+    if payload.isPublic is not None:
+        if not is_admin:
+            raise HTTPException(status_code=403, detail={"message": "只有管理员可以调整公共模型。"})
+        model.is_public = bool(payload.isPublic)
     if payload.baseUrl is not None:
         model.api_key.base_url = payload.baseUrl.strip()
     if payload.apiKey is not None and payload.apiKey.strip():
@@ -301,11 +343,11 @@ def update_model_group(db: Session, user: User, model_id: str, payload: ModelUpd
         model.primary_sub_model_id = existing.id
 
     db.commit()
-    return get_model_group(db, user, model_id)
+    return get_model_group(db, user, model_id, is_admin=is_admin)
 
 
-def delete_model_group(db: Session, user: User, model_id: str) -> None:
-    model = get_model_group(db, user, model_id)
+def delete_model_group(db: Session, user: User, model_id: str, *, is_admin: bool = False) -> None:
+    model = get_model_group(db, user, model_id, is_admin=is_admin, require_edit=True)
     api_key = model.api_key
     db.delete(model)
     if api_key and len(api_key.model_groups) <= 1:
@@ -313,8 +355,8 @@ def delete_model_group(db: Session, user: User, model_id: str) -> None:
     db.commit()
 
 
-def set_primary_sub_model(db: Session, user: User, model_id: str, sub_model_id: str) -> ModelGroup:
-    model = get_model_group(db, user, model_id)
+def set_primary_sub_model(db: Session, user: User, model_id: str, sub_model_id: str, *, is_admin: bool = False) -> ModelGroup:
+    model = get_model_group(db, user, model_id, is_admin=is_admin, require_edit=True)
     target = next((item for item in model.sub_models if item.id == sub_model_id), None)
     if not target:
         raise HTTPException(status_code=404, detail={"message": "子模型不存在。"})
@@ -322,7 +364,7 @@ def set_primary_sub_model(db: Session, user: User, model_id: str, sub_model_id: 
         item.is_primary = item.id == target.id
     model.primary_sub_model_id = target.id
     db.commit()
-    return get_model_group(db, user, model_id)
+    return get_model_group(db, user, model_id, is_admin=is_admin)
 
 
 def upsert_fetched_sub_models(
@@ -359,18 +401,64 @@ def upsert_fetched_sub_models(
         model.primary_sub_model_id = primary.id
 
 
-def get_sub_model_for_user(db: Session, user: User, sub_model_id: str) -> tuple[ModelGroup, SubModel, ApiKey, str]:
+def get_sub_model_for_user(db: Session, user: User | None, sub_model_id: str) -> tuple[ModelGroup, SubModel, ApiKey, str]:
+    visibility_filter = (
+        or_(ModelGroup.user_id == user.id, ModelGroup.is_public.is_(True))
+        if user
+        else ModelGroup.is_public.is_(True)
+    )
     sub_model = (
         db.query(SubModel)
         .options(selectinload(SubModel.model_group), selectinload(SubModel.api_key))
         .join(ModelGroup, ModelGroup.id == SubModel.model_group_id)
-        .filter(SubModel.id == sub_model_id, ModelGroup.user_id == user.id)
+        .filter(SubModel.id == sub_model_id, visibility_filter)
         .one_or_none()
     )
     if not sub_model:
-        raise HTTPException(status_code=404, detail={"message": "子模型不存在。"})
+        raise HTTPException(status_code=404 if user else 401, detail={"message": "请先登录。"})
     api_key = sub_model.api_key
     return sub_model.model_group, sub_model, api_key, decrypt_secret(api_key.api_key_ciphertext)
+
+
+def find_prompt_optimizer_sub_model(
+    db: Session,
+    user: User | None,
+    requested_sub_model_id: str | None = None,
+) -> tuple[ModelGroup, SubModel, ApiKey, str] | None:
+    if requested_sub_model_id:
+        try:
+            model_group, sub_model, api_key_record, api_key = get_sub_model_for_user(db, user, requested_sub_model_id)
+        except HTTPException:
+            model_group = sub_model = api_key_record = api_key = None
+        if sub_model and sub_model.capability == "text":
+            return model_group, sub_model, api_key_record, api_key
+
+    visibility_filter = (
+        or_(ModelGroup.user_id == user.id, ModelGroup.is_public.is_(True))
+        if user
+        else ModelGroup.is_public.is_(True)
+    )
+    sub_models = (
+        db.query(SubModel)
+        .options(selectinload(SubModel.model_group), selectinload(SubModel.api_key))
+        .join(ModelGroup, ModelGroup.id == SubModel.model_group_id)
+        .filter(SubModel.capability == "text", visibility_filter, SubModel.status == "active")
+        .all()
+    )
+    if not sub_models:
+        return None
+
+    def rank(item: SubModel) -> tuple[int, int, str]:
+        source = f"{item.model_name} {item.display_name} {item.model_group.name}".lower()
+        return (
+            0 if "gpt-5.5" in source else 1,
+            0 if item.model_group.is_public else 1,
+            source,
+        )
+
+    sub_model = sorted(sub_models, key=rank)[0]
+    api_key_record = sub_model.api_key
+    return sub_model.model_group, sub_model, api_key_record, decrypt_secret(api_key_record.api_key_ciphertext)
 
 
 def record_call_log(
@@ -417,14 +505,14 @@ def serialize_call_log(item: CallLog) -> CallLogOut:
     )
 
 
-def sync_models_from_raw(db: Session, model: ModelGroup, raw: dict[str, Any], duration_ms: int) -> SyncModelsResult:
+def sync_models_from_raw(db: Session, model: ModelGroup, raw: dict[str, Any], duration_ms: int, *, user: User | None = None, is_admin: bool = False) -> SyncModelsResult:
     model_names = filter_model_ids_for_capability(parse_model_ids(raw), model.capability)
     current = next((item.model_name for item in model.sub_models if item.id == model.primary_sub_model_id), "")
     primary = current if current in model_names else model_names[0] if model_names else current
     upsert_fetched_sub_models(db, model, model_names, primary)
     db.commit()
     refreshed = get_model_group_for_user_id(db, model.user_id, model.id)
-    return SyncModelsResult(model=serialize_model(refreshed), models=model_names, durationMs=duration_ms, raw=raw)
+    return SyncModelsResult(model=serialize_model(refreshed, user, is_admin=is_admin), models=model_names, durationMs=duration_ms, raw=raw)
 
 
 def elapsed_ms(started_at: float) -> int:

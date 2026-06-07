@@ -15,6 +15,24 @@ from app.schemas import LoginRequest, ProfileUpdateRequest, RegisterRequest, Use
 from app.security import create_csrf_token, create_session_token, hash_password, hash_token, verify_password
 
 
+def is_admin_user(user: User | None, settings: Settings | None = None) -> bool:
+    if not user:
+        return False
+    resolved_settings = settings or get_settings()
+    email = (user.email or "").strip().lower()
+    admin_emails = {item.strip().lower() for item in resolved_settings.admin_emails}
+    if email and email in admin_emails:
+        return True
+    admin_identifiers = {item.strip().lower() for item in resolved_settings.admin_identifiers}
+    identities = {
+        (user.external_user_id or "").strip().lower(),
+        email,
+        (user.phone or "").strip().lower(),
+        (user.nickname or "").strip().lower(),
+    }
+    return bool(admin_identifiers.intersection(identity for identity in identities if identity))
+
+
 def serialize_user(user: User) -> UserOut:
     return UserOut(
         id=user.id,
@@ -23,6 +41,7 @@ def serialize_user(user: User) -> UserOut:
         phone=user.phone,
         nickname=user.nickname,
         avatarUrl=user.avatar_url,
+        isAdmin=is_admin_user(user),
     )
 
 

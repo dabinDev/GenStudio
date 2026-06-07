@@ -6,6 +6,7 @@ import {
   buildImageGenerationRequestBody,
   buildVideoMediaFields,
   updateLocalConversationMessage,
+  updateLocalConversationTaskMessage,
   markConversationMessageFailed,
   catalogOptionMaxCount,
   generatedAssetReferenceFileName,
@@ -13,6 +14,9 @@ import {
   getModelIdentifierError,
   getMissingModelMessage,
   imageGenerationSummary,
+  canEditModel,
+  isPrivateView,
+  loginRedirectForView,
   mediaPreviewActionLabels,
   filterSettingsModels,
   capabilityFilterForView,
@@ -28,11 +32,16 @@ import {
   prioritizeModelOptions,
   modelCatalogInputHint,
   modelCatalogIconUrl,
+  modelConnectionLabel,
   modelDisplayNameFromPrimary,
   modelDisplayNameForModel,
   modelParameterSourceLabel,
+  publicShareTargetModels,
+  resolveSidebarFilter,
   renderMarkdownPreview,
+  resolveAuthRedirect,
   resolveModelName,
+  safeModelDescription,
   shouldResetConversationForModelSwitch,
   shouldContinuePollingTask,
   conversationAssetsFromImageQueryResult,
@@ -111,6 +120,68 @@ describe("model selection helpers", () => {
     expect(capabilityFilterForView("profile")).toBe("all");
   });
 
+  it("treats settings, profile, and history as private login-gated actions", () => {
+    expect(isPrivateView("settings")).toBe(true);
+    expect(isPrivateView("profile")).toBe(true);
+    expect(isPrivateView("images")).toBe(false);
+    expect(loginRedirectForView("settings")).toBe("/auth?redirect=%2Fsettings");
+    expect(loginRedirectForView("profile")).toBe("/auth?redirect=%2Fprofile");
+    expect(resolveAuthRedirect("#/auth?redirect=%2Fsettings")).toBe("settings");
+    expect(resolveAuthRedirect("#/auth?redirect=%2Fprofile")).toBe("profile");
+    expect(resolveAuthRedirect("#/auth?redirect=https%3A%2F%2Fevil.example")).toBe("images");
+  });
+
+  it("does not expose upstream endpoints in model list summaries", () => {
+    expect(
+      modelConnectionLabel(
+        { ...textModel, serverManaged: true, isPublic: true, canEdit: false },
+        setting({ baseUrl: "https://ai-api.kkidc.com" }),
+      ),
+    ).toBe("公共模型");
+    expect(
+      modelConnectionLabel(
+        { ...textModel, serverManaged: true, isPublic: false, canEdit: true },
+        setting({ baseUrl: "https://token.example.com" }),
+      ),
+    ).toBe("平台托管");
+    expect(modelConnectionLabel(textModel, setting({ baseUrl: "https://token.example.com" }))).toBe("自定义密钥");
+    expect(modelConnectionLabel(textModel, setting({ baseUrl: "" }))).toBe("未配置");
+  });
+
+  it("strips upstream urls from readonly public model descriptions", () => {
+    expect(
+      safeModelDescription(
+        {
+          ...textModel,
+          isPublic: true,
+          canEdit: false,
+          description: "KK fast provider models from https://ai-api.kkidc.com",
+        },
+        "fallback",
+      ),
+    ).toBe("平台公共模型，可直接用于创作。");
+    expect(
+      safeModelDescription(
+        { ...textModel, isPublic: false, canEdit: true, description: "Private https://token.example.com" },
+        "fallback",
+      ),
+    ).toBe("Private");
+  });
+
+  it("picks only editable server models when publishing selected models", () => {
+    const privateServer = { ...textModel, id: "private-server", serverManaged: true, isPublic: false, canEdit: true };
+    const publicServer = { ...textModel, id: "public-server", serverManaged: true, isPublic: true, canEdit: true };
+    const readonlyServer = { ...textModel, id: "readonly-server", serverManaged: true, isPublic: false, canEdit: false };
+    const localModel = { ...textModel, id: "local-model", serverManaged: false, isPublic: false };
+
+    expect(
+      publicShareTargetModels(
+        [privateServer, publicServer, readonlyServer, localModel],
+        ["private-server", "public-server", "readonly-server", "local-model"],
+      ).map((model) => model.id),
+    ).toEqual(["private-server"]);
+  });
+
   it("filters settings models by capability and search text", () => {
     const models: ModelDefinition[] = [
       {
@@ -177,6 +248,24 @@ describe("model selection helpers", () => {
     expect(filterSettingsModels(models, "video", "seed-2").map((item) => item.id)).toEqual(["kk-video"]);
     expect(filterSettingsModels(models, "image", "claude")).toEqual([]);
     expect(filterSettingsModels(models, "all", "").map((item) => item.id)).toEqual(["kk-claude", "kk-image", "kk-video"]);
+  });
+
+  it("falls back to all sidebar models when the active capability has no models", () => {
+    const models: ModelDefinition[] = [
+      { ...textModel, id: "public-gpt55", capability: "text", model: "gpt-5.5" },
+    ];
+
+    expect(resolveSidebarFilter(models, "image")).toBe("all");
+    expect(resolveSidebarFilter(models, "text")).toBe("text");
+    expect(resolveSidebarFilter([], "image")).toBe("image");
+    expect(resolveSidebarFilter(models, "all")).toBe("all");
+  });
+
+  it("marks public server models readonly while keeping personal models editable", () => {
+    expect(canEditModel({ ...textModel, serverManaged: true, isPublic: true, canEdit: false })).toBe(false);
+    expect(canEditModel({ ...textModel, serverManaged: true, isPublic: false, canEdit: false })).toBe(false);
+    expect(canEditModel({ ...textModel, serverManaged: true, isPublic: false, canEdit: true })).toBe(true);
+    expect(canEditModel({ ...textModel, serverManaged: false, isPublic: false })).toBe(true);
   });
 
   it("pins the selected model at the top without dropping other options", () => {
@@ -1271,6 +1360,44 @@ describe("conversation helpers", () => {
       canRetry: true,
     });
     expect(failed.updatedAt).not.toBe(pending.updatedAt);
+  });
+
+  it("updates an existing task message with generated media instead of appending a duplicate", () => {
+    const pending = appendLocalConversationMessages(null, {
+      capability: "video",
+      titleSeed: "生成视频",
+      modelGroupId: "video-model",
+      subModelId: "sub-video",
+      now: "2026-06-06T01:05:00.000Z",
+      messages: [
+        { role: "user", content: "生成视频" },
+        { role: "assistant", content: "task-1", status: "processing" },
+      ],
+    });
+
+    const completed = updateLocalConversationTaskMessage(pending, "task-1", {
+      content: "completed",
+      status: "success",
+      assets: [
+        {
+          id: "asset-video",
+          capability: "video",
+          assetType: "video",
+          url: "https://cdn.example.com/video.mp4",
+          thumbnailUrl: "",
+          metadata: { taskId: "task-1" },
+          createdAt: "2026-06-06T01:06:00.000Z",
+        },
+      ],
+    });
+
+    expect(completed?.messages).toHaveLength(2);
+    expect(completed?.messages[1]).toMatchObject({
+      role: "assistant",
+      content: "completed",
+      status: "success",
+      assets: [expect.objectContaining({ url: "https://cdn.example.com/video.mp4" })],
+    });
   });
 
   it("maps video task statuses to local message statuses", () => {

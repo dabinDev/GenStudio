@@ -1,7 +1,10 @@
 .next
+.deploy-stage/
 node_modules
 fronted/node_modules
 fronted/dist
+preview-*.log
+*_nginx.zip
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

@@ -90,6 +90,8 @@ describe("useWorkbenchStore", () => {
         baseUrl: "https://token.example.com",
         primarySubModelId: "sub-gpt-4o",
         primaryModelName: "gpt-4o",
+        isPublic: false,
+        canEdit: true,
         subModels: [
           {
             id: "sub-gpt-4o",

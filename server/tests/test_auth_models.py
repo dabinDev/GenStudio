@@ -273,6 +273,199 @@ def test_model_update_can_change_primary_model_and_delete() -> None:
     assert client.get("/api/models").json()["models"] == []
 
 
+def test_public_models_are_visible_without_login_and_readonly_for_non_admin() -> None:
+    admin = TestClient(app)
+    admin.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": "admin-1", "email": "cage_ben@sina.com", "nickname": "Admin"},
+    )
+    public_model = admin.post(
+        "/api/models",
+        headers=csrf_headers(admin),
+        json={
+            "name": "GPT 5.5 Public",
+            "vendor": "OpenAI",
+            "capability": "text",
+            "adapter": "text-chat",
+            "baseUrl": "https://token.example.com",
+            "apiKey": "sk-test",
+            "primaryModelName": "gpt-5.5",
+            "description": "Public gateway from https://token.example.com",
+            "isPublic": True,
+        },
+    )
+    private_model = admin.post(
+        "/api/models",
+        headers=csrf_headers(admin),
+        json={
+            "name": "Private GPT",
+            "vendor": "OpenAI",
+            "capability": "text",
+            "adapter": "text-chat",
+            "baseUrl": "https://token.example.com",
+            "apiKey": "sk-test",
+            "primaryModelName": "gpt-4o",
+        },
+    )
+    assert public_model.status_code == 200
+    assert private_model.status_code == 200
+
+    guest = TestClient(app)
+    guest_models = guest.get("/api/models")
+
+    assert guest_models.status_code == 200
+    guest_payload = guest_models.json()["models"]
+    assert [item["name"] for item in guest_payload] == ["GPT 5.5 Public"]
+    assert guest_payload[0]["isPublic"] is True
+    assert guest_payload[0]["canEdit"] is False
+    assert guest_payload[0]["primaryModelName"] == "gpt-5.5"
+    assert guest_payload[0]["baseUrl"] == ""
+    assert "https://" not in guest_payload[0]["description"]
+    assert guest_payload[0]["description"] == "平台公共模型，可直接用于创作。"
+
+    normal = TestClient(app)
+    normal.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": "normal-1", "email": "normal@example.com", "nickname": "Normal"},
+    )
+    normal_models = normal.get("/api/models").json()["models"]
+    public_row = next(item for item in normal_models if item["id"] == public_model.json()["model"]["id"])
+    assert public_row["canEdit"] is False
+    assert public_row["baseUrl"] == ""
+    assert "https://" not in public_row["description"]
+
+    admin_row = next(item for item in admin.get("/api/models").json()["models"] if item["id"] == public_model.json()["model"]["id"])
+    assert admin_row["canEdit"] is True
+    assert admin_row["baseUrl"] == "https://token.example.com"
+    assert admin_row["description"] == "Public gateway from https://token.example.com"
+
+
+def test_non_admin_cannot_edit_delete_or_switch_public_model() -> None:
+    admin = TestClient(app)
+    admin.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": "admin-1", "email": "cage_ben@sina.com", "nickname": "Admin"},
+    )
+    created = admin.post(
+        "/api/models",
+        headers=csrf_headers(admin),
+        json={
+            "name": "GPT 5.5 Public",
+            "vendor": "OpenAI",
+            "capability": "text",
+            "adapter": "text-chat",
+            "baseUrl": "https://token.example.com",
+            "apiKey": "sk-test",
+            "primaryModelName": "gpt-5.5",
+            "availableModelNames": ["gpt-5.5", "gpt-5.4"],
+            "isPublic": True,
+        },
+    ).json()["model"]
+
+    normal = TestClient(app)
+    normal.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": "normal-1", "email": "normal@example.com", "nickname": "Normal"},
+    )
+    headers = csrf_headers(normal)
+
+    updated = normal.put(f"/api/models/{created['id']}", headers=headers, json={"name": "Stolen"})
+    deleted = normal.delete(f"/api/models/{created['id']}", headers=headers)
+    primary = normal.post(
+        f"/api/models/{created['id']}/primary",
+        headers=headers,
+        json={"subModelId": created["subModels"][1]["id"]},
+    )
+
+    assert updated.status_code == 403
+    assert deleted.status_code == 403
+    assert primary.status_code == 403
+
+
+def test_admin_can_publish_private_model_for_other_users_to_use(monkeypatch) -> None:
+    async def fake_forward_json(method, url, api_key, body=None):
+        return (
+            httpx.Response(200, json={"choices": [{"message": {"content": "public response"}}]}),
+            {"choices": [{"message": {"content": "public response"}}]},
+        )
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    admin = TestClient(app)
+    admin.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": "admin-1", "email": "cage_ben@sina.com", "nickname": "Admin"},
+    )
+    created = admin.post(
+        "/api/models",
+        headers=csrf_headers(admin),
+        json={
+            "name": "Admin GPT",
+            "vendor": "OpenAI",
+            "capability": "text",
+            "adapter": "text-chat",
+            "baseUrl": "https://token.example.com",
+            "apiKey": "sk-test",
+            "primaryModelName": "gpt-5.5",
+        },
+    ).json()["model"]
+
+    published = admin.put(
+        f"/api/models/{created['id']}",
+        headers=csrf_headers(admin),
+        json={"isPublic": True},
+    )
+    assert published.status_code == 200
+    assert published.json()["model"]["isPublic"] is True
+    assert published.json()["model"]["canEdit"] is True
+
+    normal = TestClient(app)
+    normal.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": "normal-1", "email": "normal@example.com", "nickname": "Normal"},
+    )
+    public_model = next(item for item in normal.get("/api/models").json()["models"] if item["id"] == created["id"])
+    assert public_model["baseUrl"] == ""
+    assert public_model["canEdit"] is False
+
+    response = normal.post(
+        "/api/proxy/text",
+        headers=csrf_headers(normal),
+        json={
+            "subModelId": public_model["primarySubModelId"],
+            "requestBody": {"messages": [{"role": "user", "content": "hello"}]},
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["content"] == "public response"
+
+
+def test_auth_me_marks_default_admin_email() -> None:
+    admin = TestClient(app)
+    admin.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": "admin-1", "email": "cage_ben@sina.com", "nickname": "Admin"},
+    )
+    normal = TestClient(app)
+    normal.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": "normal-1", "email": "normal@example.com", "nickname": "Normal"},
+    )
+
+    assert admin.get("/api/auth/me").json()["user"]["isAdmin"] is True
+    assert normal.get("/api/auth/me").json()["user"]["isAdmin"] is False
+
+
+def test_auth_me_marks_configured_admin_identifier(monkeypatch) -> None:
+    from app.auth import is_admin_user
+    from app.config import Settings
+    from app.db_models import User
+
+    settings = Settings(admin_emails=[], admin_identifiers=["cylonai"])
+    user = User(external_user_id="local-cylonai", email="", phone="", nickname="cylonai", status="active")
+
+    assert is_admin_user(user, settings) is True
+
+
 def test_sub_model_proxy_requires_login() -> None:
     client = TestClient(app)
 

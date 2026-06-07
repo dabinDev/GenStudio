@@ -73,6 +73,7 @@ CREATE TABLE models (
   adapter VARCHAR(64) NOT NULL,
   description TEXT NOT NULL,
   primary_sub_model_id VARCHAR(64) NOT NULL,
+  is_public BOOL NOT NULL DEFAULT FALSE,
   created_at DATETIME NOT NULL,
   updated_at DATETIME NOT NULL,
   PRIMARY KEY (id),
@@ -80,6 +81,7 @@ CREATE TABLE models (
   FOREIGN KEY(api_key_id) REFERENCES api_keys (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 CREATE INDEX ix_models_api_key_id ON models (api_key_id);
+CREATE INDEX ix_models_is_public ON models (is_public);
 CREATE INDEX ix_models_user_id ON models (user_id);
 
 CREATE TABLE session_csrf_tokens (

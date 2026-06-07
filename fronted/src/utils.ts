@@ -52,6 +52,63 @@ export function capabilityFilterForView(viewName: string): Capability | "all" {
   return "all";
 }
 
+export function isPrivateView(viewName: string): boolean {
+  return viewName === "settings" || viewName === "profile";
+}
+
+export function loginRedirectForView(viewName: string): string {
+  const safeView = viewName && viewName !== "auth" && viewName !== "auth-error" ? viewName : "images";
+  return `/auth?redirect=${encodeURIComponent(`/${safeView}`)}`;
+}
+
+export function resolveAuthRedirect(hash: string, fallback = "images"): string {
+  const query = hash.split("?", 2)[1] || "";
+  const redirect = new URLSearchParams(query).get("redirect") || "";
+  if (!redirect.startsWith("/") || redirect.startsWith("//")) return fallback;
+  const route = redirect.replace(/^\/+/, "").split("?", 1)[0];
+  return ["text", "images", "videos", "settings", "profile"].includes(route) ? route : fallback;
+}
+
+export function canEditModel(model: Pick<ModelDefinition, "serverManaged" | "isPublic" | "canEdit">): boolean {
+  if (!model.serverManaged) return true;
+  return model.canEdit === true;
+}
+
+export function publicShareTargetModels(models: ModelDefinition[], selectedIds: string[]): ModelDefinition[] {
+  const selected = new Set(selectedIds);
+  return models.filter((model) => selected.has(model.id) && model.serverManaged && model.canEdit === true && !model.isPublic);
+}
+
+export function modelConnectionLabel(
+  model: Pick<ModelDefinition, "serverManaged" | "isPublic" | "canEdit">,
+  setting: Pick<ModelSetting, "baseUrl">,
+): string {
+  if (model.isPublic) return "公共模型";
+  if (model.serverManaged) return "平台托管";
+  return setting.baseUrl.trim() ? "自定义密钥" : "未配置";
+}
+
+export function stripUpstreamUrls(value: string): string {
+  return value
+    .replace(/https?:\/\/[^\s)）]+/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+([。；，,.])/g, "$1")
+    .trim();
+}
+
+export function safeModelDescription(model: Pick<ModelDefinition, "description" | "isPublic" | "canEdit"> | null | undefined, fallback: string): string {
+  if (!model?.description?.trim()) return fallback;
+  if (model.isPublic && model.canEdit !== true) return "平台公共模型，可直接用于创作。";
+  const text = stripUpstreamUrls(model.description);
+  return text || fallback;
+}
+
+export function resolveSidebarFilter(models: ModelDefinition[], filter: Capability | "all"): Capability | "all" {
+  if (filter === "all") return "all";
+  if (!models.length) return filter;
+  return models.some((model) => model.capability === filter) ? filter : "all";
+}
+
 export function filterSettingsModels(
   models: ModelDefinition[],
   capability: Capability | "all",
@@ -600,6 +657,19 @@ export function updateLocalConversationMessage(
         : message,
     ),
   };
+}
+
+export function updateLocalConversationTaskMessage(
+  conversation: ConversationDefinition | null,
+  taskId: string,
+  patch: Partial<Pick<ConversationMessage, "content" | "status" | "errorMessage" | "canRetry" | "assets">>,
+): ConversationDefinition | null {
+  if (!conversation || !taskId) return conversation;
+  const target = [...conversation.messages]
+    .reverse()
+    .find((message) => message.role === "assistant" && message.content.trim() === taskId);
+  if (!target) return conversation;
+  return updateLocalConversationMessage(conversation, target.id, patch);
 }
 
 export function markConversationMessageFailed(

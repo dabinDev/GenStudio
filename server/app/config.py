@@ -31,6 +31,14 @@ def _csv_env(name: str, default: list[str]) -> list[str]:
     return [item.strip().rstrip("/") for item in value.split(",") if item.strip()]
 
 
+def _email_csv_env(name: str, default: list[str]) -> list[str]:
+    return [item.strip().lower() for item in _csv_env(name, default) if item.strip()]
+
+
+def _identity_csv_env(name: str, default: list[str]) -> list[str]:
+    return [item.strip().lower() for item in _csv_env(name, default) if item.strip()]
+
+
 def _default_cors_origins() -> list[str]:
     return _csv_env(
         "GENSTUDIO_CORS_ORIGINS",
@@ -89,6 +97,12 @@ class Settings(BaseModel):
     object_storage_key_prefix: str = os.getenv("OBJECT_STORAGE_KEY_PREFIX", "genstudio").strip().strip("/")
     kkyi_catalog_base_url: str = os.getenv("KKYI_CATALOG_BASE_URL", "https://www.kkyi.com").strip()
     kkyi_catalog_bearer_token: str = os.getenv("KKYI_CATALOG_BEARER_TOKEN", "").strip()
+    admin_emails: list[str] = Field(
+        default_factory=lambda: _email_csv_env("GENSTUDIO_ADMIN_EMAILS", ["cage_ben@sina.com"])
+    )
+    admin_identifiers: list[str] = Field(
+        default_factory=lambda: _identity_csv_env("GENSTUDIO_ADMIN_IDENTIFIERS", [])
+    )
 
     @property
     def is_production(self) -> bool:

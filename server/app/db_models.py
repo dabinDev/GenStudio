@@ -205,6 +205,7 @@ class ModelGroup(Base):
     adapter: Mapped[str] = mapped_column(String(64))
     description: Mapped[str] = mapped_column(Text, default="")
     primary_sub_model_id: Mapped[str] = mapped_column(String(64), default="")
+    is_public: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 

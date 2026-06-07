@@ -17,6 +17,7 @@ import {
   fetchConversation,
   fetchConversations,
   fetchServerModels,
+  optimizePrompt,
   postProxy,
   postProxyWithSignal,
   setServerPrimaryModel,
@@ -49,6 +50,7 @@ import {
   catalogParameterSignature,
   catalogRequestKey,
   catalogVideoModeValue,
+  canEditModel,
   combinePrompt,
   conversationAssetsFromImageQueryResult,
   conversationAssetFromVideoQueryResult,
@@ -62,10 +64,13 @@ import {
   getMissingModelMessage,
   imageGenerationSummary,
   isGeneratedModelDisplayName,
+  isPrivateView,
+  loginRedirectForView,
   markConversationMessageFailed,
   mediaPreviewActionLabels,
   modelCatalogIconUrl,
   modelCatalogInputHint,
+  modelConnectionLabel,
   modelDisplayNameForModel,
   modelDisplayNameFromPrimary,
   modelParameterSourceLabel,
@@ -73,14 +78,19 @@ import {
   filterSettingsModels,
   pickPrimaryModel,
   prioritizeModelOptions,
+  publicShareTargetModels,
   renderMarkdownPreview,
+  resolveAuthRedirect,
   resolveModelName,
+  resolveSidebarFilter,
+  safeModelDescription,
   shouldResetConversationForModelSwitch,
   shouldContinuePollingTask,
   shortText,
   supportsCatalogParameter,
   testResultSummary,
   updateLocalConversationMessage,
+  updateLocalConversationTaskMessage,
   visibleConversationMessages,
   videoDurationOptionItems,
   videoGenerationSummary,
@@ -230,6 +240,7 @@ const textState = reactive({
   temperature: "0.8",
   maxTokens: "1200",
   extraJson: "",
+  optimizing: false,
   loading: false,
   error: "",
   result: null as TextResult | null,
@@ -245,6 +256,7 @@ const imageState = reactive({
   count: "1",
   extraJson: "",
   uploading: false,
+  optimizing: false,
   loading: false,
   error: "",
   references: [] as UploadedAsset[],
@@ -266,6 +278,7 @@ const videoState = reactive({
   extraJson: "",
   autoPoll: true,
   uploading: false,
+  optimizing: false,
   loading: false,
   querying: false,
   error: "",
@@ -338,9 +351,11 @@ const activeCapability = computed<Capability | null>(() => {
   return null;
 });
 
+const effectiveSidebarFilter = computed(() => resolveSidebarFilter(store.models.value, sidebarFilter.value));
+
 const filteredModels = computed(() =>
   store.models.value.filter((model) =>
-    sidebarFilter.value === "all" ? true : model.capability === sidebarFilter.value,
+    effectiveSidebarFilter.value === "all" ? true : model.capability === effectiveSidebarFilter.value,
   ),
 );
 
@@ -387,6 +402,14 @@ const filteredSettingsModels = computed(() =>
 
 const selectedVisibleSettingsModels = computed(() =>
   filteredSettingsModels.value.filter((model) => settingsState.selectedIds.includes(model.id)),
+);
+
+const publicShareTargets = computed(() =>
+  publicShareTargetModels(filteredSettingsModels.value, settingsState.selectedIds),
+);
+
+const selectedEditableSettingsModels = computed(() =>
+  selectedVisibleSettingsModels.value.filter((model) => canEditModel(model)),
 );
 
 const configuredCount = computed(() =>
@@ -521,15 +544,14 @@ onMounted(async () => {
   await initializeSession();
   syncProfileForm();
   syncInitialModels();
-  window.addEventListener("hashchange", () => {
-    view.value = getViewFromHash();
-    sidebarFilter.value = capabilityFilterForView(view.value);
-  });
+  handleHashChange();
+  window.addEventListener("hashchange", handleHashChange);
 });
 
 onUnmounted(() => {
   stopImagePolling();
   stopVideoPolling();
+  window.removeEventListener("hashchange", handleHashChange);
 });
 
 watch(
@@ -565,12 +587,43 @@ function getViewFromHash(): ViewName {
   return "images";
 }
 
+function setView(nextView: ViewName) {
+  view.value = nextView;
+  sidebarFilter.value = capabilityFilterForView(nextView);
+}
+
+function currentReturnView(): ViewName {
+  return view.value === "auth" || view.value === "auth-error" ? "images" : view.value;
+}
+
+function requireLoginForView(nextView: ViewName): boolean {
+  if (auth.state.user || !isPrivateView(nextView)) return true;
+  const redirectPath = loginRedirectForView(nextView);
+  window.location.hash = redirectPath;
+  setView("auth");
+  return false;
+}
+
+function requireLoginForAction(nextView: ViewName = currentReturnView()): boolean {
+  if (auth.state.user) return true;
+  const redirectPath = loginRedirectForView(nextView);
+  window.location.hash = redirectPath;
+  setView("auth");
+  return false;
+}
+
+function handleHashChange() {
+  const nextView = getViewFromHash();
+  if (!requireLoginForView(nextView)) return;
+  setView(nextView);
+}
+
 function navigate(nextView: ViewName) {
   closeComposerPopover();
   closeModelSelect();
+  if (!requireLoginForView(nextView)) return;
   window.location.hash = `/${nextView}`;
-  view.value = nextView;
-  sidebarFilter.value = capabilityFilterForView(nextView);
+  setView(nextView);
 }
 
 function authErrorMessage(): string {
@@ -803,6 +856,11 @@ function syncComposerParametersFromCatalog(resetToCatalogDefaults = false) {
 }
 
 async function chooseRowPrimaryModel(modelId: string, model: ModelDefinition) {
+  if (!canEditModel(model)) {
+    showToast("公共模型只有管理员可以修改。", "error");
+    closeModelSelect();
+    return;
+  }
   await setPrimaryModel(modelId, model, getSetting(model.id));
   closeModelSelect();
 }
@@ -841,6 +899,7 @@ function removeSeedanceReference(assetId: string) {
 }
 
 async function toggleHistoryDrawer() {
+  if (!requireLoginForAction(currentReturnView())) return;
   if (!conversationState.listOpen) {
     await refreshConversations();
   }
@@ -1029,8 +1088,8 @@ function simulateStreamingPreview(message?: ConversationMessage) {
 
 async function initializeSession() {
   await auth.loadCurrentUser();
+  await refreshServerModels();
   if (auth.state.user) {
-    await refreshServerModels();
     await refreshConversations();
   }
 }
@@ -1041,14 +1100,15 @@ async function refreshServerModels() {
 }
 
 async function refreshUserWorkspace() {
-  if (!auth.state.user) return;
   await refreshServerModels();
-  await refreshConversations();
+  if (auth.state.user) {
+    await refreshConversations();
+  }
   syncInitialModels();
 }
 
-function clearUserWorkspace() {
-  store.clearServerModels();
+async function clearUserWorkspace() {
+  await refreshServerModels();
   conversationState.conversations = [];
   conversationState.current = null;
   conversationState.streamingMessageId = "";
@@ -1061,7 +1121,7 @@ async function handleDevLogin() {
     await auth.loginForDevelopment();
     await refreshUserWorkspace();
     syncProfileForm();
-    navigate("images");
+    navigate(resolveAuthRedirect(window.location.hash) as ViewName);
   } catch (error) {
     authForm.error = error instanceof Error ? error.message : "开发登录失败。";
   }
@@ -1070,7 +1130,8 @@ async function handleDevLogin() {
 function handleAuthCodeLogin() {
   const code = devAuthCode.value.trim();
   if (!code) return;
-  window.location.href = `/auth/callback?code=${encodeURIComponent(code)}`;
+  const nextRoute = resolveAuthRedirect(window.location.hash);
+  window.location.href = `/auth/callback?code=${encodeURIComponent(code)}&next=${encodeURIComponent(`/#/${nextRoute}`)}`;
 }
 
 function syncProfileForm() {
@@ -1090,7 +1151,7 @@ async function handlePasswordLogin() {
     });
     await refreshUserWorkspace();
     syncProfileForm();
-    navigate("images");
+    navigate(resolveAuthRedirect(window.location.hash) as ViewName);
   } catch (error) {
     authForm.error = error instanceof Error ? error.message : "登录失败。";
   }
@@ -1109,7 +1170,7 @@ async function handleRegister() {
     authForm.registerPassword = "";
     await refreshUserWorkspace();
     syncProfileForm();
-    navigate("images");
+    navigate(resolveAuthRedirect(window.location.hash) as ViewName);
   } catch (error) {
     authForm.error = error instanceof Error ? error.message : "注册失败。";
   }
@@ -1118,8 +1179,8 @@ async function handleRegister() {
 async function handleLogout() {
   try {
     await auth.logoutCurrentUser();
-    clearUserWorkspace();
-    navigate("auth");
+    await clearUserWorkspace();
+    navigate("images");
   } catch (error) {
     profileForm.error = error instanceof Error ? error.message : "退出登录失败。";
   }
@@ -1245,6 +1306,104 @@ function getModelReadyError(model: ModelDefinition, setting: ModelSetting): stri
     return "当前模型尚未配置 baseURL 或 API Key。";
   }
   return "";
+}
+
+function promptTextForCapability(capability: Capability): string {
+  if (capability === "text") return textState.prompt;
+  if (capability === "image") return imageState.prompt;
+  return videoState.prompt;
+}
+
+function promptKeywordsForCapability(capability: Capability): string {
+  if (capability === "text") return textState.keywords;
+  if (capability === "image") return imageState.keywords;
+  return videoState.keywords;
+}
+
+function setPromptForCapability(capability: Capability, value: string) {
+  if (capability === "text") textState.prompt = value;
+  if (capability === "image") imageState.prompt = value;
+  if (capability === "video") videoState.prompt = value;
+}
+
+function setPromptOptimizeState(capability: Capability, loading: boolean, error = "") {
+  if (capability === "text") {
+    textState.optimizing = loading;
+    textState.error = error;
+  }
+  if (capability === "image") {
+    imageState.optimizing = loading;
+    imageState.error = error;
+  }
+  if (capability === "video") {
+    videoState.optimizing = loading;
+    videoState.error = error;
+  }
+}
+
+function promptOptimizeParameters(capability: Capability): Record<string, unknown> {
+  if (capability === "image") {
+    return {
+      size: imageUsesSizeControls.value ? imageState.size : "",
+      ratio: imageUsesRatioControls.value ? imageState.ratio : "",
+      resolution: imageUsesResolutionControls.value ? imageState.resolution : "",
+      quality: imageUsesQualityControls.value ? imageState.quality : "",
+      quantity: imageUsesQuantityControls.value ? imageState.count : "",
+    };
+  }
+  if (capability === "video") {
+    return {
+      mode: videoUsesModeControls.value ? videoModeParamValue(videoState.mode) : "",
+      aspect_ratio: videoUsesRatioControls.value ? videoState.aspectRatio : "",
+      resolution: videoUsesResolutionControls.value ? videoState.resolution : "",
+      duration: videoUsesDurationControls.value ? videoState.duration : "",
+      quantity: videoUsesQuantityControls.value ? videoState.count : "",
+      audio: videoUsesAudioControls.value ? videoState.audio : "",
+    };
+  }
+  return {
+    temperature: textState.temperature,
+    max_tokens: textState.maxTokens,
+  };
+}
+
+function promptOptimizeReferenceCount(capability: Capability): number {
+  if (capability === "image") return imageState.references.length;
+  if (capability === "video") {
+    if (supportsUnifiedAdapter(activeModel.value?.adapter)) return videoState.unifiedImages.length;
+    if (videoState.mode === "reference") return videoState.seedanceReferences.length;
+    if (videoState.mode === "first-frame") return videoState.seedanceFirst ? 1 : 0;
+    if (videoState.mode === "start-end") return [videoState.seedanceFirst, videoState.seedanceLast].filter(Boolean).length;
+  }
+  return 0;
+}
+
+async function handlePromptOptimize(capability: Capability) {
+  const model = activeModel.value;
+  const prompt = promptTextForCapability(capability).trim();
+  if (!prompt) {
+    setPromptOptimizeState(capability, false, "请先输入需要优化的提示词。");
+    return;
+  }
+  setPromptOptimizeState(capability, true, "");
+  try {
+    const result = await optimizePrompt({
+      capability,
+      prompt,
+      keywords: promptKeywordsForCapability(capability),
+      subModelId: model?.capability === "text" ? getPrimarySubModel(model)?.id || "" : "",
+      parameters: promptOptimizeParameters(capability),
+      referenceCount: promptOptimizeReferenceCount(capability),
+    });
+    if (result.prompt?.trim()) {
+      setPromptForCapability(capability, result.prompt.trim());
+      showToast("提示词已优化", "success");
+    }
+  } catch (error) {
+    setPromptOptimizeState(capability, false, error instanceof Error ? error.message : "提示词优化失败。");
+    return;
+  }
+  setPromptOptimizeState(capability, false, "");
 }
 
 async function handleTextSubmit() {
@@ -1485,10 +1644,32 @@ async function handleImageQuery(taskIdArg?: string, options: { fromPoll?: boolea
       setCurrentConversation(imageState.result.conversation);
     } else {
       const messageStatus = videoMessageStatusFromTaskStatus(imageState.result.status || "");
-      setCurrentConversation(appendLocalConversationMessages(conversationState.current, {
+      const assets = conversationAssetsFromImageQueryResult({
+        taskId,
+        status: imageState.result.status,
+        progress: imageState.result.progress,
+        images: imageState.result.images || [],
+      }).map((asset) => ({
+        id: createLocalId("local-asset"),
+        capability: "image" as Capability,
+        assetType: asset.assetType,
+        url: asset.url,
+        thumbnailUrl: asset.thumbnailUrl || "",
+        metadata: asset.metadata || {},
+        createdAt: new Date().toISOString(),
+      }));
+      const updatedConversation = updateLocalConversationTaskMessage(conversationState.current, taskId, {
+        content: messageStatus === "success" ? String(imageState.result.status || taskId) : taskId,
+        status: messageStatus,
+        errorMessage: messageStatus === "error" ? "图片任务失败，请检查模型后台或重新发送。" : "",
+        canRetry: messageStatus === "error",
+        assets,
+      });
+      setCurrentConversation(updatedConversation || appendLocalConversationMessages(conversationState.current, {
         capability: "image",
         titleSeed: taskId,
         modelGroupId: model.id,
+        subModelId: model.primarySubModelId || null,
         messages: [
           {
             role: "assistant",
@@ -1496,12 +1677,7 @@ async function handleImageQuery(taskIdArg?: string, options: { fromPoll?: boolea
             status: messageStatus,
             errorMessage: messageStatus === "error" ? "图片任务失败，请检查模型后台或重新发送。" : "",
             canRetry: messageStatus === "error",
-            assets: conversationAssetsFromImageQueryResult({
-              taskId,
-              status: imageState.result.status,
-              progress: imageState.result.progress,
-              images: imageState.result.images || [],
-            }),
+            assets,
           },
         ],
       }));
@@ -1784,10 +1960,36 @@ async function handleVideoQuery(taskIdArg?: string, options: { fromPoll?: boolea
       setCurrentConversation(videoState.taskResult.conversation);
     } else {
       const messageStatus = videoMessageStatusFromTaskStatus(videoState.taskResult.status || "");
-      setCurrentConversation(appendLocalConversationMessages(conversationState.current, {
+      const videoAsset = conversationAssetFromVideoQueryResult({
+        taskId,
+        status: videoState.taskResult.status,
+        progress: videoState.taskResult.progress,
+        videoUrl: videoState.taskResult.videoUrl,
+        thumbnailUrl: videoState.taskResult.thumbnailUrl,
+      });
+      const assets = videoAsset
+        ? [{
+            id: createLocalId("local-asset"),
+            capability: "video" as Capability,
+            assetType: videoAsset.assetType,
+            url: videoAsset.url,
+            thumbnailUrl: videoAsset.thumbnailUrl || "",
+            metadata: videoAsset.metadata || {},
+            createdAt: new Date().toISOString(),
+          }]
+        : [];
+      const updatedConversation = updateLocalConversationTaskMessage(conversationState.current, taskId, {
+        content: messageStatus === "success" ? String(videoState.taskResult.status || taskId) : taskId,
+        status: messageStatus,
+        errorMessage: messageStatus === "error" ? "视频任务失败，请检查模型后台或重新发送。" : "",
+        canRetry: messageStatus === "error",
+        assets,
+      });
+      setCurrentConversation(updatedConversation || appendLocalConversationMessages(conversationState.current, {
         capability: "video",
         titleSeed: taskId,
         modelGroupId: model.id,
+        subModelId: model.primarySubModelId || null,
         messages: [
           {
             role: "assistant",
@@ -1795,13 +1997,7 @@ async function handleVideoQuery(taskIdArg?: string, options: { fromPoll?: boolea
             status: messageStatus,
             errorMessage: messageStatus === "error" ? "视频任务失败，请检查模型后台或重新发送。" : "",
             canRetry: messageStatus === "error",
-            assets: [conversationAssetFromVideoQueryResult({
-              taskId,
-              status: videoState.taskResult.status,
-              progress: videoState.taskResult.progress,
-              videoUrl: videoState.taskResult.videoUrl,
-              thumbnailUrl: videoState.taskResult.thumbnailUrl,
-            })].filter((asset): asset is NonNullable<typeof asset> => Boolean(asset)),
+            assets,
           },
         ],
       }));
@@ -1958,6 +2154,10 @@ function modelIconUrl(model: ModelDefinition): string {
   return modelCatalogIconUrl(model);
 }
 
+function modelSafeDescription(model: ModelDefinition | null | undefined): string {
+  return safeModelDescription(model, "选择模型并输入需求开始调试。");
+}
+
 function hideBrokenModelIcon(event: Event) {
   const target = event.target;
   if (target instanceof HTMLImageElement) {
@@ -1969,8 +2169,7 @@ function hideBrokenModelIcon(event: Event) {
 function modelSummaryText(model: ModelDefinition): string {
   const setting = getSetting(model.id);
   const primaryModel = resolveModelName(model, setting);
-  const endpoint = setting.baseUrl || (model.serverManaged ? "数据库密钥" : "未配置地址");
-  return `${CAPABILITY_LABELS[model.capability]} · ${primaryModel || "尚未选择主模型"} · ${endpoint}`;
+  return `${CAPABILITY_LABELS[model.capability]} · ${primaryModel || "尚未选择主模型"} · ${modelConnectionLabel(model, setting)}`;
 }
 
 function testSummaryFor(result: TestRequestResult | null | undefined) {
@@ -1978,6 +2177,10 @@ function testSummaryFor(result: TestRequestResult | null | undefined) {
 }
 
 async function setPrimaryModel(modelId: string, model: ModelDefinition, setting: ModelSetting) {
+  if (!canEditModel(model)) {
+    settingsState.modelListState[model.id] = { ...createIdleState<AvailableModelsResult>(), error: "公共模型只有管理员可以修改。" };
+    return;
+  }
   if (model.serverManaged) {
     const target = model.subModels?.find((item) => item.modelName === modelId || item.id === modelId);
     if (!target) {
@@ -2023,6 +2226,10 @@ function openCreateDialog() {
 }
 
 function openEditDialog(model: ModelDefinition) {
+  if (!canEditModel(model)) {
+    showToast("公共模型只有管理员可以编辑。", "error");
+    return;
+  }
   closeModelSelect();
   settingsState.dialogMode = "edit";
   settingsState.draft = createDraftFromModel(model);
@@ -2116,6 +2323,11 @@ async function saveDialog() {
 }
 
 async function fetchModelList(model: ModelDefinition, setting: ModelSetting) {
+  if (!canEditModel(model)) {
+    settingsState.modelListState[model.id] = { ...createIdleState<AvailableModelsResult>(), error: "公共模型只有管理员可以同步模型列表。" };
+    showToast(settingsState.modelListState[model.id].error, "error");
+    return;
+  }
   if (model.serverManaged) {
     settingsState.modelListState[model.id] = { ...createIdleState<AvailableModelsResult>(), loading: true };
     try {
@@ -2213,13 +2425,18 @@ async function testModel(model: ModelDefinition, setting: ModelSetting) {
 }
 
 function toggleSelected(modelId: string, checked: boolean) {
+  const model = store.models.value.find((item) => item.id === modelId);
+  if (checked && model && !canEditModel(model)) {
+    showToast("公共模型不能加入批量编辑。", "info");
+    return;
+  }
   settingsState.selectedIds = checked
     ? Array.from(new Set([...settingsState.selectedIds, modelId]))
     : settingsState.selectedIds.filter((id) => id !== modelId);
 }
 
 function toggleAllSettings(checked: boolean) {
-  const visibleIds = filteredSettingsModels.value.map((model) => model.id);
+  const visibleIds = filteredSettingsModels.value.filter((model) => canEditModel(model)).map((model) => model.id);
   settingsState.selectedIds = checked
     ? Array.from(new Set([...settingsState.selectedIds, ...visibleIds]))
     : settingsState.selectedIds.filter((id) => !visibleIds.includes(id));
@@ -2236,8 +2453,45 @@ async function batchTest() {
   );
 }
 
+async function batchPublishPublic() {
+  if (!auth.state.user?.isAdmin) {
+    showToast("只有主管理员可以设置公用模型。", "error");
+    return;
+  }
+  const targets = publicShareTargets.value;
+  if (!targets.length) {
+    showToast("请选择可发布的私有服务端模型。", "info");
+    return;
+  }
+  for (const model of targets) {
+    settingsState.testState[model.id] = { ...createIdleState<TestRequestResult>(), loading: true };
+  }
+  let successCount = 0;
+  for (const model of targets) {
+    try {
+      await updateServerModel(model.id, { isPublic: true });
+      successCount += 1;
+      settingsState.testState[model.id] = { ...createIdleState<TestRequestResult>() };
+    } catch (error) {
+      settingsState.testState[model.id] = {
+        loading: false,
+        error: error instanceof Error ? error.message : "设置公用模型失败。",
+        result: null,
+      };
+    }
+  }
+  await refreshServerModels();
+  settingsState.selectedIds = settingsState.selectedIds.filter((id) => !targets.some((model) => model.id === id));
+  showToast(successCount ? `已设置 ${successCount} 个公用模型` : "没有模型被设置为公用", successCount ? "success" : "error");
+}
+
 async function removeModelFromWorkbench(modelId: string) {
   const model = store.models.value.find((item) => item.id === modelId);
+  if (model && !canEditModel(model)) {
+    settingsState.testState[modelId] = { ...createIdleState<TestRequestResult>(), error: "公共模型只有管理员可以删除。" };
+    showToast(settingsState.testState[modelId].error, "error");
+    return;
+  }
   if (model?.serverManaged) {
     settingsState.testState[modelId] = { ...createIdleState<TestRequestResult>(), loading: true };
     try {
@@ -2260,7 +2514,11 @@ async function removeModelFromWorkbench(modelId: string) {
 }
 
 async function batchDelete() {
-  const ids = selectedVisibleSettingsModels.value.map((model) => model.id);
+  const editableModels = selectedVisibleSettingsModels.value.filter((model) => canEditModel(model));
+  const ids = editableModels.map((model) => model.id);
+  if (ids.length !== selectedVisibleSettingsModels.value.length) {
+    showToast("公共模型已跳过，只有管理员可以删除。", "info");
+  }
   await Promise.allSettled(ids.map((modelId) => removeModelFromWorkbench(modelId)));
   settingsState.selectedIds = settingsState.selectedIds.filter((selectedId) => !ids.includes(selectedId));
 }
@@ -2270,9 +2528,11 @@ async function batchDelete() {
   <div class="shell">
     <aside class="sidebar">
       <div class="sidebar-logo">
-        <div class="logo-mark">G</div>
+        <div class="logo-mark">
+          <img src="/brand/cylon-studio-logo.png" alt="塞隆studio" />
+        </div>
         <div>
-          <strong>GenStudio</strong>
+          <strong>塞隆studio</strong>
           <span>多模型创作调试台</span>
         </div>
       </div>
@@ -2280,7 +2540,7 @@ async function batchDelete() {
       <div class="category-tabs">
         <div class="primary-selector">
           <button class="primary-item primary-item-active">大模型</button>
-          <button class="primary-item" @click="navigate(auth.state.user ? 'profile' : 'auth')">个人信息</button>
+          <button class="primary-item" @click="navigate('profile')">个人信息</button>
         </div>
         <div class="secondary-selector">
           <button
@@ -2291,7 +2551,7 @@ async function batchDelete() {
               { label: '视频', value: 'video' },
             ]"
             :key="item.value"
-            :class="['secondary-item', sidebarFilter === item.value ? 'secondary-item-active' : '']"
+            :class="['secondary-item', effectiveSidebarFilter === item.value ? 'secondary-item-active' : '']"
             @click="sidebarFilter = item.value as SidebarFilter"
           >
             {{ item.label }}
@@ -2305,7 +2565,7 @@ async function batchDelete() {
           v-for="model in filteredModels"
           :key="model.id"
           :data-model-id="model.id"
-          :class="['sidebar-model-item', model.id === activeModelIdForSidebar() ? 'sidebar-model-active' : '']"
+          :class="['sidebar-model-item', model.id === activeModelIdForSidebar() ? 'sidebar-model-active' : '', model.isPublic ? 'sidebar-model-public' : '']"
           @click="selectModel(model)"
         >
           <div :class="['model-avatar', `model-avatar-${model.capability}`, modelIconUrl(model) ? 'model-avatar-has-icon' : '']">
@@ -2318,6 +2578,7 @@ async function batchDelete() {
             <span :class="['parameter-source-chip', hasCatalogParameters(model) ? 'parameter-source-chip-exact' : 'parameter-source-chip-generic']">
               {{ modelParameterSourceLabel(model) }}
             </span>
+            <span v-if="model.isPublic" class="sidebar-public-tag">公共</span>
           </div>
           <span :class="['model-tag', `tag-${model.capability}`]">
             {{ CAPABILITY_LABELS[model.capability] }}
@@ -2346,7 +2607,7 @@ async function batchDelete() {
         <div class="workspace-topbar-actions">
           <span class="topbar-model-label">{{ currentModelLabel }}</span>
           <button class="topbar-icon-button" @click="navigate('settings')">设置</button>
-          <button class="topbar-icon-button" @click="navigate(auth.state.user ? 'profile' : 'auth')">个人</button>
+          <button class="topbar-icon-button" @click="navigate('profile')">个人</button>
         </div>
       </div>
 
@@ -2438,7 +2699,7 @@ async function batchDelete() {
                 <span>{{ activeModel ? modelDisplayName(activeModel) : "未选择模型" }}</span>
               </div>
               <h3>{{ activeModel ? modelDisplayName(activeModel) : "创作模型" }}</h3>
-              <p class="muted">{{ activeModel?.description || "选择模型并输入需求开始调试。" }}</p>
+              <p class="muted">{{ modelSafeDescription(activeModel) }}</p>
               <div class="canvas-hints">
                 <span v-if="view === 'images'">电商海报</span>
                 <span v-if="view === 'images'">电影感剧照</span>
@@ -2476,7 +2737,12 @@ async function batchDelete() {
           </div>
 
           <div v-if="view === 'text'" class="composer-surface">
-            <textarea v-model="textState.prompt" class="composer-input" :placeholder="textComposerPlaceholder" />
+            <div class="prompt-input-wrap">
+              <textarea v-model="textState.prompt" class="composer-input" :placeholder="textComposerPlaceholder" />
+              <button class="prompt-ai-button" :disabled="textState.loading || textState.optimizing || !textState.prompt.trim()" title="优化提示词" @click="handlePromptOptimize('text')">
+                {{ textState.optimizing ? "..." : "AI" }}
+              </button>
+            </div>
             <div class="composer-footer-bar">
               <div class="composer-quick-fields">
                 <label class="composer-keyword-compact"><span>关键词</span><input v-model="textState.keywords" placeholder="夏日果茶" /></label>
@@ -2499,7 +2765,12 @@ async function batchDelete() {
                 {{ imageState.uploading ? "上传中" : "+ 参考图" }}
                 <input hidden type="file" accept="image/png,image/jpeg,image/jpg,image/webp" multiple @change="handleImageUpload" />
               </label>
-              <textarea v-model="imageState.prompt" class="composer-input" :placeholder="imageComposerPlaceholder" />
+              <div class="prompt-input-wrap">
+                <textarea v-model="imageState.prompt" class="composer-input" :placeholder="imageComposerPlaceholder" />
+                <button class="prompt-ai-button" :disabled="imageState.loading || imageState.optimizing || !imageState.prompt.trim()" title="优化提示词" @click="handlePromptOptimize('image')">
+                  {{ imageState.optimizing ? "..." : "AI" }}
+                </button>
+              </div>
             </div>
             <div v-if="imageState.references.length" class="reference-strip">
               <article v-for="asset in imageState.references" :key="asset.id" class="reference-thumb">
@@ -2628,7 +2899,12 @@ async function batchDelete() {
                 <label class="button-secondary composer-attach-button">首帧<input hidden type="file" accept="image/png,image/jpeg,image/jpg,image/webp" @change="(event) => uploadVideoFiles(event, 'first')" /></label>
                 <label class="button-secondary composer-attach-button">尾帧<input hidden type="file" accept="image/png,image/jpeg,image/jpg,image/webp" @change="(event) => uploadVideoFiles(event, 'last')" /></label>
               </div>
-              <textarea v-model="videoState.prompt" class="composer-input" :placeholder="videoComposerPlaceholder" />
+              <div class="prompt-input-wrap">
+                <textarea v-model="videoState.prompt" class="composer-input" :placeholder="videoComposerPlaceholder" />
+                <button class="prompt-ai-button" :disabled="videoState.loading || videoState.optimizing || !videoState.prompt.trim()" title="优化提示词" @click="handlePromptOptimize('video')">
+                  {{ videoState.optimizing ? "..." : "AI" }}
+                </button>
+              </div>
             </div>
             <div v-if="videoState.unifiedImages.length || videoState.seedanceFirst || videoState.seedanceLast || videoState.seedanceReferences.length" class="reference-strip">
               <article v-for="asset in videoState.unifiedImages" :key="asset.id" class="reference-thumb">
@@ -2764,7 +3040,7 @@ async function batchDelete() {
         <section class="auth-panel">
           <div class="auth-copy">
             <p class="eyebrow">Account</p>
-            <h2>登录 GenStudio</h2>
+            <h2>登录 塞隆studio</h2>
             <p class="muted">账号、密钥、模型、子模型和创作记录都会按用户隔离保存。官网创意工坊跳转过来的 code 登录仍然保留。</p>
             <div class="auth-security-list">
               <span>HttpOnly 会话 cookie</span>
@@ -2836,7 +3112,7 @@ async function batchDelete() {
             <div v-else class="auth-code-block auth-official-only">
               <div>
                 <strong>Official SSO</strong>
-                <span>Open GenStudio from the official site. The callback URL is /auth/callback?code=xxx.</span>
+                <span>从官网进入塞隆studio，回调地址为 /auth/callback?code=xxx。</span>
               </div>
             </div>
           </div>
@@ -2956,7 +3232,7 @@ async function batchDelete() {
           <div>
             <p class="eyebrow">Model Settings</p>
             <h2>模型配置</h2>
-            <p class="muted">{{ auth.state.user ? "配置会保存到 GenStudio 数据库，密钥只由后端调用。" : "未登录时配置会缓存在当前浏览器，登录后可保存到数据库。" }}</p>
+            <p class="muted">{{ auth.state.user ? "配置会保存到塞隆studio数据库，密钥只由后端调用。" : "未登录时配置会缓存在当前浏览器，登录后可保存到数据库。" }}</p>
           </div>
           <div class="settings-hero-stats">
             <span class="badge">{{ store.models.value.length }} 个模型</span>
@@ -2972,8 +3248,16 @@ async function batchDelete() {
             </div>
             <div class="settings-bulk-actions">
               <span class="badge">已选 {{ selectedVisibleSettingsModels.length }} / {{ filteredSettingsModels.length }}</span>
+              <button
+                v-if="auth.state.user?.isAdmin"
+                class="button-secondary"
+                :disabled="!publicShareTargets.length"
+                @click="batchPublishPublic"
+              >
+                设为公用模型 {{ publicShareTargets.length ? publicShareTargets.length : "" }}
+              </button>
               <button class="button-secondary" :disabled="!selectedVisibleSettingsModels.length" @click="batchTest">批量测试</button>
-              <button class="button-danger" :disabled="!selectedVisibleSettingsModels.length" @click="batchDelete">批量删除</button>
+              <button class="button-danger" :disabled="!selectedEditableSettingsModels.length" @click="batchDelete">批量删除</button>
               <button @click="openCreateDialog">+ 添加模型</button>
             </div>
           </div>
@@ -3014,12 +3298,13 @@ async function batchDelete() {
               :class="[
                 'settings-model-row',
                 `settings-model-row-${model.capability}`,
+                model.isPublic ? 'settings-model-row-public' : '',
                 isModelSelectOpen(modelSelectKey('row', model.id)) ? 'settings-model-row-select-open' : '',
               ]"
               :data-model-id="model.id"
             >
               <label class="settings-check-cell">
-                <input type="checkbox" :checked="settingsState.selectedIds.includes(model.id)" @change="(event) => toggleSelected(model.id, (event.target as HTMLInputElement).checked)" />
+                <input type="checkbox" :disabled="!canEditModel(model)" :checked="settingsState.selectedIds.includes(model.id)" @change="(event) => toggleSelected(model.id, (event.target as HTMLInputElement).checked)" />
               </label>
               <div class="settings-model-main">
                 <div :class="['model-avatar', `model-avatar-${model.capability}`, modelIconUrl(model) ? 'model-avatar-has-icon' : '']">
@@ -3033,6 +3318,8 @@ async function batchDelete() {
                     <span :class="['parameter-source-chip', hasCatalogParameters(model) ? 'parameter-source-chip-exact' : 'parameter-source-chip-generic']">
                       {{ modelParameterSourceLabel(model) }}
                     </span>
+                    <span v-if="model.isPublic" class="parameter-source-chip parameter-source-chip-exact">公共模型</span>
+                    <span v-if="model.serverManaged && !canEditModel(model)" class="parameter-source-chip parameter-source-chip-generic">只读</span>
                     <span class="settings-model-hint">{{ modelCatalogInputHint(model, "暂无模型提示语") }}</span>
                   </div>
                 </div>
@@ -3049,9 +3336,10 @@ async function batchDelete() {
                   @keydown.escape.stop="closeModelSelect"
                 >
                   <span class="model-select-label">主模型</span>
-                  <button
+                <button
                     type="button"
                     class="model-select-trigger"
+                    :disabled="!canEditModel(model)"
                     :aria-expanded="isModelSelectOpen(modelSelectKey('row', model.id))"
                     @click.stop="(event) => toggleModelSelect(modelSelectKey('row', model.id), event)"
                   >
@@ -3098,10 +3386,10 @@ async function batchDelete() {
                 </span>
               </div>
               <div class="settings-row-actions">
-                <button class="button-secondary settings-action-button" @click="fetchModelList(model, getSetting(model.id))">获取模型</button>
+                <button class="button-secondary settings-action-button" :disabled="!canEditModel(model)" @click="fetchModelList(model, getSetting(model.id))">获取模型</button>
                 <button class="button-secondary settings-action-button" @click="testModel(model, getSetting(model.id))">测试</button>
-                <button class="button-secondary settings-action-button" @click="openEditDialog(model)">编辑</button>
-                <button class="button-danger settings-action-button" @click="removeModelFromWorkbench(model.id)">删除</button>
+                <button class="button-secondary settings-action-button" :disabled="!canEditModel(model)" @click="openEditDialog(model)">编辑</button>
+                <button class="button-danger settings-action-button" :disabled="!canEditModel(model)" @click="removeModelFromWorkbench(model.id)">删除</button>
               </div>
               <div v-if="settingsState.modelListState[model.id]?.error" class="settings-row-detail inline-message inline-danger">{{ settingsState.modelListState[model.id].error }}</div>
               <div v-if="settingsState.testState[model.id]?.error" class="settings-row-detail inline-message inline-danger">{{ settingsState.testState[model.id].error }}</div>

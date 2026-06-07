@@ -13,6 +13,7 @@ class UserOut(BaseModel):
     phone: str
     nickname: str
     avatarUrl: str
+    isAdmin: bool = False
 
 
 class DevLoginRequest(BaseModel):
@@ -169,6 +170,7 @@ class ModelCreate(BaseModel):
     primaryModelName: str
     availableModelNames: list[str] = Field(default_factory=list)
     catalogModelId: str | None = None
+    isPublic: bool = False
 
 
 class ModelUpdate(BaseModel):
@@ -182,6 +184,7 @@ class ModelUpdate(BaseModel):
     primaryModelName: str | None = None
     availableModelNames: list[str] | None = None
     catalogModelId: str | None = None
+    isPublic: bool | None = None
 
 
 class ModelOut(BaseModel):
@@ -195,6 +198,8 @@ class ModelOut(BaseModel):
     baseUrl: str
     primarySubModelId: str
     primaryModelName: str
+    isPublic: bool
+    canEdit: bool
     catalogModelId: str | None = None
     catalog: CatalogModelOut | None = None
     subModels: list[SubModelOut] = Field(default_factory=list)
@@ -215,6 +220,33 @@ class SyncModelsResult(BaseModel):
     models: list[str]
     durationMs: int
     raw: dict[str, Any]
+
+
+class PromptOptimizeRequest(BaseModel):
+    capability: str = "text"
+    prompt: str
+    keywords: str = ""
+    subModelId: str | None = None
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    referenceCount: int = 0
+
+    @field_validator("capability")
+    @classmethod
+    def normalize_capability(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"text", "image", "video"}:
+            raise ValueError("不支持的创作类型。")
+        return normalized
+
+    @field_validator("prompt", "keywords")
+    @classmethod
+    def trim_prompt_text(cls, value: str) -> str:
+        return value.strip()
+
+
+class PromptOptimizeResult(BaseModel):
+    prompt: str
+    raw: dict[str, Any] = Field(default_factory=dict)
 
 
 class CallLogOut(BaseModel):

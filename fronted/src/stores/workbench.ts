@@ -78,6 +78,8 @@ export function useWorkbenchStore() {
       description: item.description,
       builtin: false,
       serverManaged: true,
+      isPublic: item.isPublic,
+      canEdit: item.canEdit,
       primarySubModelId: item.primarySubModelId,
       catalogModelId: item.catalogModelId,
       catalog: item.catalog,
@@ -85,7 +87,7 @@ export function useWorkbenchStore() {
     }));
     items.forEach((item) => {
       state.modelSettings[item.id] = {
-        baseUrl: item.baseUrl,
+        baseUrl: item.canEdit ? item.baseUrl : "",
         apiKey: "",
         modelNameOverride: item.primaryModelName,
         availableModels: item.subModels.map((subModel) => subModel.modelName),

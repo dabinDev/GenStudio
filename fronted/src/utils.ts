@@ -45,6 +45,36 @@ export function filterModelOptions(options: string[], query: string): string[] {
   return options.filter((option) => option.toLowerCase().includes(normalizedQuery));
 }
 
+export function capabilityFilterForView(viewName: string): Capability | "all" {
+  if (viewName === "text") return "text";
+  if (viewName === "images") return "image";
+  if (viewName === "videos") return "video";
+  return "all";
+}
+
+export function filterSettingsModels(
+  models: ModelDefinition[],
+  capability: Capability | "all",
+  query: string,
+): ModelDefinition[] {
+  const normalizedQuery = query.trim().toLowerCase();
+  return models.filter((model) => {
+    if (capability !== "all" && model.capability !== capability) return false;
+    if (!normalizedQuery) return true;
+    const searchable = [
+      model.name,
+      model.vendor,
+      model.model,
+      model.description,
+      ...(model.subModels || []).flatMap((subModel) => [subModel.modelName, subModel.displayName]),
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return searchable.includes(normalizedQuery);
+  });
+}
+
 export function prioritizeModelOptions(options: string[], selectedModel: string): string[] {
   const selected = selectedModel.trim();
   if (!selected || !options.includes(selected)) return options;
@@ -57,7 +87,8 @@ export interface CatalogOptionItem {
   maxCount?: number | null;
 }
 
-export function getPrimarySubModel(model: ModelDefinition) {
+export function getPrimarySubModel(model: ModelDefinition | null | undefined) {
+  if (!model) return null;
   return (
     model.subModels?.find((item) => item.id === model.primarySubModelId) ||
     model.subModels?.find((item) => item.isPrimary) ||
@@ -75,6 +106,76 @@ export function modelCatalogParameters(model?: ModelDefinition | null): CatalogP
 
 export function hasCatalogParameters(model?: ModelDefinition | null): boolean {
   return modelCatalogParameters(model).length > 0;
+}
+
+export function modelCatalogInputHint(model: ModelDefinition | null | undefined, fallback: string): string {
+  if (!model) return fallback;
+  const subCatalogHint = getPrimarySubModel(model)?.catalog?.inputHint?.trim();
+  if (subCatalogHint) return subCatalogHint;
+  const modelCatalogHint = model.catalog?.inputHint?.trim();
+  return modelCatalogHint || fallback;
+}
+
+export function modelCatalogIconUrl(model: ModelDefinition | null | undefined): string {
+  if (!model) return "";
+  const inferred = inferModelIconUrl(model);
+  const primary = getPrimarySubModel(model);
+  const subCatalogIcon = primary?.catalog?.icon?.trim();
+  if (subCatalogIcon && !shouldPreferInferredIcon(subCatalogIcon)) return subCatalogIcon;
+  const modelCatalogIcon = model.catalog?.icon?.trim();
+  if (modelCatalogIcon && !shouldPreferInferredIcon(modelCatalogIcon)) return modelCatalogIcon;
+  return inferred || subCatalogIcon || modelCatalogIcon || "";
+}
+
+const LOBE_ICON_BASE_URL = "https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons";
+
+function lobeIcon(name: string): string {
+  return `${LOBE_ICON_BASE_URL}/${name}`;
+}
+
+function shouldPreferInferredIcon(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return (
+    normalized.includes("ai-apply-resource.kkidc.com") ||
+    normalized.includes("x-oss-") ||
+    normalized.endsWith("/grok-color.svg") ||
+    normalized.endsWith("/glm-color.svg") ||
+    normalized.endsWith("/veo-color.svg")
+  );
+}
+
+export function inferModelIconUrl(model: ModelDefinition | null | undefined): string {
+  if (!model) return "";
+  const primary = getPrimarySubModel(model);
+  const source = [
+    primary?.modelName,
+    primary?.displayName,
+    primary?.catalog?.modelName,
+    primary?.catalog?.displayName,
+    primary?.catalog?.icon,
+    model.catalog?.modelName,
+    model.catalog?.displayName,
+    model.catalog?.icon,
+    model.model,
+    model.name,
+    model.vendor,
+  ].filter(Boolean).join(" ").toLowerCase();
+  if (!source) return "";
+  if (source.includes("gemini") || source.includes("banana") || source.includes("veo")) return lobeIcon("Gemini-color.svg");
+  if (source.includes("openai") || source.includes("gpt") || source.includes("codex")) return lobeIcon("OpenAI.svg");
+  if (source.includes("doubao") || source.includes("seedance") || source.includes("seedream") || source.includes("seed2") || source.includes("kuaikuai")) return lobeIcon("Doubao-color.svg");
+  if (source.includes("qwen") || source.includes("wanxiang") || source.includes("qvq")) return lobeIcon("Qwen-color.svg");
+  if (source.includes("claude") || source.includes("anthropic")) return lobeIcon("Claude-color.svg");
+  if (source.includes("deepseek")) return lobeIcon("DeepSeek-color.svg");
+  if (source.includes("kimi")) return lobeIcon("Kimi-color.svg");
+  if (source.includes("minimax")) return lobeIcon("Minimax-color.svg");
+  if (source.includes("grok") || source.includes("xai")) return lobeIcon("XAI.svg");
+  if (source.includes("glm") || source.includes("zhipu")) return lobeIcon("Zhipu-color.svg");
+  return "";
+}
+
+export function modelParameterSourceLabel(model?: ModelDefinition | null): string {
+  return hasCatalogParameters(model) ? "精确参数" : "通用参数";
 }
 
 export function catalogParameterSignature(model?: ModelDefinition | null): string {
@@ -187,13 +288,22 @@ export function videoModeUploadLimit(model: ModelDefinition | null | undefined, 
   return catalogOptionMaxCount(model, "video_mode", videoModeParamValue(mode), fallback) || fallback;
 }
 
+export function isVeoVideoModel(model: ModelDefinition | null | undefined): boolean {
+  const names = [
+    model?.adapter || "",
+    model?.model || "",
+    getPrimarySubModel(model)?.modelName || "",
+  ];
+  return names.some((value) => value.toLowerCase().includes("veo"));
+}
+
 export function videoDurationFallbackOptions(adapter?: Adapter): string[] {
   return adapter === "video-unified-veo" ? ["4", "5", "8"] : ["4", "5", "8", "10", "12", "15"];
 }
 
 export function videoDurationOptionItems(model: ModelDefinition | null | undefined): CatalogOptionItem[] {
   const options = catalogOptionItems(model, "duration", videoDurationFallbackOptions(model?.adapter));
-  if (model?.adapter !== "video-unified-veo") return options;
+  if (!isVeoVideoModel(model)) return options;
   return options.filter((item) => {
     const duration = Number(item.value);
     return Number.isFinite(duration) ? duration <= 8 : true;

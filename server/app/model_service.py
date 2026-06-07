@@ -107,6 +107,13 @@ def backfill_catalog_links(db: Session, models: list[ModelGroup]) -> bool:
     return changed
 
 
+def backfill_all_catalog_links(db: Session) -> int:
+    models = db.query(ModelGroup).options(*catalog_loader_options()).all()
+    if not backfill_catalog_links(db, models):
+        return 0
+    return len(models)
+
+
 def create_model_group(db: Session, user: User, payload: ModelCreate) -> ModelGroup:
     catalog_model = get_catalog_model_by_external_id(db, payload.catalogModelId)
     api_key = ApiKey(

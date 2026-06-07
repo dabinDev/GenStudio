@@ -42,6 +42,7 @@ import {
   appendLocalConversationMessages,
   buildImageGenerationRequestBody,
   buildVideoMediaFields,
+  capabilityFilterForView,
   catalogDefaultValue,
   catalogMaxCount,
   catalogOptionItems,
@@ -61,9 +62,13 @@ import {
   isGeneratedModelDisplayName,
   markConversationMessageFailed,
   mediaPreviewActionLabels,
+  modelCatalogIconUrl,
+  modelCatalogInputHint,
   modelDisplayNameForModel,
   modelDisplayNameFromPrimary,
+  modelParameterSourceLabel,
   filterModelOptions,
+  filterSettingsModels,
   pickPrimaryModel,
   prioritizeModelOptions,
   renderMarkdownPreview,
@@ -180,7 +185,7 @@ const UNIFIED_ADAPTERS: Adapter[] = [
 const store = useWorkbenchStore();
 const auth = useAuthStore();
 const view = ref<ViewName>(getViewFromHash());
-const sidebarFilter = ref<SidebarFilter>("all");
+const sidebarFilter = ref<SidebarFilter>(capabilityFilterForView(view.value));
 const showDevAuth = shouldShowDevAuth();
 const devAuthCode = ref("dev:alice");
 const authMode = ref<"login" | "register">("login");
@@ -267,6 +272,8 @@ const videoState = reactive({
 
 const settingsState = reactive({
   selectedIds: [] as string[],
+  activeCapability: "all" as Capability | "all",
+  searchQuery: "",
   dialogOpen: false,
   dialogMode: "create" as DialogMode,
   draft: createEmptyDraft(),
@@ -349,8 +356,26 @@ const activeSetting = computed(() =>
   activeModel.value ? getSetting(activeModel.value.id) : undefined,
 );
 
-const selectedSettingsModels = computed(() =>
-  store.models.value.filter((model) => settingsState.selectedIds.includes(model.id)),
+const settingsCapabilityTabs: Array<{ value: Capability | "all"; label: string }> = [
+  { value: "text", label: "文案创作" },
+  { value: "image", label: "图片创作" },
+  { value: "video", label: "视频创作" },
+  { value: "all", label: "全部" },
+];
+
+const settingsCapabilityCounts = computed<Record<Capability | "all", number>>(() => ({
+  all: store.models.value.length,
+  text: store.models.value.filter((model) => model.capability === "text").length,
+  image: store.models.value.filter((model) => model.capability === "image").length,
+  video: store.models.value.filter((model) => model.capability === "video").length,
+}));
+
+const filteredSettingsModels = computed(() =>
+  filterSettingsModels(store.models.value, settingsState.activeCapability, settingsState.searchQuery),
+);
+
+const selectedVisibleSettingsModels = computed(() =>
+  filteredSettingsModels.value.filter((model) => settingsState.selectedIds.includes(model.id)),
 );
 
 const configuredCount = computed(() =>
@@ -361,13 +386,15 @@ const configuredCount = computed(() =>
 );
 
 const allSettingsSelected = computed(
-  () => store.models.value.length > 0 && settingsState.selectedIds.length === store.models.value.length,
+  () =>
+    filteredSettingsModels.value.length > 0 &&
+    filteredSettingsModels.value.every((model) => settingsState.selectedIds.includes(model.id)),
 );
 
 const partialSettingsSelected = computed(
   () =>
-    settingsState.selectedIds.length > 0 &&
-    settingsState.selectedIds.length < store.models.value.length,
+    selectedVisibleSettingsModels.value.length > 0 &&
+    selectedVisibleSettingsModels.value.length < filteredSettingsModels.value.length,
 );
 
 const visibleConversations = computed(() => {
@@ -383,6 +410,18 @@ const currentModelLabel = computed(() => {
   if (!model || !setting) return "未选择模型";
   return `${modelDisplayName(model)} / ${resolveModelName(model, setting)}`;
 });
+
+const activeModelHasCatalogParameters = computed(() => hasCatalogParameters(activeModel.value));
+const activeModelParameterSourceLabel = computed(() => modelParameterSourceLabel(activeModel.value));
+const textComposerPlaceholder = computed(() =>
+  modelCatalogInputHint(activeModel.value, "输入你想生成的文案、脚本、提示词或结构化内容..."),
+);
+const imageComposerPlaceholder = computed(() =>
+  modelCatalogInputHint(activeModel.value, `描述你想要生成的图片内容，支持上传参考图片进行图生图，最多${imageReferenceLimit.value}张`),
+);
+const videoComposerPlaceholder = computed(() =>
+  modelCatalogInputHint(activeModel.value, "描述主体动作、镜头运动、时长、风格和节奏..."),
+);
 
 const modelWizardProgress = computed(() => getModelWizardProgress(settingsState.draft));
 const modelWizardStep = computed(() => getModelWizardStep(settingsState.draft));
@@ -473,6 +512,7 @@ onMounted(async () => {
   syncInitialModels();
   window.addEventListener("hashchange", () => {
     view.value = getViewFromHash();
+    sidebarFilter.value = capabilityFilterForView(view.value);
   });
 });
 
@@ -514,6 +554,7 @@ function navigate(nextView: ViewName) {
   closeModelSelect();
   window.location.hash = `/${nextView}`;
   view.value = nextView;
+  sidebarFilter.value = capabilityFilterForView(nextView);
 }
 
 function authErrorMessage(): string {
@@ -1753,6 +1794,18 @@ function modelDisplayName(model: ModelDefinition): string {
   return modelDisplayNameForModel(model, getSetting(model.id));
 }
 
+function modelIconUrl(model: ModelDefinition): string {
+  return modelCatalogIconUrl(model);
+}
+
+function hideBrokenModelIcon(event: Event) {
+  const target = event.target;
+  if (target instanceof HTMLImageElement) {
+    target.style.display = "none";
+    target.parentElement?.classList.add("model-avatar-icon-failed");
+  }
+}
+
 function modelSummaryText(model: ModelDefinition): string {
   const setting = getSetting(model.id);
   const primaryModel = resolveModelName(model, setting);
@@ -2006,12 +2059,15 @@ function toggleSelected(modelId: string, checked: boolean) {
 }
 
 function toggleAllSettings(checked: boolean) {
-  settingsState.selectedIds = checked ? store.models.value.map((model) => model.id) : [];
+  const visibleIds = filteredSettingsModels.value.map((model) => model.id);
+  settingsState.selectedIds = checked
+    ? Array.from(new Set([...settingsState.selectedIds, ...visibleIds]))
+    : settingsState.selectedIds.filter((id) => !visibleIds.includes(id));
 }
 
 async function batchTest() {
   await Promise.allSettled(
-    selectedSettingsModels.value
+    selectedVisibleSettingsModels.value
       .filter((model) => {
         const setting = getSetting(model.id);
         return isModelConfigured(model, setting);
@@ -2044,8 +2100,9 @@ async function removeModelFromWorkbench(modelId: string) {
 }
 
 async function batchDelete() {
-  await Promise.allSettled(selectedSettingsModels.value.map((model) => removeModelFromWorkbench(model.id)));
-  settingsState.selectedIds = [];
+  const ids = selectedVisibleSettingsModels.value.map((model) => model.id);
+  await Promise.allSettled(ids.map((modelId) => removeModelFromWorkbench(modelId)));
+  settingsState.selectedIds = settingsState.selectedIds.filter((selectedId) => !ids.includes(selectedId));
 }
 </script>
 
@@ -2091,12 +2148,16 @@ async function batchDelete() {
           :class="['sidebar-model-item', model.id === activeModelIdForSidebar() ? 'sidebar-model-active' : '']"
           @click="selectModel(model)"
         >
-          <div :class="['model-avatar', `model-avatar-${model.capability}`]">
-            {{ model.capability === "text" ? "T" : model.capability === "image" ? "I" : "V" }}
+          <div :class="['model-avatar', `model-avatar-${model.capability}`, modelIconUrl(model) ? 'model-avatar-has-icon' : '']">
+            <img v-if="modelIconUrl(model)" :src="modelIconUrl(model)" :alt="modelDisplayName(model)" loading="lazy" @error="hideBrokenModelIcon" />
+            <span>{{ model.capability === "text" ? "T" : model.capability === "image" ? "I" : "V" }}</span>
           </div>
           <div class="model-info">
             <strong>{{ modelDisplayName(model) }}</strong>
             <span>{{ modelSummaryText(model) }}</span>
+            <span :class="['parameter-source-chip', hasCatalogParameters(model) ? 'parameter-source-chip-exact' : 'parameter-source-chip-generic']">
+              {{ modelParameterSourceLabel(model) }}
+            </span>
           </div>
           <span :class="['model-tag', `tag-${model.capability}`]">
             {{ CAPABILITY_LABELS[model.capability] }}
@@ -2211,6 +2272,9 @@ async function batchDelete() {
               </div>
               <div class="empty-canvas-top">
                 <span class="badge badge-accent">{{ activeCapability ? CAPABILITY_LABELS[activeCapability] : "创作" }}</span>
+                <span :class="['parameter-source-chip', activeModelHasCatalogParameters ? 'parameter-source-chip-exact' : 'parameter-source-chip-generic']">
+                  {{ activeModelParameterSourceLabel }}
+                </span>
                 <span>{{ activeModel ? modelDisplayName(activeModel) : "未选择模型" }}</span>
               </div>
               <h3>{{ activeModel ? modelDisplayName(activeModel) : "创作模型" }}</h3>
@@ -2230,7 +2294,12 @@ async function batchDelete() {
         <div class="composer-card">
           <div class="composer-topline">
             <button class="gameplay-btn">玩法说明</button>
-            <span>{{ activeModel && activeSetting && isModelConfigured(activeModel, activeSetting) ? "模型已就绪" : "模型待配置" }}</span>
+            <div class="composer-status-stack">
+              <span :class="['parameter-source-chip', activeModelHasCatalogParameters ? 'parameter-source-chip-exact' : 'parameter-source-chip-generic']">
+                {{ activeModelParameterSourceLabel }}
+              </span>
+              <span>{{ activeModel && activeSetting && isModelConfigured(activeModel, activeSetting) ? "模型已就绪" : "模型待配置" }}</span>
+            </div>
           </div>
 
           <div class="composer-toolbar">
@@ -2247,7 +2316,7 @@ async function batchDelete() {
           </div>
 
           <div v-if="view === 'text'" class="composer-surface">
-            <textarea v-model="textState.prompt" class="composer-input" placeholder="输入你想生成的文案、脚本、提示词或结构化内容..." />
+            <textarea v-model="textState.prompt" class="composer-input" :placeholder="textComposerPlaceholder" />
             <div class="composer-footer-bar">
               <div class="composer-quick-fields">
                 <label class="composer-keyword-compact"><span>关键词</span><input v-model="textState.keywords" placeholder="夏日果茶" /></label>
@@ -2270,7 +2339,7 @@ async function batchDelete() {
                 {{ imageState.uploading ? "上传中" : "+ 参考图" }}
                 <input hidden type="file" accept="image/png,image/jpeg,image/jpg,image/webp" multiple @change="handleImageUpload" />
               </label>
-              <textarea v-model="imageState.prompt" class="composer-input" :placeholder="`描述你想要生成的图片内容，支持上传参考图片进行图生图，最多${imageReferenceLimit}张`" />
+              <textarea v-model="imageState.prompt" class="composer-input" :placeholder="imageComposerPlaceholder" />
             </div>
             <div v-if="imageState.references.length" class="reference-strip">
               <article v-for="asset in imageState.references" :key="asset.id" class="reference-thumb">
@@ -2398,7 +2467,7 @@ async function batchDelete() {
                 <label class="button-secondary composer-attach-button">首帧<input hidden type="file" accept="image/png,image/jpeg,image/jpg,image/webp" @change="(event) => uploadVideoFiles(event, 'first')" /></label>
                 <label class="button-secondary composer-attach-button">尾帧<input hidden type="file" accept="image/png,image/jpeg,image/jpg,image/webp" @change="(event) => uploadVideoFiles(event, 'last')" /></label>
               </div>
-              <textarea v-model="videoState.prompt" class="composer-input" placeholder="描述主体动作、镜头运动、时长、风格和节奏..." />
+              <textarea v-model="videoState.prompt" class="composer-input" :placeholder="videoComposerPlaceholder" />
             </div>
             <div v-if="videoState.unifiedImages.length || videoState.seedanceFirst || videoState.seedanceLast || videoState.seedanceReferences.length" class="reference-strip">
               <article v-for="asset in videoState.unifiedImages" :key="asset.id" class="reference-thumb">
@@ -2741,11 +2810,31 @@ async function batchDelete() {
               <span>每个模型都绑定当前用户自己的密钥、主模型和测试状态。</span>
             </div>
             <div class="settings-bulk-actions">
-              <span class="badge">已选 {{ settingsState.selectedIds.length }} / {{ store.models.value.length }}</span>
-              <button class="button-secondary" :disabled="!settingsState.selectedIds.length" @click="batchTest">批量测试</button>
-              <button class="button-danger" :disabled="!settingsState.selectedIds.length" @click="batchDelete">批量删除</button>
+              <span class="badge">已选 {{ selectedVisibleSettingsModels.length }} / {{ filteredSettingsModels.length }}</span>
+              <button class="button-secondary" :disabled="!selectedVisibleSettingsModels.length" @click="batchTest">批量测试</button>
+              <button class="button-danger" :disabled="!selectedVisibleSettingsModels.length" @click="batchDelete">批量删除</button>
               <button @click="openCreateDialog">+ 添加模型</button>
             </div>
+          </div>
+
+          <div class="settings-filter-bar">
+            <div class="settings-filter-tabs" role="tablist" aria-label="模型分组">
+              <button
+                v-for="tab in settingsCapabilityTabs"
+                :key="tab.value"
+                type="button"
+                :class="['settings-filter-tab', settingsState.activeCapability === tab.value ? 'settings-filter-tab-active' : '']"
+                @click="settingsState.activeCapability = tab.value"
+              >
+                <span>{{ tab.label }}</span>
+                <small>{{ settingsCapabilityCounts[tab.value] }}</small>
+              </button>
+            </div>
+            <label class="settings-search-box">
+              <span>搜索</span>
+              <input v-model="settingsState.searchQuery" placeholder="名称、主模型、子模型" />
+              <button v-if="settingsState.searchQuery" type="button" class="settings-search-clear" @click="settingsState.searchQuery = ''">清除</button>
+            </label>
           </div>
 
           <div class="settings-model-board">
@@ -2759,7 +2848,7 @@ async function batchDelete() {
               <span>操作</span>
             </div>
             <article
-              v-for="model in store.models.value"
+              v-for="model in filteredSettingsModels"
               :key="model.id"
               :class="[
                 'settings-model-row',
@@ -2772,10 +2861,19 @@ async function batchDelete() {
                 <input type="checkbox" :checked="settingsState.selectedIds.includes(model.id)" @change="(event) => toggleSelected(model.id, (event.target as HTMLInputElement).checked)" />
               </label>
               <div class="settings-model-main">
-                <div :class="['model-avatar', `model-avatar-${model.capability}`]">{{ model.capability === "text" ? "T" : model.capability === "image" ? "I" : "V" }}</div>
+                <div :class="['model-avatar', `model-avatar-${model.capability}`, modelIconUrl(model) ? 'model-avatar-has-icon' : '']">
+                  <img v-if="modelIconUrl(model)" :src="modelIconUrl(model)" :alt="modelDisplayName(model)" loading="lazy" @error="hideBrokenModelIcon" />
+                  <span>{{ model.capability === "text" ? "T" : model.capability === "image" ? "I" : "V" }}</span>
+                </div>
                 <div>
                   <strong>{{ modelDisplayName(model) }}</strong>
                   <span>{{ modelSummaryText(model) }}</span>
+                  <div class="settings-model-meta-row">
+                    <span :class="['parameter-source-chip', hasCatalogParameters(model) ? 'parameter-source-chip-exact' : 'parameter-source-chip-generic']">
+                      {{ modelParameterSourceLabel(model) }}
+                    </span>
+                    <span class="settings-model-hint">{{ modelCatalogInputHint(model, "暂无模型提示语") }}</span>
+                  </div>
                 </div>
               </div>
               <div class="settings-primary-model">
@@ -2863,6 +2961,11 @@ async function batchDelete() {
               <strong>还没有模型配置</strong>
               <span>添加一个密钥，先获取模型列表，再选择主模型保存。</span>
               <button @click="openCreateDialog">添加模型</button>
+            </div>
+            <div v-else-if="!filteredSettingsModels.length" class="settings-empty-state">
+              <strong>没有匹配的模型</strong>
+              <span>换一个分组或关键词再试试。</span>
+              <button class="button-secondary" @click="settingsState.searchQuery = ''; settingsState.activeCapability = 'all'">查看全部</button>
             </div>
           </div>
         </section>

@@ -14,6 +14,8 @@ import {
   getMissingModelMessage,
   imageGenerationSummary,
   mediaPreviewActionLabels,
+  filterSettingsModels,
+  capabilityFilterForView,
   pickPrimaryModel,
   filterModelOptions,
   catalogDefaultValue,
@@ -24,8 +26,11 @@ import {
   hasCatalogParameters,
   hasCatalogParameter,
   prioritizeModelOptions,
+  modelCatalogInputHint,
+  modelCatalogIconUrl,
   modelDisplayNameFromPrimary,
   modelDisplayNameForModel,
+  modelParameterSourceLabel,
   renderMarkdownPreview,
   resolveModelName,
   shouldResetConversationForModelSwitch,
@@ -89,6 +94,86 @@ describe("model selection helpers", () => {
     expect(filterModelOptions(options, "")).toEqual(options);
     expect(filterModelOptions(options, "GPT")).toEqual(["gpt-5.5", "gpt-image-2"]);
     expect(filterModelOptions(options, "seed")).toEqual(["doubao-seedance-2-0"]);
+  });
+
+  it("maps creation pages to the matching sidebar model capability", () => {
+    expect(capabilityFilterForView("text")).toBe("text");
+    expect(capabilityFilterForView("images")).toBe("image");
+    expect(capabilityFilterForView("videos")).toBe("video");
+    expect(capabilityFilterForView("settings")).toBe("all");
+  });
+
+  it("keeps settings pages unfiltered by default so saved KK models remain visible", () => {
+    expect(capabilityFilterForView("settings")).toBe("all");
+    expect(capabilityFilterForView("profile")).toBe("all");
+  });
+
+  it("filters settings models by capability and search text", () => {
+    const models: ModelDefinition[] = [
+      {
+        ...textModel,
+        id: "kk-claude",
+        name: "KK Claude",
+        vendor: "KK",
+        capability: "text",
+        model: "claude-sonnet-4-6",
+        subModels: [
+          {
+            id: "sub-claude",
+            modelName: "claude-sonnet-4-6",
+            displayName: "Claude Sonnet",
+            capability: "text",
+            adapter: "text-chat",
+            isPrimary: true,
+            status: "active",
+          },
+        ],
+      },
+      {
+        ...textModel,
+        id: "kk-image",
+        name: "KK Grok Image",
+        vendor: "KK",
+        capability: "image",
+        adapter: "image-openai",
+        model: "grok-imagine-image-pro",
+      },
+      {
+        ...textModel,
+        id: "kk-video",
+        name: "KK Seedance",
+        vendor: "KK",
+        capability: "video",
+        adapter: "video-unified-generic",
+        model: "kuaikuai-2-flash-pro",
+        subModels: [
+          {
+            id: "sub-seed",
+            modelName: "seed-2",
+            displayName: "Seed 2",
+            capability: "video",
+            adapter: "video-unified-generic",
+            isPrimary: false,
+            status: "active",
+          },
+          {
+            id: "sub-kuaikuai",
+            modelName: "kuaikuai-2-flash-pro",
+            displayName: "Kuaikuai 2 Flash Pro",
+            capability: "video",
+            adapter: "video-unified-generic",
+            isPrimary: true,
+            status: "active",
+          },
+        ],
+      },
+    ];
+
+    expect(filterSettingsModels(models, "text", "").map((item) => item.id)).toEqual(["kk-claude"]);
+    expect(filterSettingsModels(models, "all", "image").map((item) => item.id)).toEqual(["kk-image"]);
+    expect(filterSettingsModels(models, "video", "seed-2").map((item) => item.id)).toEqual(["kk-video"]);
+    expect(filterSettingsModels(models, "image", "claude")).toEqual([]);
+    expect(filterSettingsModels(models, "all", "").map((item) => item.id)).toEqual(["kk-claude", "kk-image", "kk-video"]);
   });
 
   it("pins the selected model at the top without dropping other options", () => {
@@ -258,6 +343,191 @@ describe("model selection helpers", () => {
         } : null,
       })),
     }));
+  });
+
+  it("labels exact catalog models and uses their input hint in composers", () => {
+    const catalogModel: ModelDefinition = {
+      ...textModel,
+      id: "hinted-video-model",
+      capability: "video",
+      adapter: "video-unified-generic",
+      primarySubModelId: "sub-video",
+      subModels: [
+        {
+          id: "sub-video",
+          modelName: "kuaikuai-2-flash-pro",
+          displayName: "Kuaikuai Video",
+          capability: "video",
+          adapter: "video-unified-generic",
+          isPrimary: true,
+          status: "active",
+          catalog: {
+            id: "10028",
+            displayName: "Kuaikuai Video",
+            modelName: "kuaikuai-2-flash-pro",
+            modelType: 3,
+            capability: "video",
+            icon: "",
+            description: "",
+            inputHint: "Describe camera movement, subject action, and ending frame.",
+            successRate: "",
+            source: "kkyi",
+            channelGroups: [],
+            parameters: [
+              {
+                id: "duration",
+                displayName: "Duration",
+                paramKey: "duration",
+                description: "",
+                widgetType: 3,
+                isRequired: true,
+                defaultValue: "5",
+                functionTag: "",
+                maxCount: null,
+                sortOrder: 1,
+                options: [
+                  { id: "duration-5", optionName: "5s", optionValue: "5", description: "", maxCount: null, isDefault: true, sortOrder: 1, priceFactor: "1" },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+      builtin: false,
+    };
+
+    expect(modelParameterSourceLabel(catalogModel)).toBe("精确参数");
+    expect(modelCatalogInputHint(catalogModel, "Fallback prompt")).toBe("Describe camera movement, subject action, and ending frame.");
+    expect(modelParameterSourceLabel({ ...catalogModel, subModels: [] })).toBe("通用参数");
+    expect(modelCatalogInputHint({ ...catalogModel, subModels: [] }, "Fallback prompt")).toBe("Fallback prompt");
+  });
+
+  it("uses the selected sub-model catalog icon when available", () => {
+    const iconModel: ModelDefinition = {
+      ...textModel,
+      id: "gemini-model",
+      primarySubModelId: "sub-gemini",
+      subModels: [
+        {
+          id: "sub-gemini",
+          modelName: "gemini-3.1-pro-preview",
+          displayName: "Gemini",
+          capability: "text",
+          adapter: "text-chat",
+          isPrimary: true,
+          status: "active",
+          catalog: {
+            id: "10025",
+            displayName: "Gemini",
+            modelName: "gemini-3.1-pro-preview",
+            modelType: 1,
+            capability: "text",
+            icon: "https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/Gemini-color.svg",
+            description: "",
+            inputHint: "",
+            successRate: "",
+            source: "kkyi",
+            channelGroups: [],
+            parameters: [],
+          },
+        },
+      ],
+      catalog: {
+        id: "10024",
+        displayName: "OpenAI",
+        modelName: "gpt-5.4",
+        modelType: 1,
+        capability: "text",
+        icon: "https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/OpenAI.svg",
+        description: "",
+        inputHint: "",
+        successRate: "",
+        source: "kkyi",
+        channelGroups: [],
+        parameters: [],
+      },
+    };
+
+    expect(modelCatalogIconUrl(iconModel)).toBe("https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/Gemini-color.svg");
+    expect(modelCatalogIconUrl({ ...iconModel, subModels: [] })).toBe("https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/OpenAI.svg");
+    expect(modelCatalogIconUrl(textModel)).toBe("https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/OpenAI.svg");
+  });
+
+  it("uses stable inferred icons instead of expired catalog OSS URLs", () => {
+    const staleCatalogModel: ModelDefinition = {
+      ...textModel,
+      id: "kk-seed-video",
+      vendor: "KK",
+      capability: "video",
+      adapter: "video-unified-generic",
+      model: "kuaikuai-2-flash-pro",
+      primarySubModelId: "sub-seed",
+      subModels: [
+        {
+          id: "sub-seed",
+          modelName: "kuaikuai-2-flash-pro",
+          displayName: "Seed2.0-Fast",
+          capability: "video",
+          adapter: "video-unified-generic",
+          isPrimary: true,
+          status: "active",
+          catalog: {
+            id: "10028",
+            displayName: "Seed2.0-Fast",
+            modelName: "kuaikuai-2-flash-pro",
+            modelType: 3,
+            capability: "video",
+            icon: "https://ai-apply-resource.kkidc.com/uploads/seed.png?x-oss-credential=expired",
+            description: "",
+            inputHint: "",
+            successRate: "",
+            source: "kkyi",
+            channelGroups: [],
+            parameters: [],
+          },
+        },
+      ],
+      builtin: false,
+    };
+
+    expect(modelCatalogIconUrl(staleCatalogModel)).toBe("https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/Doubao-color.svg");
+  });
+
+  it("uses inferred icons instead of known missing lobe icon names", () => {
+    const oldGrokCatalogModel: ModelDefinition = {
+      ...textModel,
+      id: "kk-grok-image",
+      vendor: "KK",
+      capability: "image",
+      adapter: "image-openai",
+      model: "grok-image-2",
+      catalog: {
+        id: "10036",
+        displayName: "Grok Image",
+        modelName: "grok-image-2",
+        modelType: 2,
+        capability: "image",
+        icon: "https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/Grok-color.svg",
+        description: "",
+        inputHint: "",
+        successRate: "",
+        source: "kkyi",
+        channelGroups: [],
+        parameters: [],
+      },
+      builtin: false,
+    };
+
+    expect(modelCatalogIconUrl(oldGrokCatalogModel)).toBe("https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/XAI.svg");
+  });
+
+  it("infers brand icons for uncataloged KK models from model names", () => {
+    expect(modelCatalogIconUrl({ ...textModel, id: "kk-gemini", vendor: "KK", model: "gemini-veo-3.1-generate-preview-8s" })).toContain("Gemini-color.svg");
+    expect(modelCatalogIconUrl({ ...textModel, id: "kk-claude", vendor: "KK", model: "claude-sonnet-4-6" })).toContain("Claude-color.svg");
+    expect(modelCatalogIconUrl({ ...textModel, id: "kk-deepseek", vendor: "KK", model: "deepseek-v3.1" })).toContain("DeepSeek-color.svg");
+    expect(modelCatalogIconUrl({ ...textModel, id: "kk-kimi", vendor: "KK", model: "kimi-k2.5" })).toContain("Kimi-color.svg");
+    expect(modelCatalogIconUrl({ ...textModel, id: "kk-grok", vendor: "KK", model: "grok-image-2" })).toContain("XAI.svg");
+    expect(modelCatalogIconUrl({ ...textModel, id: "kk-seed2", vendor: "KK", model: "Seed2.0-vision-1080" })).toContain("Doubao-color.svg");
   });
 
   it("reads aliased catalog parameter names and preserves the request key from the selected model", () => {
@@ -661,6 +931,18 @@ describe("model selection helpers", () => {
     };
 
     expect(videoDurationOptionItems(veoModel).map((item) => item.value)).toEqual(["4", "8"]);
+  });
+
+  it("filters generic KK Veo model duration choices above 8 seconds by model name", () => {
+    const kkVeoModel: ModelDefinition = {
+      ...textModel,
+      id: "kk-veo",
+      capability: "video",
+      adapter: "video-unified-generic",
+      model: "gemini-veo-3.1-generate-preview-8s",
+    };
+
+    expect(videoDurationOptionItems(kkVeoModel).map((item) => item.value)).toEqual(["4", "5", "8"]);
   });
 
   it("does not send p-based video resolution values through the size field", () => {

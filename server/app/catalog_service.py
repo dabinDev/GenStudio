@@ -29,6 +29,80 @@ def text_value(value: Any) -> str:
     return value.strip() if isinstance(value, str) else "" if value is None else str(value)
 
 
+LOBE_ICON_BASE_URL = "https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons"
+LOBE_ICON_BY_BRAND = {
+    "anthropic": "Claude-color.svg",
+    "banana": "Gemini-color.svg",
+    "chatglm": "Zhipu-color.svg",
+    "claude": "Claude-color.svg",
+    "codex": "OpenAI.svg",
+    "deepseek": "DeepSeek-color.svg",
+    "doubao": "Doubao-color.svg",
+    "gemini": "Gemini-color.svg",
+    "glm": "Zhipu-color.svg",
+    "gpt": "OpenAI.svg",
+    "grok": "XAI.svg",
+    "kimi": "Kimi-color.svg",
+    "kuaikuai": "Doubao-color.svg",
+    "minimax": "Minimax-color.svg",
+    "openai": "OpenAI.svg",
+    "qvq": "Qwen-color.svg",
+    "qwen": "Qwen-color.svg",
+    "seed2.0": "Doubao-color.svg",
+    "seed2": "Doubao-color.svg",
+    "seedance": "Doubao-color.svg",
+    "seedream": "Doubao-color.svg",
+    "veo": "Gemini-color.svg",
+    "wanxiang": "Qwen-color.svg",
+    "xai": "XAI.svg",
+    "zhipu": "Zhipu-color.svg",
+}
+
+
+def lobe_icon(file_name: str) -> str:
+    return f"{LOBE_ICON_BASE_URL}/{file_name}"
+
+
+def inferred_lobe_icon_from_text(*values: Any) -> str:
+    source = " ".join(text_value(value) for value in values if text_value(value)).lower()
+    if not source:
+        return ""
+    for keyword, file_name in LOBE_ICON_BY_BRAND.items():
+        if keyword in source:
+            return lobe_icon(file_name)
+    return ""
+
+
+def normalize_catalog_icon(value: Any) -> str:
+    icon = text_value(value)
+    if not icon:
+        return ""
+    inferred = inferred_lobe_icon_from_text(icon)
+    if inferred:
+        return inferred
+    if icon.startswith(("http://", "https://", "/")):
+        return icon
+    file_name = icon
+    if not file_name.lower().endswith((".svg", ".png", ".jpg", ".jpeg", ".webp")):
+        file_name = f"{file_name}.svg"
+    return lobe_icon(file_name)
+
+
+def infer_catalog_icon(detail_or_icon: Any, *values: Any) -> str:
+    if isinstance(detail_or_icon, dict):
+        detail = detail_or_icon
+        icon = text_value(detail.get("icon"))
+        inferred = inferred_lobe_icon_from_text(
+            icon,
+            detail.get("display_name"),
+            detail.get("model_name"),
+        )
+        return inferred or normalize_catalog_icon(icon)
+    icon = text_value(detail_or_icon)
+    inferred = inferred_lobe_icon_from_text(icon, *values)
+    return inferred or normalize_catalog_icon(icon)
+
+
 def int_value(value: Any, default: int = 0) -> int:
     if isinstance(value, bool):
         return int(value)
@@ -190,7 +264,7 @@ def upsert_catalog_model_detail(db: Session, detail: dict[str, Any], source: str
     model.model_name = text_value(detail.get("model_name"))
     model.model_type = model_type
     model.capability = model_type_to_capability(model_type)
-    model.icon = text_value(detail.get("icon"))
+    model.icon = infer_catalog_icon(detail)
     model.description = text_value(detail.get("description"))
     model.input_hint = text_value(detail.get("input_hint"))
     model.success_rate = text_value(detail.get("success_rate"))
@@ -260,6 +334,18 @@ def upsert_catalog_model_detail(db: Session, detail: dict[str, Any], source: str
             )
     db.flush()
     return model
+
+
+def normalize_existing_catalog_icons(db: Session) -> int:
+    changed = 0
+    for model in db.query(CatalogModel).all():
+        normalized = infer_catalog_icon(model.icon, model.display_name, model.model_name, model.description)
+        if normalized and normalized != model.icon:
+            model.icon = normalized
+            changed += 1
+    if changed:
+        db.flush()
+    return changed
 
 
 async def fetch_kkyi_catalog_details(*, base_url: str, bearer_token: str, model_type: int = 0) -> list[dict[str, Any]]:

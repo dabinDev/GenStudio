@@ -205,6 +205,7 @@ a {
 }
 
 .model-avatar {
+  position: relative;
   width: 40px;
   height: 40px;
   border: 1px solid #404040;
@@ -212,6 +213,30 @@ a {
   color: var(--muted-strong);
   background: #171717;
   font-weight: 800;
+  overflow: hidden;
+}
+
+.model-avatar span {
+  position: relative;
+  z-index: 1;
+}
+
+.model-avatar img {
+  position: absolute;
+  inset: 4px;
+  z-index: 2;
+  display: block;
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+}
+
+.model-avatar-has-icon span {
+  opacity: 0;
+}
+
+.model-avatar-icon-failed span {
+  opacity: 1;
 }
 
 .model-info {
@@ -240,6 +265,33 @@ a {
 .model-tag {
   padding: 4px 7px;
   font-size: 11px;
+}
+
+.parameter-source-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: max-content;
+  max-width: 100%;
+  padding: 3px 7px;
+  border: 1px solid rgba(183, 199, 210, 0.14);
+  border-radius: 999px;
+  color: var(--muted-strong);
+  background: rgba(255, 255, 255, 0.055);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.parameter-source-chip-exact {
+  color: #bff7e8;
+  border-color: rgba(41, 195, 187, 0.28);
+  background: rgba(41, 195, 187, 0.12);
+}
+
+.parameter-source-chip-generic {
+  color: #ffe0a5;
+  border-color: rgba(215, 164, 77, 0.24);
+  background: rgba(215, 164, 77, 0.105);
 }
 
 .tag-text {
@@ -808,10 +860,20 @@ a {
 .composer-topline {
   display: flex;
   justify-content: space-between;
+  align-items: center;
   gap: 8px;
   padding: 10px 14px 0;
   color: var(--muted);
   font-size: 13px;
+}
+
+.composer-status-stack {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
 }
 
 .gameplay-btn,
@@ -1707,6 +1769,20 @@ a {
   min-width: 0;
 }
 
+.settings-model-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.settings-model-hint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .model-select {
   position: relative;
   display: grid;
@@ -2078,6 +2154,87 @@ a {
 
 .settings-bulk-actions {
   justify-content: flex-end;
+}
+
+.settings-filter-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 360px);
+  gap: 12px;
+  align-items: center;
+  padding: 0 6px 12px;
+}
+
+.settings-filter-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-width: 0;
+}
+
+.settings-filter-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 11px;
+  border: 1px solid rgba(183, 199, 210, 0.13);
+  border-radius: 8px;
+  color: var(--muted-strong);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.settings-filter-tab:hover {
+  border-color: rgba(41, 195, 187, 0.24);
+  color: var(--text);
+}
+
+.settings-filter-tab-active {
+  border-color: rgba(41, 195, 187, 0.36);
+  color: #ecfffb;
+  background: rgba(41, 195, 187, 0.12);
+}
+
+.settings-filter-tab small {
+  min-width: 22px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: rgba(0, 0, 0, 0.22);
+  font-size: 11px;
+  text-align: center;
+}
+
+.settings-search-box {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 8px 0 10px;
+  border: 1px solid rgba(183, 199, 210, 0.13);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.settings-search-box span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.settings-search-box input {
+  min-width: 0;
+  border: 0;
+  color: var(--text);
+  background: transparent;
+  outline: none;
+}
+
+.settings-search-clear {
+  min-height: 24px;
+  padding: 0 7px;
+  border-radius: 6px;
+  color: var(--muted-strong);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .settings-model-board {
@@ -2659,6 +2816,19 @@ a {
   .settings-table-row,
   .settings-model-row {
     grid-template-columns: 34px 1fr;
+  }
+
+  .settings-list-toolbar,
+  .settings-filter-bar {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-bulk-actions {
+    justify-content: flex-start;
+  }
+
+  .settings-search-box {
+    width: 100%;
   }
 
   .wizard-steps,

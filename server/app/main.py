@@ -48,6 +48,7 @@ from app.conversation_service import (
 from app.catalog_service import (
     fetch_kkyi_catalog_details,
     list_catalog_models,
+    normalize_existing_catalog_icons,
     serialize_catalog_model,
     sync_catalog_details,
 )
@@ -61,6 +62,7 @@ from app.model_service import (
     get_sub_model_for_user,
     list_api_keys,
     list_model_groups,
+    backfill_all_catalog_links,
     record_call_log,
     serialize_api_key,
     serialize_call_log,
@@ -163,7 +165,87 @@ def is_kkyi_catalog_video_model(sub_model: Any) -> bool:
     return bool(catalog_model and getattr(catalog_model, "source", "") == "kkyi" and getattr(catalog_model, "capability", "") == "video")
 
 
-def normalize_kkyi_video_body(request_body: dict[str, Any], model_name: str) -> dict[str, Any]:
+def is_kkyi_base_url(base_url: str) -> bool:
+    host = urlparse(base_url.strip()).netloc.lower()
+    return host in {"ai-api.kkidc.com", "www.kkyi.com", "kkyi.com"}
+
+
+def is_kkyi_video_model(sub_model: Any, base_url: str) -> bool:
+    if not sub_model or getattr(sub_model, "capability", "") != "video":
+        return False
+    return is_kkyi_catalog_video_model(sub_model) or is_kkyi_base_url(base_url)
+
+
+def is_veo_video_model_name(model_name: str) -> bool:
+    return "veo" in model_name.strip().lower()
+
+
+def normalize_veo_duration(value: Any) -> Any:
+    try:
+        duration = int(value)
+    except (TypeError, ValueError):
+        return value
+    return min(duration, 8)
+
+
+def catalog_parameter_for_key(sub_model: Any, keys: tuple[str, ...]) -> Any | None:
+    catalog_model = getattr(sub_model, "catalog_model", None)
+    parameters = getattr(catalog_model, "parameters", []) if catalog_model else []
+    for parameter in parameters:
+        if getattr(parameter, "param_key", "") in keys:
+            return parameter
+    return None
+
+
+def sorted_catalog_option_values(parameter: Any) -> list[str]:
+    options = sorted(getattr(parameter, "options", []) or [], key=lambda item: getattr(item, "sort_order", 0))
+    return [str(getattr(option, "option_value", "")).strip() for option in options if str(getattr(option, "option_value", "")).strip()]
+
+
+def coerce_catalog_video_value(key: str, value: Any) -> Any:
+    if key in {"duration", "quantity"}:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return value
+    return value
+
+
+def default_catalog_video_value(parameter: Any, options: list[str]) -> str:
+    default_value = str(getattr(parameter, "default_value", "") or "").strip()
+    if options:
+        return default_value if default_value in options else options[0]
+    return default_value
+
+
+def apply_catalog_video_constraints(normalized: dict[str, Any], sub_model: Any) -> dict[str, Any]:
+    if not sub_model:
+        return normalized
+    field_keys = {
+        "ratio": ("ratio", "aspect_ratio"),
+        "duration": ("duration",),
+        "resolution": ("resolution", "size"),
+        "generate_audio": ("generate_audio", "audio"),
+        "quantity": ("quantity", "n", "count"),
+        "video_mode": ("video_mode", "mode"),
+    }
+    for target_key, catalog_keys in field_keys.items():
+        parameter = catalog_parameter_for_key(sub_model, catalog_keys)
+        if not parameter:
+            continue
+        options = sorted_catalog_option_values(parameter)
+        fallback = default_catalog_video_value(parameter, options)
+        current = normalized.get(target_key)
+        if current in (None, ""):
+            if fallback and bool(getattr(parameter, "is_required", False)):
+                normalized[target_key] = coerce_catalog_video_value(target_key, fallback)
+            continue
+        if options and str(current).strip() not in options:
+            normalized[target_key] = coerce_catalog_video_value(target_key, fallback)
+    return normalized
+
+
+def normalize_kkyi_video_body(request_body: dict[str, Any], model_name: str, sub_model: Any | None = None) -> dict[str, Any]:
     prompt = extract_video_prompt(request_body)
     normalized: dict[str, Any] = {
         "model": str(request_body.get("model") or model_name).strip(),
@@ -194,6 +276,9 @@ def normalize_kkyi_video_body(request_body: dict[str, Any], model_name: str) -> 
         normalized["img_url"] = request_body["image"]
     if not normalized.get("model"):
         normalized["model"] = model_name
+    normalized = apply_catalog_video_constraints(normalized, sub_model)
+    if is_veo_video_model_name(str(normalized.get("model") or model_name)) and "duration" in normalized:
+        normalized["duration"] = normalize_veo_duration(normalized["duration"])
     normalized.setdefault("quantity", 1)
     return {key: value for key, value in normalized.items() if value not in (None, "")}
 
@@ -394,11 +479,13 @@ def expand_local_video_references(value: Any) -> Any:
     if isinstance(value, dict):
         expanded: dict[str, Any] = {}
         for key, item in value.items():
-            if key in {"url", "image", "image_url"} and isinstance(item, str):
+            if key in {"url", "image", "image_url", "img_url", "first_frame", "last_frame", "video_url", "audio_url"} and isinstance(item, str):
                 expanded[key] = local_asset_data_url(item)
             else:
                 expanded[key] = expand_local_video_references(item)
         return expanded
+    if isinstance(value, str):
+        return local_asset_data_url(value)
     if isinstance(value, list):
         return [expand_local_video_references(item) for item in value]
     return value
@@ -824,6 +911,10 @@ async def sync_kkyi_catalog(
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail={"message": "同步 KKYi 模型目录失败。"}) from exc
     synced = sync_catalog_details(db, details)
+    icon_updates = normalize_existing_catalog_icons(db)
+    if synced or icon_updates:
+        backfill_all_catalog_links(db)
+        db.commit()
     return {
         "synced": len(synced),
         "models": [serialize_catalog_model(item).model_dump() for item in synced],
@@ -1046,9 +1137,9 @@ async def proxy_test(
 
     body = build_test_body(str(capability), model, str(adapter) if adapter else None)
     target_path = resolve_test_path(str(capability), str(adapter) if adapter else None)
-    if sub_model and is_kkyi_catalog_video_model(sub_model):
+    if is_kkyi_video_model(sub_model, base_url):
         target_path = "/v1/video/generations"
-        body = normalize_kkyi_video_body(body, sub_model.model_name)
+        body = normalize_kkyi_video_body(body, sub_model.model_name, sub_model)
     target_url = resolve_url(base_url, target_path)
     started_at = time.perf_counter()
     response, raw = await forward_json("POST", target_url, api_key, body)
@@ -1464,9 +1555,9 @@ async def proxy_video_create(
     request_body = payload.get("requestBody") or {}
     if isinstance(request_body, dict):
         request_body = expand_local_video_references(copy.deepcopy(request_body))
-        if sub_model and is_kkyi_catalog_video_model(sub_model):
-            request_body = normalize_kkyi_video_body(request_body, sub_model.model_name)
-    target_path = "/v1/video/generations" if sub_model and is_kkyi_catalog_video_model(sub_model) else resolve_video_create_path(adapter)
+        if is_kkyi_video_model(sub_model, base_url):
+            request_body = normalize_kkyi_video_body(request_body, sub_model.model_name, sub_model)
+    target_path = "/v1/video/generations" if is_kkyi_video_model(sub_model, base_url) else resolve_video_create_path(adapter)
     target_url = resolve_url(base_url, target_path)
     prompt = extract_video_prompt(request_body if isinstance(request_body, dict) else {})
     if current_user and model_group and sub_model:
@@ -1618,7 +1709,7 @@ async def proxy_video_query(
 
     target_path = (
         f"/v1/video/generations/{quote(task_id)}"
-        if sub_model and is_kkyi_catalog_video_model(sub_model)
+        if is_kkyi_video_model(sub_model, base_url)
         else resolve_video_query_path(adapter, task_id)
     )
     target_url = resolve_url(base_url, target_path)

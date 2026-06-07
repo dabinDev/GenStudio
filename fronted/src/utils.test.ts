@@ -115,6 +115,11 @@ describe("model selection helpers", () => {
     expect(capabilityFilterForView("settings")).toBe("all");
   });
 
+  it("does not fall back to unrelated sidebar models when a creation capability is empty", () => {
+    expect(resolveSidebarFilter([{ ...textModel, capability: "text" }], "image")).toBe("image");
+    expect(resolveSidebarFilter([{ ...textModel, capability: "text" }], "video")).toBe("video");
+  });
+
   it("keeps settings pages unfiltered by default so saved KK models remain visible", () => {
     expect(capabilityFilterForView("settings")).toBe("all");
     expect(capabilityFilterForView("profile")).toBe("all");
@@ -250,12 +255,12 @@ describe("model selection helpers", () => {
     expect(filterSettingsModels(models, "all", "").map((item) => item.id)).toEqual(["kk-claude", "kk-image", "kk-video"]);
   });
 
-  it("falls back to all sidebar models when the active capability has no models", () => {
+  it("keeps the active creation capability even when that capability has no models", () => {
     const models: ModelDefinition[] = [
       { ...textModel, id: "public-gpt55", capability: "text", model: "gpt-5.5" },
     ];
 
-    expect(resolveSidebarFilter(models, "image")).toBe("all");
+    expect(resolveSidebarFilter(models, "image")).toBe("image");
     expect(resolveSidebarFilter(models, "text")).toBe("text");
     expect(resolveSidebarFilter([], "image")).toBe("image");
     expect(resolveSidebarFilter(models, "all")).toBe("all");

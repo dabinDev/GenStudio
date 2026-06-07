@@ -105,8 +105,7 @@ export function safeModelDescription(model: Pick<ModelDefinition, "description" 
 
 export function resolveSidebarFilter(models: ModelDefinition[], filter: Capability | "all"): Capability | "all" {
   if (filter === "all") return "all";
-  if (!models.length) return filter;
-  return models.some((model) => model.capability === filter) ? filter : "all";
+  return filter;
 }
 
 export function filterSettingsModels(

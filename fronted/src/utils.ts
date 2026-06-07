@@ -506,6 +506,13 @@ export function markConversationMessageFailed(
   });
 }
 
+export function videoMessageStatusFromTaskStatus(status: string): ConversationMessage["status"] {
+  const normalized = status.trim().toLowerCase();
+  if (normalized.includes("complete") || normalized.includes("success") || normalized.includes("succeed")) return "success";
+  if (normalized.includes("fail") || normalized.includes("error") || normalized.includes("cancel")) return "error";
+  return "processing";
+}
+
 export function shouldResetConversationForModelSwitch(
   conversation: { capability?: Capability | string } | null | undefined,
   nextCapability: Capability,

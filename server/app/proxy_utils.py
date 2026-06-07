@@ -100,6 +100,38 @@ def pick_error_message(payload: Any, fallback: str) -> str:
     return fallback
 
 
+def pick_video_task_error_message(payload: Any, fallback: str) -> str:
+    if not isinstance(payload, dict):
+        return pick_error_message(payload, fallback)
+
+    containers: list[dict[str, Any]] = []
+
+    def collect(value: Any) -> None:
+        if not isinstance(value, dict) or value in containers:
+            return
+        containers.append(value)
+        for key in ("data", "result", "content", "output"):
+            collect(value.get(key))
+
+    collect(payload)
+    for item in containers:
+        error_value = item.get("error")
+        if isinstance(error_value, str) and error_value.strip():
+            return error_value.strip()
+        if isinstance(error_value, dict) and isinstance(error_value.get("message"), str) and error_value["message"].strip():
+            return error_value["message"].strip()
+        for key in ("error_message", "errorMessage", "fail_reason", "failed_reason", "failure_reason", "reason", "message", "msg"):
+            value = item.get(key)
+            if not isinstance(value, str):
+                continue
+            clean = value.strip()
+            if clean and clean.lower() not in {"ok", "success", "succeeded"}:
+                return clean
+
+    message = pick_error_message(payload, fallback)
+    return fallback if message.lower() in {"ok", "success", "succeeded"} else message
+
+
 def is_non_json_upstream_error(payload: Any) -> bool:
     if isinstance(payload, str):
         lower_payload = payload.lower()
@@ -284,6 +316,13 @@ def normalize_video_status(value: str) -> str:
     return value
 
 
+def has_video_task_error(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    message = pick_video_task_error_message(payload, "")
+    return bool(message.strip())
+
+
 def pick_task_id(raw: dict[str, Any]) -> str:
     if isinstance(raw.get("task_id"), str):
         return raw["task_id"]
@@ -317,10 +356,13 @@ def pick_video_query_payload(raw: dict[str, Any], task_id: str) -> dict[str, Any
     progress = raw.get("progress")
     if progress is None:
         progress = seedance_data.get("progress")
+    status = normalize_video_status(str(status_source))
+    if status not in {"completed", "processing"} and has_video_task_error(raw):
+        status = "failed"
 
     return {
         "taskId": raw.get("id") if isinstance(raw.get("id"), str) else seedance_data.get("task_id") or task_id,
-        "status": normalize_video_status(str(status_source)),
+        "status": status,
         "progress": progress if isinstance(progress, (str, int, float)) else None,
         "videoUrl": video_url if isinstance(video_url, str) else None,
         "thumbnailUrl": thumbnail_url,

@@ -77,6 +77,7 @@ from app.proxy_utils import (
     pick_task_id,
     pick_error_message,
     pick_text_content,
+    pick_video_task_error_message,
     pick_video_query_payload,
     is_non_json_upstream_error,
     resolve_test_path,
@@ -1674,9 +1675,21 @@ async def proxy_video_query(
         and model_group
         and sub_model
         and conversation_id
-        and result.get("videoUrl")
     ):
         conversation = get_conversation(db, current_user, conversation_id)
+        task_status = str(result.get("status") or "")
+        message_status = (
+            "success"
+            if task_status == "completed"
+            else "error"
+            if task_status == "failed"
+            else "processing"
+        )
+        task_error_message = (
+            pick_video_task_error_message(raw, "视频任务失败，请检查模型后台或稍后重试。")
+            if message_status == "error"
+            else ""
+        )
         assistant_message = mark_video_task_message(
             db,
             conversation,
@@ -1684,23 +1697,25 @@ async def proxy_video_query(
             task_id=task_id,
             model_group_id=model_group.id,
             sub_model_id=sub_model.id,
-            status="success" if result.get("status") == "completed" else "processing",
-            content=str(result.get("status") or task_id),
-            can_retry=False,
+            status=message_status,
+            content=str(result.get("status") or task_id) if message_status == "success" else task_id,
+            error_message=task_error_message,
+            can_retry=message_status == "error",
             request={"taskId": task_id},
             response=raw,
         )
-        db.query(GeneratedAsset).filter(GeneratedAsset.message_id == assistant_message.id).delete()
-        add_asset(
-            db,
-            assistant_message,
-            current_user,
-            capability="video",
-            asset_type="video",
-            url=str(result["videoUrl"]),
-            thumbnail_url=str(result.get("thumbnailUrl") or ""),
-            metadata={"taskId": task_id, "status": result.get("status"), "progress": result.get("progress")},
-        )
+        if result.get("videoUrl") and message_status == "success":
+            db.query(GeneratedAsset).filter(GeneratedAsset.message_id == assistant_message.id).delete()
+            add_asset(
+                db,
+                assistant_message,
+                current_user,
+                capability="video",
+                asset_type="video",
+                url=str(result["videoUrl"]),
+                thumbnail_url=str(result.get("thumbnailUrl") or ""),
+                metadata={"taskId": task_id, "status": result.get("status"), "progress": result.get("progress")},
+            )
         db.commit()
         refreshed = reload_conversation(db, current_user, conversation.id)
         result["conversation"] = serialize_conversation(refreshed).model_dump()
@@ -1712,10 +1727,11 @@ async def proxy_video_query(
             sub_model_id=sub_model.id,
             capability="video",
             endpoint="/api/proxy/video/query",
-            status="success",
+            status="error" if message_status == "error" else "success",
             duration_ms=duration_ms,
             prompt_summary=task_id,
             usage=None,
+            error_message=task_error_message,
         )
 
     return result

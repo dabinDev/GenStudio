@@ -76,6 +76,7 @@ import {
   visibleConversationMessages,
   videoDurationOptionItems,
   videoGenerationSummary,
+  videoMessageStatusFromTaskStatus,
   videoModeParamValue,
   videoModeRequiredUploadCount,
   videoModeUploadLimit,
@@ -1592,7 +1593,8 @@ async function handleVideoQuery(taskIdArg?: string) {
     }), controller.signal);
     if (videoState.taskResult.conversation) {
       setCurrentConversation(videoState.taskResult.conversation);
-    } else if (videoState.taskResult.videoUrl) {
+    } else {
+      const messageStatus = videoMessageStatusFromTaskStatus(videoState.taskResult.status || "");
       setCurrentConversation(appendLocalConversationMessages(conversationState.current, {
         capability: "video",
         titleSeed: taskId,
@@ -1600,14 +1602,16 @@ async function handleVideoQuery(taskIdArg?: string) {
         messages: [
           {
             role: "assistant",
-            content: String(videoState.taskResult.status || "completed"),
-            status: videoState.taskResult.status === "completed" ? "success" : "processing",
-            assets: [{
+            content: messageStatus === "success" ? String(videoState.taskResult.status || taskId) : taskId,
+            status: messageStatus,
+            errorMessage: messageStatus === "error" ? "视频任务失败，请检查模型后台或重新发送。" : "",
+            canRetry: messageStatus === "error",
+            assets: videoState.taskResult.videoUrl ? [{
               assetType: "video",
               url: videoState.taskResult.videoUrl,
               thumbnailUrl: videoState.taskResult.thumbnailUrl || "",
               metadata: { taskId, status: videoState.taskResult.status, progress: videoState.taskResult.progress },
-            }],
+            }] : [],
           },
         ],
       }));

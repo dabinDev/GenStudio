@@ -832,6 +832,163 @@ def test_video_query_failure_records_retryable_message(monkeypatch) -> None:
     assert conversation["messages"][-1]["errorMessage"] == "Video provider failed"
 
 
+def test_video_query_failed_task_state_updates_processing_message(monkeypatch) -> None:
+    async def fake_forward_json(method, url, api_key, body=None):
+        if method == "POST":
+            return httpx.Response(200, json={"id": "task-failed-state", "status": "processing"}), {
+                "id": "task-failed-state",
+                "status": "processing",
+            }
+        return httpx.Response(
+            200,
+            json={
+                "code": 0,
+                "message": "success",
+                "data": {
+                    "task_id": "task-failed-state",
+                    "status": "failed",
+                    "fail_reason": "Upstream task failed in worker",
+                },
+            },
+        ), {
+            "code": 0,
+            "message": "success",
+            "data": {
+                "task_id": "task-failed-state",
+                "status": "failed",
+                "fail_reason": "Upstream task failed in worker",
+            },
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+    sub_model_id = create_model(client, "video", "video-unified-generic", "seedance-2.0")
+
+    created = client.post(
+        "/api/proxy/video/create",
+        headers=csrf_headers(client),
+        json={"subModelId": sub_model_id, "requestBody": {"prompt": "failed task state"}},
+    )
+    assert created.status_code == 200
+    conversation_id = created.json()["conversation"]["id"]
+
+    queried = client.post(
+        "/api/proxy/video/query",
+        headers=csrf_headers(client),
+        json={
+            "subModelId": sub_model_id,
+            "conversationId": conversation_id,
+            "taskId": "task-failed-state",
+        },
+    )
+
+    assert queried.status_code == 200
+    payload = queried.json()
+    assert payload["status"] == "failed"
+    assert payload["assistantMessage"]["status"] == "error"
+    assert payload["assistantMessage"]["canRetry"] is True
+    assert payload["assistantMessage"]["errorMessage"] == "Upstream task failed in worker"
+    conversation = client.get(f"/api/conversations/{conversation_id}").json()["conversation"]
+    assert conversation["messages"][-1]["content"] == "task-failed-state"
+    assert conversation["messages"][-1]["status"] == "error"
+    assert conversation["messages"][-1]["canRetry"] is True
+
+
+def test_video_query_unknown_state_with_error_updates_processing_message(monkeypatch) -> None:
+    async def fake_forward_json(method, url, api_key, body=None):
+        if method == "POST":
+            return httpx.Response(200, json={"id": "task-unknown-error", "status": "processing"}), {
+                "id": "task-unknown-error",
+                "status": "processing",
+            }
+        return httpx.Response(
+            200,
+            json={
+                "id": "task-unknown-error",
+                "task_id": "task-unknown-error",
+                "status": "unknown",
+                "progress": 100,
+                "error": {"message": "Timed out after 20 minutes", "code": ""},
+                "metadata": {"url": "Timed out after 20 minutes"},
+            },
+        ), {
+            "id": "task-unknown-error",
+            "task_id": "task-unknown-error",
+            "status": "unknown",
+            "progress": 100,
+            "error": {"message": "Timed out after 20 minutes", "code": ""},
+            "metadata": {"url": "Timed out after 20 minutes"},
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+    sub_model_id = create_model(client, "video", "video-unified-generic", "seedance-2.0")
+
+    created = client.post(
+        "/api/proxy/video/create",
+        headers=csrf_headers(client),
+        json={"subModelId": sub_model_id, "requestBody": {"prompt": "unknown failed video"}},
+    )
+    assert created.status_code == 200
+    conversation_id = created.json()["conversation"]["id"]
+
+    queried = client.post(
+        "/api/proxy/video/query",
+        headers=csrf_headers(client),
+        json={
+            "subModelId": sub_model_id,
+            "conversationId": conversation_id,
+            "taskId": "task-unknown-error",
+        },
+    )
+
+    assert queried.status_code == 200
+    payload = queried.json()
+    assert payload["status"] == "failed"
+    assert payload["assistantMessage"]["status"] == "error"
+    assert payload["assistantMessage"]["canRetry"] is True
+    assert payload["assistantMessage"]["errorMessage"] == "Timed out after 20 minutes"
+
+
+def test_video_query_processing_state_keeps_task_id_for_next_query(monkeypatch) -> None:
+    async def fake_forward_json(method, url, api_key, body=None):
+        return httpx.Response(200, json={"id": "task-still-running", "status": "processing"}), {
+            "id": "task-still-running",
+            "status": "processing",
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+    sub_model_id = create_model(client, "video", "video-unified-generic", "seedance-2.0")
+
+    created = client.post(
+        "/api/proxy/video/create",
+        headers=csrf_headers(client),
+        json={"subModelId": sub_model_id, "requestBody": {"prompt": "still running video"}},
+    )
+    assert created.status_code == 200
+    conversation_id = created.json()["conversation"]["id"]
+
+    queried = client.post(
+        "/api/proxy/video/query",
+        headers=csrf_headers(client),
+        json={
+            "subModelId": sub_model_id,
+            "conversationId": conversation_id,
+            "taskId": "task-still-running",
+        },
+    )
+
+    assert queried.status_code == 200
+    assistant = queried.json()["assistantMessage"]
+    assert assistant["content"] == "task-still-running"
+    assert assistant["status"] == "processing"
+    assert assistant["canRetry"] is False
+
+
 def test_video_query_success_replaces_retryable_message_for_same_task(monkeypatch) -> None:
     query_attempts = {"count": 0}
 

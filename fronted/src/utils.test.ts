@@ -36,6 +36,7 @@ import {
   videoDurationOptionItems,
   videoResolutionRequestKey,
   videoGenerationSummary,
+  videoMessageStatusFromTaskStatus,
   videoModeParamValue,
   videoModeRequiredUploadCount,
   videoModeUploadLimit,
@@ -983,6 +984,15 @@ describe("conversation helpers", () => {
       canRetry: true,
     });
     expect(failed.updatedAt).not.toBe(pending.updatedAt);
+  });
+
+  it("maps video task statuses to local message statuses", () => {
+    expect(videoMessageStatusFromTaskStatus("completed")).toBe("success");
+    expect(videoMessageStatusFromTaskStatus("task_succeeded")).toBe("success");
+    expect(videoMessageStatusFromTaskStatus("failed")).toBe("error");
+    expect(videoMessageStatusFromTaskStatus("cancelled")).toBe("error");
+    expect(videoMessageStatusFromTaskStatus("processing")).toBe("processing");
+    expect(videoMessageStatusFromTaskStatus("queued")).toBe("processing");
   });
 
   it("keeps the local request visible when an image proxy error has no server conversation", () => {

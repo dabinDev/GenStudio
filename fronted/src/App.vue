@@ -40,11 +40,14 @@ import type {
 } from "./types";
 import {
   appendLocalConversationMessages,
+  buildImageGenerationRequestBody,
+  buildVideoMediaFields,
   catalogDefaultValue,
   catalogMaxCount,
   catalogOptionItems,
   catalogParameterSignature,
   catalogRequestKey,
+  catalogVideoModeValue,
   combinePrompt,
   createLocalId,
   findPromptBeforeMessage,
@@ -70,7 +73,14 @@ import {
   supportsCatalogParameter,
   testResultSummary,
   updateLocalConversationMessage,
+  visibleConversationMessages,
+  videoDurationOptionItems,
   videoGenerationSummary,
+  videoModeParamValue,
+  videoModeRequiredUploadCount,
+  videoModeUploadLimit,
+  videoResolutionRequestKey,
+  type VideoModeValue,
 } from "./utils";
 import {
   applyFetchedModelsToDraft,
@@ -86,7 +96,7 @@ import { shouldShowDevAuth } from "./env";
 
 type ViewName = "auth" | "auth-error" | "text" | "images" | "videos" | "settings" | "profile";
 type SidebarFilter = Capability | "all";
-type VideoMode = "text" | "reference" | "start-end";
+type VideoMode = VideoModeValue;
 type DialogMode = "create" | "edit";
 type ComposerPopover = "image-settings" | "image-advanced" | "video-mode" | "video-settings" | "video-advanced" | null;
 
@@ -298,6 +308,7 @@ const VIDEO_QUANTITY_OPTIONS = ["1", "2", "3", "4"];
 const VIDEO_MODE_OPTIONS: Array<{ value: VideoMode; label: string }> = [
   { value: "text", label: "文生视频" },
   { value: "reference", label: "全能参考" },
+  { value: "first-frame", label: "首帧" },
   { value: "start-end", label: "首尾帧" },
 ];
 
@@ -363,7 +374,7 @@ const visibleConversations = computed(() => {
   return conversationState.conversations.filter((item) => item.capability === activeCapability.value);
 });
 
-const currentMessages = computed(() => conversationState.current?.messages || []);
+const currentMessages = computed(() => visibleConversationMessages(conversationState.current, activeCapability.value));
 
 const currentModelLabel = computed(() => {
   const model = activeModel.value;
@@ -426,8 +437,11 @@ const videoUsesAudioControls = computed(() => supportsCatalogParameter(activeMod
 const videoUsesSeedControls = computed(() => supportsCatalogParameter(activeModel.value, "seed"));
 const videoRatioOptions = computed(() => catalogOptionItems(activeModel.value, ["ratio", "aspect_ratio"], VIDEO_RATIO_OPTIONS));
 const videoResolutionOptions = computed(() => catalogOptionItems(activeModel.value, ["resolution", "size"], VIDEO_RESOLUTION_OPTIONS));
-const videoDurationOptions = computed(() => catalogOptionItems(activeModel.value, "duration", VIDEO_DURATION_OPTIONS));
+const videoDurationOptions = computed(() => videoDurationOptionItems(activeModel.value));
 const videoQuantityOptions = computed(() => catalogOptionItems(activeModel.value, "quantity", VIDEO_QUANTITY_OPTIONS));
+const unifiedVideoImageLimit = computed(() => videoModeUploadLimit(activeModel.value, videoState.mode));
+const unifiedVideoRequiredImageCount = computed(() => videoModeRequiredUploadCount(videoState.mode));
+const unifiedVideoAllowsMultiple = computed(() => unifiedVideoImageLimit.value > 1);
 
 const imageControlSummary = computed(() =>
   imageGenerationSummary({
@@ -653,22 +667,10 @@ function normalizeOptionValue(current: string, options: Array<{ value: string }>
   return values.includes(fallback) ? fallback : values[0] || fallback;
 }
 
-function catalogVideoModeValue(value: string): VideoMode {
-  if (value === "reference" || value === "first_frame") return "reference";
-  if (value === "first_last_frame" || value === "start-end") return "start-end";
-  return "text";
-}
-
 function normalizeVideoMode(current: VideoMode, options: Array<{ value: VideoMode }>, fallback: VideoMode): VideoMode {
   const values = options.map((item) => item.value);
   if (values.includes(current)) return current;
   return values.includes(fallback) ? fallback : values[0] || fallback;
-}
-
-function videoModeParamValue(mode: VideoMode): string {
-  if (mode === "reference") return "reference";
-  if (mode === "start-end") return "first_last_frame";
-  return "text";
 }
 
 function modelSupportsParameter(model: ModelDefinition, ...keys: string[]): boolean {
@@ -688,23 +690,19 @@ function addPayloadField(
 }
 
 function buildImageRequestBody(model: ModelDefinition, finalPrompt: string, extra: Record<string, unknown>) {
-  const body: Record<string, unknown> = {
-    prompt: finalPrompt,
-    response_format: "url",
-  };
-  if (modelSupportsParameter(model, "image", "images")) {
-    body[catalogRequestKey(model, ["image", "images"], "image")] = imageState.references.map((item) => item.publicUrl);
-  }
-  const quantity = Number(imageState.count) || 1;
-  addPayloadField(body, model, ["quantity"], "n", quantity);
-  if (catalogRequestKey(model, ["quantity"], "n") !== "n") {
-    addPayloadField(body, model, ["quantity"], "quantity", quantity);
-  }
-  addPayloadField(body, model, ["size"], "size", imageState.size);
-  addPayloadField(body, model, ["ratio", "aspect_ratio"], "ratio", imageState.ratio);
-  addPayloadField(body, model, ["resolution", "size"], "resolution", imageState.resolution);
-  addPayloadField(body, model, ["quality"], "quality", imageState.quality);
-  return { ...body, ...extra };
+  return buildImageGenerationRequestBody(
+    model,
+    {
+      references: imageState.references.map((item) => item.publicUrl),
+      count: imageState.count,
+      size: imageState.size,
+      ratio: imageState.ratio,
+      resolution: imageState.resolution,
+      quality: imageState.quality,
+    },
+    finalPrompt,
+    extra,
+  );
 }
 
 function addSeedParameter(payload: Record<string, unknown>, model: ModelDefinition) {
@@ -762,14 +760,14 @@ function selectVideoMode(mode: VideoMode) {
   if (mode === "text") {
     videoState.unifiedImages = [];
   }
-  if (supportsUnifiedAdapter(activeModel.value?.adapter) && mode !== "start-end") {
-    videoState.unifiedImages = videoState.unifiedImages.slice(0, getUnifiedImageLimit(mode));
+  if (supportsUnifiedAdapter(activeModel.value?.adapter)) {
+    videoState.unifiedImages = videoState.unifiedImages.slice(0, videoModeUploadLimit(activeModel.value, mode));
   }
   closeComposerPopover();
 }
 
 function videoModeLabel(mode: VideoMode): string {
-  return VIDEO_MODE_OPTIONS.find((item) => item.value === mode)?.label || "文生视频";
+  return videoModeOptions.value.find((item) => item.value === mode)?.label || VIDEO_MODE_OPTIONS.find((item) => item.value === mode)?.label || "文生视频";
 }
 
 function removeImageReference(assetId: string) {
@@ -1163,6 +1161,11 @@ function conversationIdFor(capability: Capability): string {
   return conversationState.current?.capability === capability ? conversationState.current.id : "";
 }
 
+function persistedConversationIdFor(capability: Capability): string {
+  const conversationId = conversationIdFor(capability);
+  return conversationId.startsWith("cnv_") ? conversationId : "";
+}
+
 function getModelReadyError(model: ModelDefinition, setting: ModelSetting): string {
   if (model.serverManaged) {
     return getPrimarySubModel(model) ? "" : "当前服务端模型还没有可用的主模型，请先获取模型列表并选择主模型。";
@@ -1194,11 +1197,23 @@ async function handleTextSubmit() {
 
   textState.loading = true;
   textState.error = "";
+  const pendingConversation = appendLocalConversationMessages(conversationState.current, {
+    capability: "text",
+    titleSeed: finalPrompt,
+    modelGroupId: model.id,
+    subModelId: model.primarySubModelId || null,
+    messages: [
+      { role: "user", content: finalPrompt },
+      { role: "assistant", content: "", status: "processing" },
+    ],
+  });
+  const pendingAssistantId = pendingConversation.messages[pendingConversation.messages.length - 1]?.id || "";
+  setCurrentConversation(pendingConversation);
   const controller = createRequestController();
   try {
     const extra = parseJsonInput(textState.extraJson);
     const response = await postProxyWithSignal<TextResult>("/api/proxy/text", buildModelProxyPayload(model, setting, {
-      conversationId: conversationIdFor("text"),
+      conversationId: persistedConversationIdFor("text"),
       requestBody: {
         messages: [
           textState.systemPrompt.trim()
@@ -1217,14 +1232,11 @@ async function handleTextSubmit() {
       setCurrentConversation(response.conversation);
       simulateStreamingPreview(response.assistantMessage);
     } else {
-      const localConversation = appendLocalConversationMessages(conversationState.current, {
-        capability: "text",
-        titleSeed: finalPrompt,
-        modelGroupId: model.id,
-        messages: [
-          { role: "user", content: finalPrompt },
-          { role: "assistant", content: response.content || "已返回响应", status: "success" },
-        ],
+      const localConversation = updateLocalConversationMessage(pendingConversation, pendingAssistantId, {
+        content: response.content || "已返回响应",
+        status: "success",
+        errorMessage: "",
+        canRetry: false,
       });
       setCurrentConversation(localConversation);
       simulateStreamingPreview(localConversation.messages[localConversation.messages.length - 1]);
@@ -1240,7 +1252,14 @@ async function handleTextSubmit() {
       summary: shortText(response.content || "已返回响应"),
     });
   } catch (error) {
-    textState.error = handleRequestError(error, "文案生成失败。");
+    const serverConversation = error instanceof ApiRequestError ? conversationFromUnknown(error.detail) : null;
+    const message = resolveRequestErrorMessage(error, "文案生成失败。");
+    if (serverConversation) {
+      setCurrentConversation(serverConversation);
+    } else {
+      markLocalAssistantMessageFailed(pendingConversation, pendingAssistantId, message);
+    }
+    textState.error = message;
   } finally {
     clearRequestController(controller);
     textState.loading = false;
@@ -1258,7 +1277,7 @@ async function handleImageUpload(event: Event) {
     const uploaded = await Promise.all(
       Array.from(input.files).map((file) => uploadAsset(file, buildUploadConfig(model, setting))),
     );
-    imageState.references.push(...uploaded);
+    imageState.references = [...imageState.references, ...uploaded].slice(0, imageReferenceLimit.value);
   } catch (error) {
     imageState.error = error instanceof Error ? error.message : "上传参考图失败。";
   } finally {
@@ -1304,7 +1323,7 @@ async function handleImageSubmit() {
   try {
     const extra = parseJsonInput(imageState.extraJson);
     imageState.result = await postProxyWithSignal<ImageResult>("/api/proxy/image", buildModelProxyPayload(model, setting, {
-      conversationId: conversationIdFor("image"),
+      conversationId: persistedConversationIdFor("image"),
       requestBody: buildImageRequestBody(model, finalPrompt, extra),
     }), controller.signal);
     if (imageState.result.conversation) {
@@ -1343,12 +1362,6 @@ function supportsUnifiedAdapter(adapter?: Adapter): boolean {
   return adapter ? UNIFIED_ADAPTERS.includes(adapter) : false;
 }
 
-function getUnifiedImageLimit(mode: VideoMode): number {
-  if (mode === "text") return 0;
-  if (mode === "reference") return 1;
-  return 2;
-}
-
 async function uploadVideoFiles(event: Event, target: "unified" | "first" | "last" | "seedanceRef") {
   const input = event.target as HTMLInputElement;
   const model = activeModel.value;
@@ -1362,7 +1375,7 @@ async function uploadVideoFiles(event: Event, target: "unified" | "first" | "las
       Array.from(input.files).map((file) => uploadAsset(file, buildUploadConfig(model, setting))),
     );
     if (target === "unified") {
-      videoState.unifiedImages = uploaded.slice(0, getUnifiedImageLimit(videoState.mode));
+      videoState.unifiedImages = [...videoState.unifiedImages, ...uploaded].slice(0, unifiedVideoImageLimit.value);
     }
     if (target === "first") videoState.seedanceFirst = uploaded[0] || null;
     if (target === "last") videoState.seedanceLast = uploaded[0] || null;
@@ -1377,29 +1390,30 @@ async function uploadVideoFiles(event: Event, target: "unified" | "first" | "las
 
 function buildVideoRequestBody(model: ModelDefinition, modelName: string, finalPrompt: string, extra: Record<string, unknown>) {
   const mediaImages = videoState.mode === "text" ? [] : videoState.unifiedImages.map((item) => item.publicUrl);
+  const mediaFields = buildVideoMediaFields(model, videoState.mode, mediaImages);
   const addVideoParameter = (
     payload: Record<string, unknown>,
     keys: string[],
     outputKey: string,
     value: unknown,
   ) => addPayloadField(payload, model, keys, outputKey, value);
-  const addSharedVideoParameters = (payload: Record<string, unknown>, options: { useSize?: boolean; includeAudio?: boolean } = {}) => {
+  const addSharedVideoParameters = (payload: Record<string, unknown>, options: { includeAudio?: boolean } = {}) => {
     addVideoParameter(payload, ["video_mode"], "video_mode", videoModeParamValue(videoState.mode));
     addVideoParameter(payload, ["ratio", "aspect_ratio"], "aspect_ratio", videoState.aspectRatio);
     addVideoParameter(payload, ["duration"], "duration", Number(videoState.duration) || 5);
     addVideoParameter(payload, ["quantity"], "quantity", Number(videoState.count) || 1);
-    addVideoParameter(payload, options.useSize ? ["size", "resolution"] : ["resolution", "size"], options.useSize ? "size" : "resolution", videoState.resolution);
+    addVideoParameter(payload, ["resolution", "size"], videoResolutionRequestKey(model, videoState.resolution), videoState.resolution);
     if (options.includeAudio) addVideoParameter(payload, ["generate_audio", "audio"], "audio", videoState.audio);
   };
   if (model.adapter === "video-unified-jimeng") {
     const body: Record<string, unknown> = {
       model: modelName,
       prompt: finalPrompt,
-      images: mediaImages,
+      ...mediaFields,
     };
     addVideoParameter(body, ["video_mode"], "video_mode", videoModeParamValue(videoState.mode));
     addVideoParameter(body, ["ratio", "aspect_ratio"], "aspect_ratio", videoState.aspectRatio);
-    addVideoParameter(body, ["resolution", "size"], "size", videoState.resolution);
+    addVideoParameter(body, ["resolution", "size"], videoResolutionRequestKey(model, videoState.resolution), videoState.resolution);
     addVideoParameter(body, ["quantity"], "quantity", Number(videoState.count) || 1);
     return { ...body, ...extra };
   }
@@ -1407,7 +1421,7 @@ function buildVideoRequestBody(model: ModelDefinition, modelName: string, finalP
     const body: Record<string, unknown> = {
       model: modelName,
       prompt: finalPrompt,
-      images: mediaImages,
+      ...mediaFields,
     };
     addSharedVideoParameters(body, { includeAudio: true });
     addSeedParameter(body, model);
@@ -1419,10 +1433,10 @@ function buildVideoRequestBody(model: ModelDefinition, modelName: string, finalP
       prompt: finalPrompt,
       orientation: videoState.aspectRatio === "9:16" ? "portrait" : "landscape",
       enable_upsample: videoState.upsample,
-      images: mediaImages,
+      ...mediaFields,
     };
     addVideoParameter(body, ["video_mode"], "video_mode", videoModeParamValue(videoState.mode));
-    addVideoParameter(body, ["resolution", "size"], "size", videoState.resolution);
+    addVideoParameter(body, ["resolution", "size"], videoResolutionRequestKey(model, videoState.resolution), videoState.resolution);
     addVideoParameter(body, ["duration"], "duration", Number(videoState.duration) || 8);
     addVideoParameter(body, ["quantity"], "quantity", Number(videoState.count) || 1);
     addVideoParameter(body, ["ratio", "aspect_ratio"], "aspect_ratio", videoState.aspectRatio);
@@ -1434,6 +1448,9 @@ function buildVideoRequestBody(model: ModelDefinition, modelName: string, finalP
       videoState.seedanceReferences.forEach((asset) => {
         content.push({ type: "image_url", image_url: { url: asset.publicUrl }, role: "reference_image" });
       });
+    }
+    if (videoState.mode === "first-frame" && videoState.seedanceFirst) {
+      content.push({ type: "image_url", image_url: { url: videoState.seedanceFirst.publicUrl }, role: "first_frame" });
     }
     if (videoState.mode === "start-end") {
       if (videoState.seedanceFirst) {
@@ -1461,10 +1478,9 @@ function buildVideoRequestBody(model: ModelDefinition, modelName: string, finalP
   const body: Record<string, unknown> = {
     model: modelName,
     prompt: finalPrompt,
-    images: mediaImages,
+    ...mediaFields,
   };
   addSharedVideoParameters(body, { includeAudio: true });
-  addVideoParameter(body, ["size"], "size", videoState.resolution);
   addSeedParameter(body, model);
   return { ...body, ...extra };
 }
@@ -1487,12 +1503,16 @@ async function handleVideoCreate() {
     videoState.error = readyError;
     return;
   }
-  if (supportsUnifiedAdapter(model.adapter) && videoState.unifiedImages.length < getUnifiedImageLimit(videoState.mode)) {
+  if (supportsUnifiedAdapter(model.adapter) && videoState.unifiedImages.length < unifiedVideoRequiredImageCount.value) {
     videoState.error = "当前模式需要的参考图数量还不够。";
     return;
   }
   if (model.adapter === "video-seedance" && videoState.mode === "reference" && !videoState.seedanceReferences.length) {
     videoState.error = "Seedance 参考模式至少需要上传一张参考图。";
+    return;
+  }
+  if (model.adapter === "video-seedance" && videoState.mode === "first-frame" && !videoState.seedanceFirst) {
+    videoState.error = "Seedance 首帧模式需要上传首帧。";
     return;
   }
   if (model.adapter === "video-seedance" && videoState.mode === "start-end" && (!videoState.seedanceFirst || !videoState.seedanceLast)) {
@@ -1503,37 +1523,49 @@ async function handleVideoCreate() {
   videoState.loading = true;
   videoState.error = "";
   videoState.taskResult = null;
+  const pendingConversation = appendLocalConversationMessages(conversationState.current, {
+    capability: "video",
+    titleSeed: finalPrompt,
+    modelGroupId: model.id,
+    subModelId: model.primarySubModelId || null,
+    messages: [
+      { role: "user", content: finalPrompt },
+      { role: "assistant", content: "", status: "processing" },
+    ],
+  });
+  const pendingAssistantId = pendingConversation.messages[pendingConversation.messages.length - 1]?.id || "";
+  setCurrentConversation(pendingConversation);
   const controller = createRequestController();
   try {
     const extra = parseJsonInput(videoState.extraJson);
     const requestBody = buildVideoRequestBody(model, resolveModelName(model, setting), finalPrompt, extra);
     videoState.createResult = await postProxyWithSignal<VideoCreateResult>("/api/proxy/video/create", buildModelProxyPayload(model, setting, {
       adapter: model.adapter,
-      conversationId: conversationIdFor("video"),
+      conversationId: persistedConversationIdFor("video"),
       requestBody,
     }), controller.signal);
     if (videoState.createResult.conversation) {
       setCurrentConversation(videoState.createResult.conversation);
     } else {
-      setCurrentConversation(appendLocalConversationMessages(conversationState.current, {
-        capability: "video",
-        titleSeed: finalPrompt,
-        modelGroupId: model.id,
-        messages: [
-          { role: "user", content: finalPrompt },
-          {
-            role: "assistant",
-            content: videoState.createResult.taskId,
-            status: "processing",
-          },
-        ],
+      setCurrentConversation(updateLocalConversationMessage(pendingConversation, pendingAssistantId, {
+        content: videoState.createResult.taskId,
+        status: "processing",
+        errorMessage: "",
+        canRetry: false,
       }));
     }
     if (videoState.autoPoll) {
       await handleVideoQuery(videoState.createResult.taskId);
     }
   } catch (error) {
-    videoState.error = handleRequestError(error, "视频任务提交失败。");
+    const serverConversation = error instanceof ApiRequestError ? conversationFromUnknown(error.detail) : null;
+    const message = resolveRequestErrorMessage(error, "视频任务提交失败。");
+    if (serverConversation) {
+      setCurrentConversation(serverConversation);
+    } else {
+      markLocalAssistantMessageFailed(pendingConversation, pendingAssistantId, message);
+    }
+    videoState.error = message;
   } finally {
     clearRequestController(controller);
     videoState.loading = false;
@@ -1555,7 +1587,7 @@ async function handleVideoQuery(taskIdArg?: string) {
   try {
     videoState.taskResult = await postProxyWithSignal<VideoQueryResult>("/api/proxy/video/query", buildModelProxyPayload(model, setting, {
       adapter: model.adapter,
-      conversationId: conversationIdFor("video"),
+      conversationId: persistedConversationIdFor("video"),
       taskId,
     }), controller.signal);
     if (videoState.taskResult.conversation) {
@@ -2349,11 +2381,14 @@ async function batchDelete() {
               <button v-if="supportsUnifiedAdapter(activeModel?.adapter) && videoState.mode === 'text'" class="button-secondary composer-attach-button" disabled>无需素材</button>
               <label v-else-if="supportsUnifiedAdapter(activeModel?.adapter)" class="button-secondary composer-attach-button">
                 {{ videoState.uploading ? "上传中" : "+ 参考图" }}
-                <input hidden type="file" accept="image/png,image/jpeg,image/jpg,image/webp" :multiple="videoState.mode === 'start-end'" @change="(event) => uploadVideoFiles(event, 'unified')" />
+                <input hidden type="file" accept="image/png,image/jpeg,image/jpg,image/webp" :multiple="unifiedVideoAllowsMultiple" @change="(event) => uploadVideoFiles(event, 'unified')" />
               </label>
               <label v-if="activeModel?.adapter === 'video-seedance' && videoState.mode === 'reference'" class="button-secondary composer-attach-button">
                 + 参考图
                 <input hidden type="file" multiple accept="image/png,image/jpeg,image/jpg,image/webp" @change="(event) => uploadVideoFiles(event, 'seedanceRef')" />
+              </label>
+              <label v-if="activeModel?.adapter === 'video-seedance' && videoState.mode === 'first-frame'" class="button-secondary composer-attach-button">
+                首帧<input hidden type="file" accept="image/png,image/jpeg,image/jpg,image/webp" @change="(event) => uploadVideoFiles(event, 'first')" />
               </label>
               <div v-if="activeModel?.adapter === 'video-seedance' && videoState.mode === 'start-end'" class="composer-frame-actions">
                 <label class="button-secondary composer-attach-button">首帧<input hidden type="file" accept="image/png,image/jpeg,image/jpg,image/webp" @change="(event) => uploadVideoFiles(event, 'first')" /></label>

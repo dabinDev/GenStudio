@@ -1,4 +1,5 @@
 import type {
+  Adapter,
   CatalogParameterDefinition,
   Capability,
   ConversationAsset,
@@ -53,6 +54,7 @@ export function prioritizeModelOptions(options: string[], selectedModel: string)
 export interface CatalogOptionItem {
   label: string;
   value: string;
+  maxCount?: number | null;
 }
 
 export function getPrimarySubModel(model: ModelDefinition) {
@@ -117,6 +119,7 @@ export function catalogOptionItems(model: ModelDefinition | null | undefined, ke
     .map((option) => ({
       label: option.optionName || option.optionValue,
       value: option.optionValue,
+      maxCount: option.maxCount,
     }))
     .filter((item) => item.value);
 }
@@ -134,6 +137,152 @@ export function catalogMaxCount(model: ModelDefinition | null | undefined, key: 
 
 export function catalogRequestKey(model: ModelDefinition | null | undefined, key: CatalogParameterKeyInput, fallback: string): string {
   return catalogParameter(model, key)?.paramKey || fallback;
+}
+
+export type VideoModeValue = "text" | "reference" | "first-frame" | "start-end";
+
+export interface ImageGenerationRequestInput {
+  references: string[];
+  count: string;
+  size: string;
+  ratio: string;
+  resolution: string;
+  quality: string;
+}
+
+export function catalogOptionMaxCount(
+  model: ModelDefinition | null | undefined,
+  key: CatalogParameterKeyInput,
+  optionValue: string,
+  fallback: number,
+): number {
+  const parameter = catalogParameter(model, key);
+  const option = parameter?.options.find((item) => item.optionValue === optionValue);
+  return option?.maxCount || fallback;
+}
+
+export function catalogVideoModeValue(value: string): VideoModeValue {
+  if (value === "reference") return "reference";
+  if (value === "first_frame" || value === "first-frame") return "first-frame";
+  if (value === "first_last_frame" || value === "start-end") return "start-end";
+  return "text";
+}
+
+export function videoModeParamValue(mode: VideoModeValue): string {
+  if (mode === "reference") return "reference";
+  if (mode === "first-frame") return "first_frame";
+  if (mode === "start-end") return "first_last_frame";
+  return "text";
+}
+
+export function videoModeRequiredUploadCount(mode: VideoModeValue): number {
+  if (mode === "text") return 0;
+  if (mode === "start-end") return 2;
+  return 1;
+}
+
+export function videoModeUploadLimit(model: ModelDefinition | null | undefined, mode: VideoModeValue): number {
+  const fallback = videoModeRequiredUploadCount(mode);
+  if (mode === "text") return 0;
+  return catalogOptionMaxCount(model, "video_mode", videoModeParamValue(mode), fallback) || fallback;
+}
+
+export function videoDurationFallbackOptions(adapter?: Adapter): string[] {
+  return adapter === "video-unified-veo" ? ["4", "5", "8"] : ["4", "5", "8", "10", "12", "15"];
+}
+
+export function videoDurationOptionItems(model: ModelDefinition | null | undefined): CatalogOptionItem[] {
+  const options = catalogOptionItems(model, "duration", videoDurationFallbackOptions(model?.adapter));
+  if (model?.adapter !== "video-unified-veo") return options;
+  return options.filter((item) => {
+    const duration = Number(item.value);
+    return Number.isFinite(duration) ? duration <= 8 : true;
+  });
+}
+
+export function videoResolutionRequestKey(
+  model: ModelDefinition | null | undefined,
+  value: string,
+): string {
+  const normalized = value.trim().toLowerCase();
+  if (/^\d+p$/.test(normalized)) return "resolution";
+  return catalogRequestKey(model, ["resolution", "size"], "resolution");
+}
+
+function addCatalogField(
+  payload: Record<string, unknown>,
+  model: ModelDefinition,
+  keys: CatalogParameterKeyInput,
+  outputKey: string,
+  value: unknown,
+) {
+  const keyList = Array.isArray(keys) ? keys : [keys];
+  if (supportsCatalogParameter(model, ...keyList)) {
+    payload[catalogRequestKey(model, keys, outputKey)] = value;
+  }
+}
+
+export function buildImageGenerationRequestBody(
+  model: ModelDefinition,
+  input: ImageGenerationRequestInput,
+  finalPrompt: string,
+  extra: Record<string, unknown>,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    prompt: finalPrompt,
+    response_format: "url",
+  };
+  if (supportsCatalogParameter(model, "image", "images") && input.references.length) {
+    body[catalogRequestKey(model, ["image", "images"], "image")] = input.references;
+  }
+  const quantity = Number(input.count) || 1;
+  addCatalogField(body, model, "quantity", "n", quantity);
+  if (catalogRequestKey(model, "quantity", "n") !== "n") {
+    addCatalogField(body, model, "quantity", "quantity", quantity);
+  }
+  addCatalogField(body, model, "size", "size", input.size);
+  addCatalogField(body, model, ["ratio", "aspect_ratio"], "ratio", input.ratio);
+  addCatalogField(body, model, "resolution", "resolution", input.resolution);
+  addCatalogField(body, model, "quality", "quality", input.quality);
+  return { ...body, ...extra };
+}
+
+export function buildVideoMediaFields(
+  model: ModelDefinition,
+  mode: VideoModeValue,
+  images: string[],
+): Record<string, unknown> {
+  if (mode === "text" || !images.length) return {};
+  const hasCatalog = hasCatalogParameters(model);
+  const first = images[0];
+  const last = images[1];
+  if (mode === "first-frame") {
+    if (hasCatalog && supportsCatalogParameter(model, "first_frame")) return { [catalogRequestKey(model, "first_frame", "first_frame")]: first };
+    return { images: [first] };
+  }
+  if (mode === "start-end") {
+    if (!hasCatalog) {
+      return { images: images.slice(0, 2) };
+    }
+    const fields: Record<string, unknown> = {};
+    if (first) {
+      fields[catalogRequestKey(model, "first_frame", "first_frame")] = first;
+    }
+    if (last) {
+      fields[catalogRequestKey(model, "last_frame", "last_frame")] = last;
+    }
+    if (!supportsCatalogParameter(model, "first_frame") && !supportsCatalogParameter(model, "last_frame")) {
+      return { images: images.slice(0, 2) };
+    }
+    return fields;
+  }
+  if (hasCatalog && supportsCatalogParameter(model, "img_url")) {
+    return { [catalogRequestKey(model, "img_url", "img_url")]: images };
+  }
+  if (hasCatalog && supportsCatalogParameter(model, "image", "images")) {
+    return { [catalogRequestKey(model, ["image", "images"], "images")]: images };
+  }
+  return { images };
 }
 
 export function getModelIdentifierError(value: string): string {
@@ -364,6 +513,14 @@ export function shouldResetConversationForModelSwitch(
   return Boolean(conversation?.capability && conversation.capability !== nextCapability);
 }
 
+export function visibleConversationMessages(
+  conversation: ConversationDefinition | null | undefined,
+  activeCapability: Capability | null | undefined,
+): ConversationMessage[] {
+  if (!conversation || !activeCapability || conversation.capability !== activeCapability) return [];
+  return conversation.messages;
+}
+
 export function generatedAssetReferenceFileName(asset: { assetType: string; url: string }): string {
   if (asset.url.startsWith("data:")) {
     return asset.assetType === "video" ? "generated-video.mp4" : "generated-image.png";
@@ -401,7 +558,7 @@ export function videoGenerationSummary(input: {
   count?: string;
 }): string {
   const modeLabel = input.mode
-    ? input.mode === "reference" ? "全能参考" : input.mode === "start-end" ? "首尾帧" : "文生视频"
+    ? input.mode === "reference" ? "全能参考" : input.mode === "first-frame" ? "首帧" : input.mode === "start-end" ? "首尾帧" : "文生视频"
     : "";
   return [
     modeLabel,

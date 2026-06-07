@@ -3,8 +3,11 @@ import { describe, expect, it } from "vitest";
 import type { ModelDefinition, ModelSetting } from "./types";
 import {
   appendLocalConversationMessages,
+  buildImageGenerationRequestBody,
+  buildVideoMediaFields,
   updateLocalConversationMessage,
   markConversationMessageFailed,
+  catalogOptionMaxCount,
   generatedAssetReferenceFileName,
   findPromptBeforeMessage,
   getModelIdentifierError,
@@ -17,6 +20,7 @@ import {
   catalogOptionItems,
   catalogParameterSignature,
   catalogRequestKey,
+  catalogVideoModeValue,
   hasCatalogParameters,
   hasCatalogParameter,
   prioritizeModelOptions,
@@ -27,7 +31,14 @@ import {
   shouldResetConversationForModelSwitch,
   supportsCatalogParameter,
   testResultSummary,
+  visibleConversationMessages,
+  videoDurationFallbackOptions,
+  videoDurationOptionItems,
+  videoResolutionRequestKey,
   videoGenerationSummary,
+  videoModeParamValue,
+  videoModeRequiredUploadCount,
+  videoModeUploadLimit,
 } from "./utils";
 import type { ConversationDefinition, ConversationMessage } from "./types";
 
@@ -337,6 +348,376 @@ describe("model selection helpers", () => {
     expect(catalogRequestKey({ ...catalogModel, subModels: [] }, ["resolution", "size"], "resolution")).toBe("resolution");
   });
 
+  it("builds image request parameters without overwriting the selected size with resolution", () => {
+    const imageModel: ModelDefinition = {
+      ...textModel,
+      id: "gpt-image-catalog",
+      capability: "image",
+      adapter: "image-openai",
+      primarySubModelId: "sub-image",
+      subModels: [
+        {
+          id: "sub-image",
+          modelName: "gpt-image-2",
+          displayName: "GPT Image 2",
+          capability: "image",
+          adapter: "image-openai",
+          isPrimary: true,
+          status: "active",
+          catalog: {
+            id: "10029",
+            displayName: "GPT Image 2",
+            modelName: "gpt-image-2",
+            modelType: 2,
+            capability: "image",
+            icon: "",
+            description: "",
+            inputHint: "",
+            successRate: "",
+            source: "kkyi",
+            channelGroups: [],
+            parameters: [
+              {
+                id: "size",
+                displayName: "尺寸",
+                paramKey: "size",
+                description: "",
+                widgetType: 3,
+                isRequired: true,
+                defaultValue: "auto",
+                functionTag: "",
+                maxCount: null,
+                sortOrder: 1,
+                options: [
+                  { id: "size-auto", optionName: "自动", optionValue: "auto", description: "", maxCount: null, isDefault: true, sortOrder: 1, priceFactor: "1" },
+                  { id: "size-wide", optionName: "横图", optionValue: "1536x1024", description: "", maxCount: null, isDefault: false, sortOrder: 2, priceFactor: "1" },
+                ],
+              },
+              {
+                id: "quality",
+                displayName: "质量",
+                paramKey: "quality",
+                description: "",
+                widgetType: 3,
+                isRequired: false,
+                defaultValue: "auto",
+                functionTag: "",
+                maxCount: null,
+                sortOrder: 2,
+                options: [],
+              },
+              {
+                id: "quantity",
+                displayName: "数量",
+                paramKey: "quantity",
+                description: "",
+                widgetType: 3,
+                isRequired: false,
+                defaultValue: "1",
+                functionTag: "",
+                maxCount: null,
+                sortOrder: 3,
+                options: [],
+              },
+            ],
+          },
+        },
+      ],
+      builtin: false,
+    };
+
+    const body = buildImageGenerationRequestBody(
+      imageModel,
+      {
+        references: [],
+        count: "1",
+        size: "1536x1024",
+        ratio: "16:9",
+        resolution: "2k",
+        quality: "auto",
+      },
+      "参考图片生成汽车人",
+      {},
+    );
+
+    expect(body).toMatchObject({
+      prompt: "参考图片生成汽车人",
+      response_format: "url",
+      size: "1536x1024",
+      quality: "auto",
+      quantity: 1,
+    });
+    expect(body).not.toHaveProperty("resolution");
+    expect(body.size).not.toBe("2k");
+  });
+
+  it("keeps catalog video modes distinct and reads upload limits from the selected option", () => {
+    const videoModel: ModelDefinition = {
+      ...textModel,
+      id: "seedance-catalog",
+      capability: "video",
+      adapter: "video-unified-generic",
+      primarySubModelId: "sub-video",
+      subModels: [
+        {
+          id: "sub-video",
+          modelName: "kuaikuai-2-flash-pro",
+          displayName: "Seed Video",
+          capability: "video",
+          adapter: "video-unified-generic",
+          isPrimary: true,
+          status: "active",
+          catalog: {
+            id: "10028",
+            displayName: "Seed Video",
+            modelName: "kuaikuai-2-flash-pro",
+            modelType: 3,
+            capability: "video",
+            icon: "",
+            description: "",
+            inputHint: "",
+            successRate: "",
+            source: "kkyi",
+            channelGroups: [],
+            parameters: [
+              {
+                id: "mode",
+                displayName: "生成模式",
+                paramKey: "video_mode",
+                description: "",
+                widgetType: 3,
+                isRequired: true,
+                defaultValue: "reference",
+                functionTag: "",
+                maxCount: null,
+                sortOrder: 1,
+                options: [
+                  { id: "mode-text", optionName: "文生视频", optionValue: "text", description: "", maxCount: 0, isDefault: false, sortOrder: 1, priceFactor: "1" },
+                  { id: "mode-reference", optionName: "参考图生成视频", optionValue: "reference", description: "", maxCount: 5, isDefault: true, sortOrder: 2, priceFactor: "1" },
+                  { id: "mode-first", optionName: "首帧生成视频", optionValue: "first_frame", description: "", maxCount: 1, isDefault: false, sortOrder: 3, priceFactor: "1" },
+                  { id: "mode-first-last", optionName: "首尾帧生成视频", optionValue: "first_last_frame", description: "", maxCount: 2, isDefault: false, sortOrder: 4, priceFactor: "1" },
+                ],
+              },
+              {
+                id: "duration",
+                displayName: "视频时长",
+                paramKey: "duration",
+                description: "",
+                widgetType: 3,
+                isRequired: true,
+                defaultValue: "5",
+                functionTag: "",
+                maxCount: null,
+                sortOrder: 2,
+                options: [],
+              },
+            ],
+          },
+        },
+      ],
+      builtin: false,
+    };
+
+    expect(catalogVideoModeValue("reference")).toBe("reference");
+    expect(catalogVideoModeValue("first_frame")).toBe("first-frame");
+    expect(catalogVideoModeValue("first_last_frame")).toBe("start-end");
+    expect(videoModeParamValue("first-frame")).toBe("first_frame");
+    expect(videoModeParamValue("start-end")).toBe("first_last_frame");
+    expect(catalogOptionMaxCount(videoModel, "video_mode", "reference", 1)).toBe(5);
+    expect(videoModeUploadLimit(videoModel, "reference")).toBe(5);
+    expect(videoModeRequiredUploadCount("reference")).toBe(1);
+    expect(videoModeUploadLimit(videoModel, "first-frame")).toBe(1);
+    expect(videoModeRequiredUploadCount("first-frame")).toBe(1);
+    expect(videoModeUploadLimit(videoModel, "start-end")).toBe(2);
+    expect(videoModeRequiredUploadCount("start-end")).toBe(2);
+  });
+
+  it("places selected video references in catalog-specific request fields", () => {
+    const videoModel: ModelDefinition = {
+      ...textModel,
+      id: "seedance-fields",
+      capability: "video",
+      adapter: "video-unified-generic",
+      primarySubModelId: "sub-video",
+      subModels: [
+        {
+          id: "sub-video",
+          modelName: "kuaikuai-2-flash-pro",
+          displayName: "Seed Video",
+          capability: "video",
+          adapter: "video-unified-generic",
+          isPrimary: true,
+          status: "active",
+          catalog: {
+            id: "10028",
+            displayName: "Seed Video",
+            modelName: "kuaikuai-2-flash-pro",
+            modelType: 3,
+            capability: "video",
+            icon: "",
+            description: "",
+            inputHint: "",
+            successRate: "",
+            source: "kkyi",
+            channelGroups: [],
+            parameters: [
+              { id: "mode", displayName: "生成模式", paramKey: "video_mode", description: "", widgetType: 3, isRequired: true, defaultValue: "reference", functionTag: "", maxCount: null, sortOrder: 1, options: [] },
+              { id: "img", displayName: "参考图", paramKey: "img_url", description: "", widgetType: 6, isRequired: false, defaultValue: "", functionTag: "", maxCount: 5, sortOrder: 2, options: [] },
+              { id: "first", displayName: "首帧", paramKey: "first_frame", description: "", widgetType: 6, isRequired: false, defaultValue: "", functionTag: "", maxCount: 1, sortOrder: 3, options: [] },
+              { id: "last", displayName: "尾帧", paramKey: "last_frame", description: "", widgetType: 6, isRequired: false, defaultValue: "", functionTag: "", maxCount: 1, sortOrder: 4, options: [] },
+            ],
+          },
+        },
+      ],
+      builtin: false,
+    };
+
+    expect(buildVideoMediaFields(videoModel, "reference", ["/a.png", "/b.png"])).toEqual({
+      img_url: ["/a.png", "/b.png"],
+    });
+    expect(buildVideoMediaFields(videoModel, "first-frame", ["/first.png"])).toEqual({
+      first_frame: "/first.png",
+    });
+    expect(buildVideoMediaFields(videoModel, "start-end", ["/first.png", "/last.png"])).toEqual({
+      first_frame: "/first.png",
+      last_frame: "/last.png",
+    });
+  });
+
+  it("keeps uncataloged generic video references on the stable images field", () => {
+    const genericVideoModel: ModelDefinition = {
+      ...textModel,
+      id: "generic-video",
+      capability: "video",
+      adapter: "video-unified-generic",
+      model: "custom-video-model",
+    };
+
+    expect(buildVideoMediaFields(genericVideoModel, "reference", ["/a.png", "/b.png"])).toEqual({
+      images: ["/a.png", "/b.png"],
+    });
+    expect(buildVideoMediaFields(genericVideoModel, "start-end", ["/first.png", "/last.png"])).toEqual({
+      images: ["/first.png", "/last.png"],
+    });
+  });
+
+  it("keeps Veo fallback duration options capped at 8 seconds", () => {
+    expect(videoDurationFallbackOptions("video-unified-veo")).toEqual(["4", "5", "8"]);
+    expect(videoDurationFallbackOptions("video-unified-generic")).toContain("15");
+  });
+
+  it("filters catalog Veo duration choices above 8 seconds", () => {
+    const veoModel: ModelDefinition = {
+      ...textModel,
+      id: "veo-catalog",
+      capability: "video",
+      adapter: "video-unified-veo",
+      primarySubModelId: "sub-veo",
+      subModels: [
+        {
+          id: "sub-veo",
+          modelName: "veo3.1-fast-components",
+          displayName: "Veo",
+          capability: "video",
+          adapter: "video-unified-veo",
+          isPrimary: true,
+          status: "active",
+          catalog: {
+            id: "10088",
+            displayName: "Veo",
+            modelName: "veo3.1-fast-components",
+            modelType: 3,
+            capability: "video",
+            icon: "",
+            description: "",
+            inputHint: "",
+            successRate: "",
+            source: "kkyi",
+            channelGroups: [],
+            parameters: [
+              {
+                id: "duration",
+                displayName: "视频时长",
+                paramKey: "duration",
+                description: "",
+                widgetType: 3,
+                isRequired: true,
+                defaultValue: "8",
+                functionTag: "",
+                maxCount: null,
+                sortOrder: 1,
+                options: [
+                  { id: "duration-4", optionName: "4秒", optionValue: "4", description: "", maxCount: null, isDefault: false, sortOrder: 1, priceFactor: "1" },
+                  { id: "duration-8", optionName: "8秒", optionValue: "8", description: "", maxCount: null, isDefault: true, sortOrder: 2, priceFactor: "1" },
+                  { id: "duration-10", optionName: "10秒", optionValue: "10", description: "", maxCount: null, isDefault: false, sortOrder: 3, priceFactor: "1" },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+      builtin: false,
+    };
+
+    expect(videoDurationOptionItems(veoModel).map((item) => item.value)).toEqual(["4", "8"]);
+  });
+
+  it("does not send p-based video resolution values through the size field", () => {
+    const sizeOnlyVideoModel: ModelDefinition = {
+      ...textModel,
+      id: "size-only-video",
+      capability: "video",
+      adapter: "video-unified-generic",
+      primarySubModelId: "sub-video",
+      subModels: [
+        {
+          id: "sub-video",
+          modelName: "kuaikuai-2-flash-pro",
+          displayName: "Seed Video",
+          capability: "video",
+          adapter: "video-unified-generic",
+          isPrimary: true,
+          status: "active",
+          catalog: {
+            id: "10028",
+            displayName: "Seed Video",
+            modelName: "kuaikuai-2-flash-pro",
+            modelType: 3,
+            capability: "video",
+            icon: "",
+            description: "",
+            inputHint: "",
+            successRate: "",
+            source: "kkyi",
+            channelGroups: [],
+            parameters: [
+              {
+                id: "size",
+                displayName: "清晰度",
+                paramKey: "size",
+                description: "",
+                widgetType: 3,
+                isRequired: true,
+                defaultValue: "720p",
+                functionTag: "",
+                maxCount: null,
+                sortOrder: 1,
+                options: [
+                  { id: "size-480", optionName: "480p", optionValue: "480p", description: "", maxCount: null, isDefault: false, sortOrder: 1, priceFactor: "1" },
+                  { id: "size-720", optionName: "720p", optionValue: "720p", description: "", maxCount: null, isDefault: true, sortOrder: 2, priceFactor: "1" },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+      builtin: false,
+    };
+
+    expect(videoResolutionRequestKey(sizeOnlyVideoModel, "480p")).toBe("resolution");
+    expect(videoResolutionRequestKey(sizeOnlyVideoModel, "1280x720")).toBe("size");
+  });
+
   it("rejects URL-shaped model identifiers before saving or testing", () => {
     expect(getModelIdentifierError("https://token.example.com")).toContain("baseURL");
     expect(getModelIdentifierError("gpt-4o")).toBe("");
@@ -389,6 +770,18 @@ describe("conversation helpers", () => {
     expect(shouldResetConversationForModelSwitch({ capability: "image" }, "video")).toBe(true);
     expect(shouldResetConversationForModelSwitch({ capability: "image" }, "image")).toBe(false);
     expect(shouldResetConversationForModelSwitch(null, "text")).toBe(false);
+  });
+
+  it("hides the current conversation when it belongs to another active creation type", () => {
+    const textConversation = conversation({
+      id: "cnv_text",
+      capability: "text",
+      messages: [message({ id: "m1", role: "user", capability: "text", content: "文案消息" })],
+    });
+
+    expect(visibleConversationMessages(textConversation, "text").map((item) => item.content)).toEqual(["文案消息"]);
+    expect(visibleConversationMessages(textConversation, "video")).toEqual([]);
+    expect(visibleConversationMessages(textConversation, null)).toEqual([]);
   });
 
   it("uses readable filenames for generated data-url references", () => {

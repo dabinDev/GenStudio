@@ -167,9 +167,17 @@ export function hasCatalogParameters(model?: ModelDefinition | null): boolean {
 export function modelCatalogInputHint(model: ModelDefinition | null | undefined, fallback: string): string {
   if (!model) return fallback;
   const subCatalogHint = getPrimarySubModel(model)?.catalog?.inputHint?.trim();
-  if (subCatalogHint) return subCatalogHint;
+  if (subCatalogHint && !isBrokenDisplayText(subCatalogHint)) return subCatalogHint;
   const modelCatalogHint = model.catalog?.inputHint?.trim();
-  return modelCatalogHint || fallback;
+  return modelCatalogHint && !isBrokenDisplayText(modelCatalogHint) ? modelCatalogHint : fallback;
+}
+
+function isBrokenDisplayText(value: string): boolean {
+  const text = value.trim();
+  if (!text) return false;
+  if (/^\?{8,}$/.test(text.replace(/\s+/g, ""))) return true;
+  const mojibakeChars = text.match(/[锟�鐢瑙鍥閸缂]/g)?.length || 0;
+  return text.length >= 12 && mojibakeChars / text.length > 0.28;
 }
 
 export function modelCatalogIconUrl(model: ModelDefinition | null | undefined): string {

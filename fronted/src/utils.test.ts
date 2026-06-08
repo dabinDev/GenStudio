@@ -499,6 +499,29 @@ describe("model selection helpers", () => {
     expect(modelCatalogInputHint({ ...catalogModel, subModels: [] }, "Fallback prompt")).toBe("Fallback prompt");
   });
 
+  it("falls back when catalog input hints are broken encoding placeholders", () => {
+    const fallback = "描述你想要生成的内容。";
+    const catalogModel: ModelDefinition = {
+      ...textModel,
+      catalog: {
+        id: "broken-hint",
+        displayName: "Broken Hint",
+        modelName: "broken-hint",
+        modelType: 1,
+        capability: "text",
+        icon: "",
+        description: "",
+        inputHint: "????????????????????????????????????????????????",
+        successRate: "",
+        source: "kkyi",
+        channelGroups: [],
+        parameters: [],
+      },
+    };
+
+    expect(modelCatalogInputHint(catalogModel, fallback)).toBe(fallback);
+  });
+
   it("uses the selected sub-model catalog icon when available", () => {
     const iconModel: ModelDefinition = {
       ...textModel,

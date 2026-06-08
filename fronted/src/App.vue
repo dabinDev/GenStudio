@@ -2688,7 +2688,8 @@ async function batchDelete() {
 
           <div v-else class="empty-canvas">
             <div class="empty-canvas-card">
-              <div class="hero-model-mark">
+              <div :class="['hero-model-mark', activeModel && modelIconUrl(activeModel) ? 'hero-model-mark-has-icon' : '']">
+                <img v-if="activeModel && modelIconUrl(activeModel)" :src="modelIconUrl(activeModel)" :alt="modelDisplayName(activeModel)" loading="lazy" @error="hideBrokenModelIcon" />
                 {{ activeCapability === "text" ? "T" : activeCapability === "image" ? "I" : "V" }}
               </div>
               <div class="empty-canvas-top">

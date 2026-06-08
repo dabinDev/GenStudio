@@ -33,6 +33,14 @@ def is_admin_user(user: User | None, settings: Settings | None = None) -> bool:
     return bool(admin_identifiers.intersection(identity for identity in identities if identity))
 
 
+def ensure_user_active(user: User) -> User:
+    if user.status in {"disabled", "deleted"}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"message": "账号已被禁用，请联系管理员。"})
+    if user.status != "active":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail={"message": "用户不可用。"})
+    return user
+
+
 def serialize_user(user: User) -> UserOut:
     return UserOut(
         id=user.id,
@@ -130,10 +138,21 @@ def get_current_user(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail={"message": "请先登录。"})
     _token, session = session_pair
     user = db.get(User, session.user_id)
-    if not user or user.status != "active":
+    if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail={"message": "用户不可用。"})
+    ensure_user_active(user)
     session.last_seen_at = utcnow()
     return user
+
+
+def require_admin_user(
+    current_user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> User:
+    ensure_user_active(current_user)
+    if not is_admin_user(current_user, settings):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"message": "????????"})
+    return current_user
 
 
 def get_optional_current_user(
@@ -146,8 +165,9 @@ def get_optional_current_user(
         return None
     _token, session = session_pair
     user = db.get(User, session.user_id)
-    if not user or user.status != "active":
+    if not user:
         return None
+    ensure_user_active(user)
     session.last_seen_at = utcnow()
     return user
 
@@ -254,8 +274,9 @@ def authenticate_local_user(db: Session, payload: LoginRequest, settings: Settin
             raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail={"message": "登录暂时锁定，请稍后再试。"})
         raise generic_error
     user = db.get(User, credential.user_id)
-    if not user or user.status != "active":
+    if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail={"message": "用户不可用。"})
+    ensure_user_active(user)
     credential.failed_attempts = 0
     credential.locked_until = None
     credential.last_failed_at = None

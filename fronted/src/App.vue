@@ -406,6 +406,47 @@ const adminState = reactive({
 });
 
 const adminActiveTab = computed(() => adminTabs.find((tab) => tab.value === adminState.activeTab) || adminTabs[0]);
+const adminOverviewTotal = computed(() => Math.max(0, adminState.overview?.totalCalls || 0));
+const adminSuccessRate = computed(() => {
+  if (!adminOverviewTotal.value) return 0;
+  return ((adminState.overview?.successCalls || 0) / adminOverviewTotal.value) * 100;
+});
+const adminFailurePercent = computed(() => (adminState.overview?.failureRate || 0) * 100);
+const adminAverageDuration = computed(() => formatAdminDuration(adminState.overview?.averageDurationMs || 0));
+const adminTopUsers = computed(() =>
+  [...adminState.overviewUsers].sort((left, right) => right.totalCalls - left.totalCalls).slice(0, 8),
+);
+const adminTopModels = computed(() =>
+  [...adminState.overviewModels].sort((left, right) => right.totalCalls - left.totalCalls).slice(0, 8),
+);
+const adminSlowModels = computed(() =>
+  [...adminState.overviewModels]
+    .filter((row) => row.totalCalls > 0)
+    .sort((left, right) => right.averageDurationMs - left.averageDurationMs)
+    .slice(0, 5),
+);
+const adminMaxUserCalls = computed(() => Math.max(1, ...adminTopUsers.value.map((row) => row.totalCalls)));
+const adminMaxModelCalls = computed(() => Math.max(1, ...adminTopModels.value.map((row) => row.totalCalls)));
+const adminStatusDonutSegments = computed(() => [
+  { label: "成功", value: adminState.overview?.successCalls || 0, color: "#16a34a" },
+  { label: "失败", value: adminState.overview?.failedCalls || 0, color: "#ef4444" },
+]);
+const adminOwnershipDonutSegments = computed(() => [
+  { label: "公用模型", value: adminState.overview?.publicModelCalls || 0, color: "#2563eb" },
+  { label: "私有模型", value: adminState.overview?.privateModelCalls || 0, color: "#f59e0b" },
+]);
+const adminCapabilityRows = computed(() => {
+  const totals: Record<Capability, number> = { text: 0, image: 0, video: 0 };
+  adminState.overviewModels.forEach((row) => {
+    totals[row.model.capability] += row.totalCalls || 0;
+  });
+  return (Object.keys(totals) as Capability[]).map((capability) => ({
+    capability,
+    label: CAPABILITY_LABELS[capability],
+    total: totals[capability],
+    percent: adminRatio(totals[capability], adminOverviewTotal.value),
+  }));
+});
 
 const conversationState = reactive({
   listOpen: false,
@@ -1105,6 +1146,43 @@ function messageStatusLabel(message: ConversationMessage): string {
   if (message.status === "processing") return "生成中";
   if (message.status === "error") return "失败";
   return "完成";
+}
+
+function formatAdminNumber(value: number | undefined | null): string {
+  return Math.max(0, Number(value || 0)).toLocaleString("zh-CN");
+}
+
+function adminRatio(value: number, total: number): number {
+  if (!total) return 0;
+  return Math.max(0, Math.min(100, (value / total) * 100));
+}
+
+function adminPercentLabel(value: number): string {
+  return `${value.toFixed(1)}%`;
+}
+
+function formatAdminDuration(value: number | undefined | null): string {
+  const duration = Math.max(0, Number(value || 0));
+  if (duration >= 1000) return `${(duration / 1000).toFixed(1)}s`;
+  return `${Math.round(duration)}ms`;
+}
+
+function adminBarWidth(value: number, max: number): string {
+  return `${Math.max(4, adminRatio(value, max))}%`;
+}
+
+function adminDonutGradient(segments: Array<{ value: number; color: string }>): string {
+  const total = segments.reduce((sum, segment) => sum + Math.max(0, segment.value), 0);
+  if (!total) return "conic-gradient(#e2e8f0 0deg 360deg)";
+  let cursor = 0;
+  const stops = segments
+    .filter((segment) => segment.value > 0)
+    .map((segment) => {
+      const start = cursor;
+      cursor += (segment.value / total) * 360;
+      return `${segment.color} ${start.toFixed(2)}deg ${cursor.toFixed(2)}deg`;
+    });
+  return `conic-gradient(${stops.join(", ")})`;
 }
 
 function formatConversationTime(value: string): string {
@@ -3806,54 +3884,159 @@ async function batchDelete() {
                 <div class="admin-section-head">
                   <div>
                     <h3>运营面板</h3>
-                    <p class="muted">按用户、模型和调用状态查看公用模型与私有模型的使用情况。</p>
+                    <p class="muted">按用户、模型、能力和调用状态查看公用模型与私有模型的使用情况。</p>
                   </div>
                   <button class="button-secondary" @click="loadAdminOverview">刷新统计</button>
                 </div>
 
-                <div class="admin-metrics">
-                  <article class="admin-metric"><span>总调用</span><strong>{{ adminState.overview?.totalCalls || 0 }}</strong><small>全部创作请求</small></article>
-                  <article class="admin-metric"><span>成功</span><strong>{{ adminState.overview?.successCalls || 0 }}</strong><small>成功返回结果</small></article>
-                  <article class="admin-metric"><span>失败</span><strong>{{ adminState.overview?.failedCalls || 0 }}</strong><small>需要排查或重试</small></article>
-                  <article class="admin-metric"><span>失败率</span><strong>{{ ((adminState.overview?.failureRate || 0) * 100).toFixed(1) }}%</strong><small>失败 / 总调用</small></article>
-                  <article class="admin-metric"><span>公用模型调用</span><strong>{{ adminState.overview?.publicModelCalls || 0 }}</strong><small>管理员发布模型</small></article>
-                  <article class="admin-metric"><span>私有模型调用</span><strong>{{ adminState.overview?.privateModelCalls || 0 }}</strong><small>用户自有模型</small></article>
+                <div class="admin-metrics admin-metrics-hero">
+                  <article class="admin-metric admin-metric-primary">
+                    <span><i>API</i> 总调用</span>
+                    <strong>{{ formatAdminNumber(adminState.overview?.totalCalls) }}</strong>
+                    <small>全部创作请求</small>
+                  </article>
+                  <article class="admin-metric">
+                    <span><i>OK</i> 成功</span>
+                    <strong>{{ formatAdminNumber(adminState.overview?.successCalls) }}</strong>
+                    <small>{{ adminPercentLabel(adminSuccessRate) }} 成功率</small>
+                  </article>
+                  <article class="admin-metric admin-metric-alert">
+                    <span><i>ERR</i> 失败</span>
+                    <strong>{{ formatAdminNumber(adminState.overview?.failedCalls) }}</strong>
+                    <small>{{ adminPercentLabel(adminFailurePercent) }} 失败率</small>
+                  </article>
+                  <article class="admin-metric">
+                    <span><i>AVG</i> 平均响应</span>
+                    <strong>{{ adminAverageDuration }}</strong>
+                    <small>服务端记录耗时</small>
+                  </article>
+                  <article class="admin-metric">
+                    <span><i>PUB</i> 公用模型调用</span>
+                    <strong>{{ formatAdminNumber(adminState.overview?.publicModelCalls) }}</strong>
+                    <small>管理员发布模型</small>
+                  </article>
+                  <article class="admin-metric">
+                    <span><i>PRI</i> 私有模型调用</span>
+                    <strong>{{ formatAdminNumber(adminState.overview?.privateModelCalls) }}</strong>
+                    <small>用户自有模型</small>
+                  </article>
                 </div>
 
-                <div class="admin-dual-grid">
-                  <section class="admin-subpanel">
+                <div class="admin-ops-grid">
+                  <section class="admin-subpanel admin-chart-card">
                     <div class="admin-subpanel-head">
-                      <h4>用户调用排行</h4>
-                      <span>Top users</span>
+                      <h4>调用状态</h4>
+                      <span>Success / Error</span>
                     </div>
-                    <div class="admin-data-table admin-overview-table">
-                      <div class="admin-data-row admin-data-head"><span>用户</span><span>总调用</span><span>公用</span><span>私有</span><span>失败</span></div>
-                      <div v-for="row in adminState.overviewUsers" :key="row.user.id" class="admin-data-row">
-                        <span>{{ adminUserLabel(row.user) }}</span>
-                        <strong>{{ row.totalCalls }}</strong>
-                        <span>{{ row.publicModelCalls }}</span>
-                        <span>{{ row.privateModelCalls }}</span>
-                        <span>{{ row.failedCalls }}</span>
+                    <div class="admin-donut-layout">
+                      <div class="admin-donut" :style="{ background: adminDonutGradient(adminStatusDonutSegments) }">
+                        <span>{{ adminPercentLabel(adminSuccessRate) }}</span>
+                        <small>成功率</small>
                       </div>
-                      <p v-if="!adminState.overviewUsers.length" class="admin-empty">暂无用户调用数据</p>
+                      <div class="admin-chart-legend">
+                        <div v-for="segment in adminStatusDonutSegments" :key="segment.label" class="admin-legend-row">
+                          <i :style="{ backgroundColor: segment.color }"></i>
+                          <span>{{ segment.label }}</span>
+                          <strong>{{ formatAdminNumber(segment.value) }}</strong>
+                          <small>{{ adminPercentLabel(adminRatio(segment.value, adminOverviewTotal)) }}</small>
+                        </div>
+                      </div>
                     </div>
                   </section>
 
-                  <section class="admin-subpanel">
+                  <section class="admin-subpanel admin-chart-card">
                     <div class="admin-subpanel-head">
-                      <h4>模型调用排行</h4>
+                      <h4>模型归属</h4>
+                      <span>Public / Private</span>
+                    </div>
+                    <div class="admin-donut-layout">
+                      <div class="admin-donut admin-donut-alt" :style="{ background: adminDonutGradient(adminOwnershipDonutSegments) }">
+                        <span>{{ formatAdminNumber(adminState.overview?.publicModelCalls) }}</span>
+                        <small>公用调用</small>
+                      </div>
+                      <div class="admin-chart-legend">
+                        <div v-for="segment in adminOwnershipDonutSegments" :key="segment.label" class="admin-legend-row">
+                          <i :style="{ backgroundColor: segment.color }"></i>
+                          <span>{{ segment.label }}</span>
+                          <strong>{{ formatAdminNumber(segment.value) }}</strong>
+                          <small>{{ adminPercentLabel(adminRatio(segment.value, adminOverviewTotal)) }}</small>
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section class="admin-subpanel admin-chart-card">
+                    <div class="admin-subpanel-head">
+                      <h4>能力分布</h4>
+                      <span>Text / Image / Video</span>
+                    </div>
+                    <div class="admin-progress-list">
+                      <div v-for="row in adminCapabilityRows" :key="row.capability" class="admin-progress-row">
+                        <div>
+                          <span>{{ row.label }}</span>
+                          <strong>{{ formatAdminNumber(row.total) }}</strong>
+                        </div>
+                        <div class="admin-progress-track">
+                          <i :class="`admin-progress-${row.capability}`" :style="{ width: adminBarWidth(row.total, adminOverviewTotal) }"></i>
+                        </div>
+                        <small>{{ adminPercentLabel(row.percent) }}</small>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section class="admin-subpanel admin-chart-card">
+                    <div class="admin-subpanel-head">
+                      <h4>慢响应模型</h4>
+                      <span>Slowest models</span>
+                    </div>
+                    <div class="admin-slow-list">
+                      <div v-for="row in adminSlowModels" :key="row.model.id" class="admin-slow-row">
+                        <div>
+                          <strong>{{ modelDisplayName(mapServerModel(row.model)) }}</strong>
+                          <span>{{ formatAdminNumber(row.totalCalls) }} 次调用</span>
+                        </div>
+                        <b>{{ formatAdminDuration(row.averageDurationMs) }}</b>
+                      </div>
+                      <p v-if="!adminSlowModels.length" class="admin-empty">暂无慢响应数据</p>
+                    </div>
+                  </section>
+
+                  <section class="admin-subpanel admin-chart-card admin-wide-panel">
+                    <div class="admin-subpanel-head">
+                      <h4>模型调用 Top 8</h4>
                       <span>Top models</span>
                     </div>
-                    <div class="admin-data-table admin-overview-table">
-                      <div class="admin-data-row admin-data-head"><span>模型</span><span>总调用</span><span>成功</span><span>失败</span><span>均耗时</span></div>
-                      <div v-for="row in adminState.overviewModels" :key="row.model.id" class="admin-data-row">
-                        <span>{{ modelDisplayName(mapServerModel(row.model)) }}</span>
-                        <strong>{{ row.totalCalls }}</strong>
-                        <span>{{ row.successCalls }}</span>
-                        <span>{{ row.failedCalls }}</span>
-                        <span>{{ row.averageDurationMs }}ms</span>
+                    <div class="admin-bar-list">
+                      <div v-for="row in adminTopModels" :key="row.model.id" class="admin-bar-row">
+                        <div class="admin-bar-label">
+                          <strong>{{ modelDisplayName(mapServerModel(row.model)) }}</strong>
+                          <span>{{ CAPABILITY_LABELS[row.model.capability] }} / 成功 {{ formatAdminNumber(row.successCalls) }} / 失败 {{ formatAdminNumber(row.failedCalls) }}</span>
+                        </div>
+                        <div class="admin-bar-track"><i :style="{ width: adminBarWidth(row.totalCalls, adminMaxModelCalls) }"></i></div>
+                        <b>{{ formatAdminNumber(row.totalCalls) }}</b>
                       </div>
-                      <p v-if="!adminState.overviewModels.length" class="admin-empty">暂无模型调用数据</p>
+                      <p v-if="!adminTopModels.length" class="admin-empty">暂无模型调用数据</p>
+                    </div>
+                  </section>
+
+                  <section class="admin-subpanel admin-chart-card admin-wide-panel">
+                    <div class="admin-subpanel-head">
+                      <h4>用户调用 Top 8</h4>
+                      <span>Top users</span>
+                    </div>
+                    <div class="admin-user-rank-list">
+                      <div v-for="row in adminTopUsers" :key="row.user.id" class="admin-user-rank-row">
+                        <div class="admin-user-cell">
+                          <div class="admin-user-avatar">{{ (row.user.nickname || row.user.email || "U").slice(0, 1) }}</div>
+                          <div>
+                            <strong>{{ adminUserLabel(row.user) }}</strong>
+                            <small>公用 {{ formatAdminNumber(row.publicModelCalls) }} / 私有 {{ formatAdminNumber(row.privateModelCalls) }} / 失败 {{ formatAdminNumber(row.failedCalls) }}</small>
+                          </div>
+                        </div>
+                        <div class="admin-bar-track"><i :style="{ width: adminBarWidth(row.totalCalls, adminMaxUserCalls) }"></i></div>
+                        <b>{{ formatAdminNumber(row.totalCalls) }}</b>
+                      </div>
+                      <p v-if="!adminTopUsers.length" class="admin-empty">暂无用户调用数据</p>
                     </div>
                   </section>
                 </div>

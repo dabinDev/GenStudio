@@ -1297,6 +1297,8 @@ async def admin_overview_users_route(
                 "publicModelCalls": len([item for item in logs if item.is_public_model]),
                 "privateModelCalls": len([item for item in logs if not item.is_public_model]),
                 "failedCalls": len([item for item in logs if item.status != "success"]),
+                "successCalls": len([item for item in logs if item.status == "success"]),
+                "averageDurationMs": int(sum(item.duration_ms for item in logs) / len(logs)) if logs else 0,
             }
         )
     return {"users": rows}
@@ -1422,12 +1424,31 @@ async def admin_text_records(
     userSearch: str = "",
     modelGroupId: str = "",
     status: str = "",
+    keyword: str = "",
+    size: str = "",
+    ratio: str = "",
+    refCount: str = "",
+    duration: str = "",
+    resolution: str = "",
+    mode: str = "",
     db: Session = Depends(get_db),
     _admin: User = Depends(require_admin_user),
 ) -> dict[str, Any]:
     return {
         "records": list_admin_creation_records(
-            db, capability="text", user_id=userId, user_search=userSearch, model_group_id=modelGroupId, status=status
+            db,
+            capability="text",
+            user_id=userId,
+            user_search=userSearch,
+            model_group_id=modelGroupId,
+            status=status,
+            keyword=keyword,
+            size=size,
+            ratio=ratio,
+            ref_count=refCount,
+            duration=duration,
+            resolution=resolution,
+            mode=mode,
         )
     }
 
@@ -1438,12 +1459,31 @@ async def admin_image_records(
     userSearch: str = "",
     modelGroupId: str = "",
     status: str = "",
+    keyword: str = "",
+    size: str = "",
+    ratio: str = "",
+    refCount: str = "",
+    duration: str = "",
+    resolution: str = "",
+    mode: str = "",
     db: Session = Depends(get_db),
     _admin: User = Depends(require_admin_user),
 ) -> dict[str, Any]:
     return {
         "records": list_admin_creation_records(
-            db, capability="image", user_id=userId, user_search=userSearch, model_group_id=modelGroupId, status=status
+            db,
+            capability="image",
+            user_id=userId,
+            user_search=userSearch,
+            model_group_id=modelGroupId,
+            status=status,
+            keyword=keyword,
+            size=size,
+            ratio=ratio,
+            ref_count=refCount,
+            duration=duration,
+            resolution=resolution,
+            mode=mode,
         )
     }
 
@@ -1454,12 +1494,31 @@ async def admin_video_records(
     userSearch: str = "",
     modelGroupId: str = "",
     status: str = "",
+    keyword: str = "",
+    size: str = "",
+    ratio: str = "",
+    refCount: str = "",
+    duration: str = "",
+    resolution: str = "",
+    mode: str = "",
     db: Session = Depends(get_db),
     _admin: User = Depends(require_admin_user),
 ) -> dict[str, Any]:
     return {
         "records": list_admin_creation_records(
-            db, capability="video", user_id=userId, user_search=userSearch, model_group_id=modelGroupId, status=status
+            db,
+            capability="video",
+            user_id=userId,
+            user_search=userSearch,
+            model_group_id=modelGroupId,
+            status=status,
+            keyword=keyword,
+            size=size,
+            ratio=ratio,
+            ref_count=refCount,
+            duration=duration,
+            resolution=resolution,
+            mode=mode,
         )
     }
 
@@ -1468,10 +1527,22 @@ async def admin_video_records(
 async def admin_audit_logs(
     action: str = "",
     adminUserId: str = "",
+    targetType: str = "",
+    targetId: str = "",
+    risk: str = "",
     db: Session = Depends(get_db),
     _admin: User = Depends(require_admin_user),
 ) -> dict[str, Any]:
-    return {"logs": list_admin_audit_logs(db, action=action, admin_user_id=adminUserId)}
+    return {
+        "logs": list_admin_audit_logs(
+            db,
+            action=action,
+            admin_user_id=adminUserId,
+            target_type=targetType,
+            target_id=targetId,
+            risk=risk,
+        )
+    }
 
 
 @app.get("/api/calls")

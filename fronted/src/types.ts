@@ -59,6 +59,31 @@ export interface AdminOverview {
   averageDurationMs: number;
   publicModelCalls: number;
   privateModelCalls: number;
+  quotaUnits?: number;
+  averageQueueMs?: number;
+  timeoutCalls?: number;
+  timeoutRate?: number;
+  trend?: Record<"day" | "week" | "month", AdminTrendPoint[]>;
+  failedModels?: AdminFailedModel[];
+}
+
+export interface AdminTrendPoint {
+  label: string;
+  totalCalls: number;
+  successCalls: number;
+  failedCalls: number;
+  quotaUnits: number;
+  averageDurationMs: number;
+}
+
+export interface AdminFailedModel {
+  modelGroupId: string;
+  modelName: string;
+  capability: Capability | "";
+  failedCalls: number;
+  totalCalls: number;
+  failureRate: number;
+  lastError: string;
 }
 
 export interface AdminOverviewUserRow {
@@ -67,6 +92,8 @@ export interface AdminOverviewUserRow {
   publicModelCalls: number;
   privateModelCalls: number;
   failedCalls: number;
+  successCalls?: number;
+  averageDurationMs?: number;
 }
 
 export interface AdminOverviewModelRow {
@@ -75,12 +102,18 @@ export interface AdminOverviewModelRow {
   successCalls: number;
   failedCalls: number;
   averageDurationMs: number;
+  failureRate?: number;
+  timeoutCalls?: number;
+  quotaUnits?: number;
 }
 
 export interface AdminUserDefinition extends UserProfile {
   status: string;
   createdAt: string;
   updatedAt: string;
+  sessionCount?: number;
+  lastSeenAt?: string | null;
+  recentLoginIp?: string;
 }
 
 export interface PromptTemplateDefinition {
@@ -266,6 +299,7 @@ export interface AdminAuditLog {
   targetType: string;
   targetId: string;
   status: string;
+  riskLevel?: "normal" | "medium" | "high" | string;
   summary: Record<string, unknown>;
   createdAt: string;
 }

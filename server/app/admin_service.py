@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import HTTPException
@@ -305,6 +305,164 @@ def admin_restore_user(db: Session, admin: User, user_id: str) -> User:
     return set_user_status(db, admin, user_id, "active", "restore_user")
 
 
+def _safe_number(value: Any) -> float:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return 0
+    return 0
+
+
+def _find_first_number(value: Any, keys: set[str]) -> float:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            normalized_key = re.sub(r"[^a-z0-9]", "", str(key).lower())
+            if normalized_key in keys:
+                number = _safe_number(item)
+                if number:
+                    return number
+        for item in value.values():
+            number = _find_first_number(item, keys)
+            if number:
+                return number
+    if isinstance(value, list):
+        for item in value:
+            number = _find_first_number(item, keys)
+            if number:
+                return number
+    return 0
+
+
+def _usage_units(item: CallLog) -> float:
+    usage = parse_json_object(item.raw_usage_json, {})
+    if not isinstance(usage, dict):
+        return 0
+    token_units = _find_first_number(
+        usage,
+        {
+            "totaltokens",
+            "totalTokens".lower(),
+            "tokens",
+            "tokencount",
+            "totalcount",
+        },
+    )
+    if token_units:
+        return token_units
+    return _find_first_number(
+        usage,
+        {
+            "credits",
+            "credit",
+            "quota",
+            "cost",
+            "amount",
+            "totalprice",
+            "price",
+            "bill",
+        },
+    )
+
+
+def _queue_time_ms(item: CallLog) -> int:
+    request_params = parse_json_object(item.request_params_json, {})
+    response_summary = parse_json_object(item.response_summary_json, {})
+    queue_ms = _find_first_number(
+        {"request": request_params, "response": response_summary},
+        {
+            "queuems",
+            "queuetimems",
+            "waitingms",
+            "waitms",
+            "pendingms",
+        },
+    )
+    if queue_ms:
+        return int(queue_ms)
+    queue_seconds = _find_first_number(
+        {"request": request_params, "response": response_summary},
+        {
+            "queueseconds",
+            "queuetime",
+            "waitingseconds",
+            "waitseconds",
+        },
+    )
+    return int(queue_seconds * 1000) if queue_seconds else 0
+
+
+def _is_timeout_log(item: CallLog) -> bool:
+    text = f"{item.status} {item.error_message} {item.prompt_summary}".lower()
+    if any(word in text for word in ["timeout", "timed out", "超时", "504", "gateway time-out"]):
+        return True
+    return item.status != "success" and item.duration_ms >= 120_000
+
+
+def _bucket_start(value: datetime, period: str) -> datetime:
+    if period == "week":
+        start = value - timedelta(days=value.weekday())
+        return datetime(start.year, start.month, start.day)
+    if period == "month":
+        return datetime(value.year, value.month, 1)
+    return datetime(value.year, value.month, value.day)
+
+
+def _trend_buckets(logs: list[CallLog], *, period: str, count: int) -> list[dict[str, Any]]:
+    now = datetime.utcnow()
+    if period == "month":
+        starts = []
+        year = now.year
+        month = now.month
+        for offset in range(count - 1, -1, -1):
+            target_month = month - offset
+            target_year = year
+            while target_month <= 0:
+                target_month += 12
+                target_year -= 1
+            starts.append(datetime(target_year, target_month, 1))
+    else:
+        step = timedelta(weeks=1 if period == "week" else 0, days=0 if period == "week" else 1)
+        current = _bucket_start(now, period)
+        starts = [current - (step * offset) for offset in range(count - 1, -1, -1)]
+
+    rows: list[dict[str, Any]] = []
+    for start in starts:
+        if period == "month":
+            next_month = start.month + 1
+            next_year = start.year
+            if next_month > 12:
+                next_month = 1
+                next_year += 1
+            end = datetime(next_year, next_month, 1)
+            label = start.strftime("%Y-%m")
+        elif period == "week":
+            end = start + timedelta(days=7)
+            label = f"{start.strftime('%m-%d')}~{(end - timedelta(days=1)).strftime('%m-%d')}"
+        else:
+            end = start + timedelta(days=1)
+            label = start.strftime("%m-%d")
+        bucket = [item for item in logs if start <= item.created_at < end]
+        total = len(bucket)
+        failed = len([item for item in bucket if item.status != "success"])
+        duration_total = sum(item.duration_ms for item in bucket)
+        rows.append(
+            {
+                "label": label,
+                "totalCalls": total,
+                "successCalls": total - failed,
+                "failedCalls": failed,
+                "quotaUnits": round(sum(_usage_units(item) for item in bucket), 2),
+                "averageDurationMs": int(duration_total / total) if total else 0,
+            }
+        )
+    return rows
+
+
 def admin_overview(db: Session) -> dict[str, Any]:
     logs = db.query(CallLog).all()
     total = len(logs)
@@ -312,6 +470,32 @@ def admin_overview(db: Session) -> dict[str, Any]:
     success = total - failed
     average_duration_ms = int(sum(item.duration_ms for item in logs) / total) if total else 0
     public_calls = len([item for item in logs if item.is_public_model])
+    queue_values = [_queue_time_ms(item) for item in logs]
+    queue_samples = [item for item in queue_values if item > 0]
+    timeout_calls = len([item for item in logs if _is_timeout_log(item)])
+    by_model: dict[str, list[CallLog]] = {}
+    for item in logs:
+        by_model.setdefault(item.model_group_id or "", []).append(item)
+    failed_models: list[dict[str, Any]] = []
+    for model_id, model_logs in by_model.items():
+        if not model_id:
+            continue
+        model_failed = [item for item in model_logs if item.status != "success"]
+        if not model_failed:
+            continue
+        model = db.get(ModelGroup, model_id)
+        failed_models.append(
+            {
+                "modelGroupId": model_id,
+                "modelName": model.public_display_name or model.name if model else model_id,
+                "capability": model.capability if model else "",
+                "failedCalls": len(model_failed),
+                "totalCalls": len(model_logs),
+                "failureRate": len(model_failed) / len(model_logs) if model_logs else 0,
+                "lastError": model_failed[-1].error_message,
+            }
+        )
+    failed_models.sort(key=lambda item: (item["failedCalls"], item["failureRate"]), reverse=True)
     return {
         "totalCalls": total,
         "successCalls": success,
@@ -320,6 +504,16 @@ def admin_overview(db: Session) -> dict[str, Any]:
         "averageDurationMs": average_duration_ms,
         "publicModelCalls": public_calls,
         "privateModelCalls": total - public_calls,
+        "quotaUnits": round(sum(_usage_units(item) for item in logs), 2),
+        "averageQueueMs": int(sum(queue_samples) / len(queue_samples)) if queue_samples else 0,
+        "timeoutCalls": timeout_calls,
+        "timeoutRate": timeout_calls / total if total else 0,
+        "trend": {
+            "day": _trend_buckets(logs, period="day", count=14),
+            "week": _trend_buckets(logs, period="week", count=8),
+            "month": _trend_buckets(logs, period="month", count=6),
+        },
+        "failedModels": failed_models[:8],
     }
 
 
@@ -370,6 +564,114 @@ def _clean_history_value(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: _clean_history_value(item) for key, item in value.items()}
     return value
+
+
+def _nested_value(value: Any, keys: set[str]) -> Any:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if str(key).strip().lower() in keys:
+                return item
+        for item in value.values():
+            nested = _nested_value(item, keys)
+            if nested not in (None, ""):
+                return nested
+    if isinstance(value, list):
+        for item in value:
+            nested = _nested_value(item, keys)
+            if nested not in (None, ""):
+                return nested
+    return None
+
+
+def _normalized_filter_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(int(value)) if float(value).is_integer() else str(value)
+    return str(value).strip().lower()
+
+
+def _count_reference_assets(params: dict[str, Any]) -> int:
+    candidates = [
+        params.get("images"),
+        params.get("image"),
+        params.get("referenceImages"),
+        params.get("reference_images"),
+        params.get("attachments"),
+        params.get("firstFrame"),
+        params.get("lastFrame"),
+    ]
+    count = 0
+    for item in candidates:
+        if isinstance(item, list):
+            count += len([entry for entry in item if entry])
+        elif item:
+            count += 1
+    return count
+
+
+def _record_matches_filters(
+    *,
+    prompt: str,
+    response: str,
+    error_message: str,
+    request_params: dict[str, Any],
+    response_summary: dict[str, Any],
+    keyword: str,
+    size: str,
+    ratio: str,
+    ref_count: str,
+    duration: str,
+    resolution: str,
+    mode: str,
+) -> bool:
+    clean_keyword = keyword.strip().lower()
+    if clean_keyword:
+        haystack = json_dumps_safe(
+            {
+                "prompt": prompt,
+                "response": response,
+                "error": error_message,
+                "request": request_params,
+                "responseSummary": response_summary,
+            }
+        ).lower()
+        if clean_keyword not in haystack:
+            return False
+    expected = {
+        "size": size,
+        "ratio": ratio,
+        "duration": duration,
+        "resolution": resolution,
+        "mode": mode,
+    }
+    key_groups = {
+        "size": {"size", "image_size"},
+        "ratio": {"ratio", "aspect_ratio", "aspectratio"},
+        "duration": {"duration", "seconds", "length"},
+        "resolution": {"resolution", "quality"},
+        "mode": {"mode", "video_mode", "videomode"},
+    }
+    for key, expected_value in expected.items():
+        if not expected_value:
+            continue
+        actual = _nested_value(request_params, key_groups[key])
+        if _normalized_filter_value(actual) != _normalized_filter_value(expected_value):
+            return False
+    if ref_count:
+        try:
+            expected_count = int(ref_count)
+        except ValueError:
+            expected_count = 0
+        actual_count = _count_reference_assets(request_params)
+        if expected_count <= 0:
+            if actual_count != 0:
+                return False
+        elif actual_count != expected_count:
+            return False
+    return True
 
 
 def _previous_user_message_for_record(db: Session, message: ConversationMessage, capability: str) -> ConversationMessage | None:
@@ -434,6 +736,13 @@ def list_admin_creation_records(
     user_search: str = "",
     model_group_id: str = "",
     status: str = "",
+    keyword: str = "",
+    size: str = "",
+    ratio: str = "",
+    ref_count: str = "",
+    duration: str = "",
+    resolution: str = "",
+    mode: str = "",
     limit: int = 100,
 ) -> list[dict[str, Any]]:
     query = (
@@ -459,7 +768,7 @@ def list_admin_creation_records(
     if status:
         query = query.filter(ConversationMessage.status == status)
     max_limit = min(max(limit, 1), 200)
-    messages = query.order_by(ConversationMessage.created_at.desc()).limit(max_limit).all()
+    messages = query.order_by(ConversationMessage.created_at.desc()).limit(max_limit * 4).all()
     records: list[dict[str, Any]] = []
     for message in messages:
         if message.role != "assistant" and _has_following_assistant_record(db, message, capability):
@@ -470,6 +779,37 @@ def list_admin_creation_records(
         if message.role == "assistant":
             previous_prompt = _previous_user_message_for_record(db, message, capability)
             prompt = previous_prompt.content if previous_prompt else ""
+        request_params = _clean_history_value(_load_json(message.request_json, {}))
+        response_summary = _clean_history_value(_load_json(message.response_json, {}))
+        error_message = _clean_history_value(message.error_message)
+        response = _clean_history_value(message.content) if message.role == "assistant" else ""
+        prompt = _clean_history_value(prompt)
+        call_log = (
+            db.query(CallLog)
+            .filter(or_(CallLog.message_id == message.id, CallLog.conversation_id == message.conversation_id))
+            .order_by(CallLog.created_at.desc())
+            .first()
+        )
+        if call_log:
+            request_params = request_params or _clean_history_value(_load_json(call_log.request_params_json, {}))
+            response_summary = response_summary or _clean_history_value(_load_json(call_log.response_summary_json, {}))
+            if not error_message:
+                error_message = _clean_history_value(call_log.error_message)
+        if not _record_matches_filters(
+            prompt=str(prompt or ""),
+            response=str(response or ""),
+            error_message=str(error_message or ""),
+            request_params=request_params if isinstance(request_params, dict) else {},
+            response_summary=response_summary if isinstance(response_summary, dict) else {},
+            keyword=keyword,
+            size=size,
+            ratio=ratio,
+            ref_count=ref_count,
+            duration=duration,
+            resolution=resolution,
+            mode=mode,
+        ):
+            continue
         records.append(
             {
                 "id": message.id,
@@ -478,18 +818,18 @@ def list_admin_creation_records(
                 "capability": message.capability,
                 "role": message.role,
                 "status": message.status,
-                "prompt": _clean_history_value(prompt),
-                "response": _clean_history_value(message.content) if message.role == "assistant" else "",
+                "prompt": prompt,
+                "response": response,
                 "createdAt": message.created_at,
-                "durationMs": 0,
-                "taskId": _load_json(message.response_json, {}).get("taskId", ""),
+                "durationMs": call_log.duration_ms if call_log else 0,
+                "taskId": response_summary.get("taskId", "") if isinstance(response_summary, dict) else "",
                 "assets": [
                     {"type": asset.asset_type, "url": asset.url, "thumbnailUrl": asset.thumbnail_url}
                     for asset in message.assets
                 ],
-                "requestParams": _clean_history_value(_load_json(message.request_json, {})),
-                "responseSummary": _clean_history_value(_load_json(message.response_json, {})),
-                "errorMessage": _clean_history_value(message.error_message),
+                "requestParams": request_params,
+                "responseSummary": response_summary,
+                "errorMessage": error_message,
             }
         )
         if len(records) >= max_limit:
@@ -498,6 +838,8 @@ def list_admin_creation_records(
 
 
 def serialize_admin_user(user: User, settings: Settings | None = None) -> dict[str, Any]:
+    active_sessions = [item for item in getattr(user, "sessions", []) if item.expires_at > datetime.utcnow()]
+    last_seen = max((item.last_seen_at for item in getattr(user, "sessions", [])), default=None)
     return {
         "id": user.id,
         "externalUserId": user.external_user_id,
@@ -509,6 +851,9 @@ def serialize_admin_user(user: User, settings: Settings | None = None) -> dict[s
         "isAdmin": is_admin_user(user, settings),
         "createdAt": user.created_at,
         "updatedAt": user.updated_at,
+        "sessionCount": len(active_sessions),
+        "lastSeenAt": last_seen,
+        "recentLoginIp": "未记录",
     }
 
 
@@ -527,13 +872,48 @@ def serialize_prompt_template(item: PromptTemplate) -> dict[str, Any]:
     }
 
 
-def list_admin_audit_logs(db: Session, *, action: str = "", admin_user_id: str = "", limit: int = 100) -> list[dict[str, Any]]:
+HIGH_RISK_ADMIN_ACTIONS = {
+    "delete_user",
+    "disable_user",
+    "restore_user",
+    "unpublish_model",
+    "publish_model",
+    "update_model",
+    "save_prompt_template",
+}
+
+
+def _audit_risk_level(item: AdminOperationLog) -> str:
+    if item.status == "error":
+        return "high"
+    if item.action in HIGH_RISK_ADMIN_ACTIONS:
+        return "high" if item.action in {"delete_user", "disable_user", "unpublish_model"} else "medium"
+    return "normal"
+
+
+def list_admin_audit_logs(
+    db: Session,
+    *,
+    action: str = "",
+    admin_user_id: str = "",
+    target_type: str = "",
+    target_id: str = "",
+    risk: str = "",
+    limit: int = 100,
+) -> list[dict[str, Any]]:
     query = db.query(AdminOperationLog)
     if action:
-        query = query.filter(AdminOperationLog.action == action)
+        query = query.filter(AdminOperationLog.action.ilike(f"%{action}%"))
     if admin_user_id:
         query = query.filter(AdminOperationLog.admin_user_id == admin_user_id)
-    logs = query.order_by(AdminOperationLog.created_at.desc()).limit(min(max(limit, 1), 200)).all()
+    if target_type:
+        query = query.filter(AdminOperationLog.target_type == target_type)
+    if target_id:
+        query = query.filter(AdminOperationLog.target_id.ilike(f"%{target_id}%"))
+    logs = query.order_by(AdminOperationLog.created_at.desc()).limit(min(max(limit, 1), 300)).all()
+    clean_risk = risk.strip().lower()
+    if clean_risk:
+        logs = [item for item in logs if _audit_risk_level(item) == clean_risk]
     return [
         {
             "id": item.id,
@@ -542,6 +922,7 @@ def list_admin_audit_logs(db: Session, *, action: str = "", admin_user_id: str =
             "targetType": item.target_type,
             "targetId": item.target_id,
             "status": item.status,
+            "riskLevel": _audit_risk_level(item),
             "summary": _load_json(item.summary_json, {}),
             "createdAt": item.created_at,
         }

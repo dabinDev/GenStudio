@@ -277,22 +277,47 @@ export async function restoreAdminUser(userId: string): Promise<AdminUserDefinit
   return payload.user;
 }
 
-export async function fetchAdminRecords(capability: Capability, query: { userId?: string; userSearch?: string; modelGroupId?: string; status?: string } = {}): Promise<AdminCreationRecord[]> {
+export async function fetchAdminRecords(
+  capability: Capability,
+  query: {
+    userId?: string;
+    userSearch?: string;
+    modelGroupId?: string;
+    status?: string;
+    keyword?: string;
+    size?: string;
+    ratio?: string;
+    refCount?: string;
+    duration?: string;
+    resolution?: string;
+    mode?: string;
+  } = {},
+): Promise<AdminCreationRecord[]> {
   const endpoint = capability === "text" ? "text" : capability === "image" ? "images" : "videos";
   const params = new URLSearchParams();
   if (query.userId) params.set("userId", query.userId);
   if (query.userSearch) params.set("userSearch", query.userSearch);
   if (query.modelGroupId) params.set("modelGroupId", query.modelGroupId);
   if (query.status) params.set("status", query.status);
+  if (query.keyword) params.set("keyword", query.keyword);
+  if (query.size) params.set("size", query.size);
+  if (query.ratio) params.set("ratio", query.ratio);
+  if (query.refCount) params.set("refCount", query.refCount);
+  if (query.duration) params.set("duration", query.duration);
+  if (query.resolution) params.set("resolution", query.resolution);
+  if (query.mode) params.set("mode", query.mode);
   const suffix = params.toString() ? `?${params.toString()}` : "";
   const payload = await getApi<{ records: AdminCreationRecord[] }>(`/api/admin/records/${endpoint}${suffix}`);
   return payload.records;
 }
 
-export async function fetchAdminAuditLogs(query: { action?: string; adminUserId?: string } = {}): Promise<AdminAuditLog[]> {
+export async function fetchAdminAuditLogs(query: { action?: string; adminUserId?: string; targetType?: string; targetId?: string; risk?: string } = {}): Promise<AdminAuditLog[]> {
   const params = new URLSearchParams();
   if (query.action) params.set("action", query.action);
   if (query.adminUserId) params.set("adminUserId", query.adminUserId);
+  if (query.targetType) params.set("targetType", query.targetType);
+  if (query.targetId) params.set("targetId", query.targetId);
+  if (query.risk) params.set("risk", query.risk);
   const suffix = params.toString() ? `?${params.toString()}` : "";
   const payload = await getApi<{ logs: AdminAuditLog[] }>(`/api/admin/audit-logs${suffix}`);
   return payload.logs;

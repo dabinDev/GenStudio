@@ -138,13 +138,21 @@ import {
   resolveDraftPrimaryModel,
 } from "./modelWizard";
 import { shouldShowDevAuth } from "./env";
+import {
+  ADMIN_PAGE_SUGGESTIONS,
+  ADMIN_RECORD_CAPABILITY_BY_TAB,
+  adminCapabilityTabs,
+  adminNavGroups,
+  adminRecordCapabilityTabs,
+  adminTabs,
+  type AdminTab,
+} from "./adminPresentation";
 
 type ViewName = "auth" | "auth-error" | "text" | "images" | "videos" | "settings" | "profile" | "admin";
 type SidebarFilter = Capability | "all";
 type VideoMode = VideoModeValue;
 type DialogMode = "create" | "edit";
 type ComposerPopover = "image-settings" | "image-advanced" | "video-mode" | "video-settings" | "video-advanced" | null;
-type AdminTab = "overview" | "models" | "prompts" | "users" | "text-records" | "image-records" | "video-records" | "audit";
 
 interface ImageResult {
   images: Array<{ src: string; revisedPrompt?: string }>;
@@ -332,37 +340,6 @@ const settingsState = reactive({
   testState: {} as Record<string, ActionState<TestRequestResult>>,
 });
 
-const adminTabs: Array<{ value: AdminTab; label: string; hint: string }> = [
-  { value: "overview", label: "运营面板", hint: "调用、失败率、公私模型分布" },
-  { value: "models", label: "公用模型配置", hint: "发布、取消公用、图标、提示语" },
-  { value: "prompts", label: "提示语模板", hint: "AI 文案优化模板" },
-  { value: "users", label: "用户管理", hint: "启用、禁用、删除、恢复" },
-  { value: "text-records", label: "文案记录", hint: "提示词与响应追踪" },
-  { value: "image-records", label: "生图记录", hint: "图片结果与参数" },
-  { value: "video-records", label: "视频记录", hint: "任务、视频、失败原因" },
-  { value: "audit", label: "操作记录", hint: "管理员变更审计" },
-];
-
-const adminCapabilityTabs: Array<{ value: Capability | "all"; label: string }> = [
-  { value: "all", label: "全部" },
-  { value: "text", label: "文案创作" },
-  { value: "image", label: "图片创作" },
-  { value: "video", label: "视频创作" },
-];
-
-const adminRecordCapabilityTabs: Array<{ value: Capability; label: string; hint: string }> = [
-  { value: "text", label: "文案", hint: "提问 / 回答" },
-  { value: "image", label: "图片/图文", hint: "提示词 / 图片结果" },
-  { value: "video", label: "视频", hint: "提示词 / 视频结果" },
-];
-
-const adminNavGroups: Array<{ title: string; tabs: AdminTab[] }> = [
-  { title: "运营", tabs: ["overview", "audit"] },
-  { title: "模型", tabs: ["models", "prompts"] },
-  { title: "用户", tabs: ["users"] },
-  { title: "调用记录", tabs: ["text-records", "image-records", "video-records"] },
-];
-
 const adminState = reactive({
   activeTab: "overview" as AdminTab,
   loading: false,
@@ -372,12 +349,31 @@ const adminState = reactive({
   modelCapability: "all" as Capability | "all",
   modelPublicState: "all" as "all" | "public" | "private",
   modelSearch: "",
+  selectedModelIds: [] as string[],
+  modelIconErrors: {} as Record<string, string>,
   userSearch: "",
+  userRoleFilter: "all" as "all" | "admin" | "user",
+  selectedUserId: "",
   recordStatus: "",
   recordUserSearch: "",
   recordModelGroupId: "",
+  recordKeyword: "",
+  recordSize: "",
+  recordRatio: "",
+  recordRefCount: "",
+  recordDuration: "",
+  recordResolution: "",
+  recordMode: "",
+  recordSavedFilters: [] as Array<{ id: string; name: string; capability: Capability; filters: Record<string, string> }>,
+  recordMarkdownPreview: true,
+  recordWaterfall: false,
+  selectedRecordId: "",
   auditAction: "",
   auditAdminUserId: "",
+  auditTargetType: "",
+  auditTargetId: "",
+  auditRisk: "",
+  trendPeriod: "day" as "day" | "week" | "month",
   editingModelId: "",
   editingUserId: "",
   overview: null as AdminOverview | null,
@@ -407,8 +403,20 @@ const adminState = reactive({
     enabled: true,
     content: "请将下面的用户提示词优化为更清晰、可执行、细节完整的创作提示词：\n\n{{prompt}}",
     testPrompt: "生成小米 SU7 变形金刚",
+    testSamplesText: "生成小米 SU7 变形金刚\n参考图片生成电影级汽车海报\n写一段适合短视频开头的文案",
+    previews: [] as Array<{ input: string; output: string }>,
     preview: "",
   },
+  templateHistory: [] as Array<{
+    id: string;
+    templateId: string;
+    name: string;
+    capability: Capability;
+    modelGroupId: string;
+    content: string;
+    enabled: boolean;
+    savedAt: string;
+  }>,
 });
 
 const adminActiveTab = computed(() => adminTabs.find((tab) => tab.value === adminState.activeTab) || adminTabs[0]);
@@ -453,6 +461,48 @@ const adminCapabilityRows = computed(() => {
     percent: adminRatio(totals[capability], adminOverviewTotal.value),
   }));
 });
+const adminPublicModelCount = computed(() => adminState.models.filter((model) => model.isPublic).length);
+const adminPrivateModelCount = computed(() => Math.max(0, adminState.models.length - adminPublicModelCount.value));
+const adminPromptTemplateCount = computed(() => adminState.templates.length);
+const adminActiveUserCount = computed(() => adminState.users.filter((user) => user.status === "active").length);
+const adminRecordCount = computed(() => adminRecordList(adminState.activeTab).length);
+const adminAuditCount = computed(() => adminState.auditLogs.length);
+const adminTrendPoints = computed(() => adminState.overview?.trend?.[adminState.trendPeriod] || []);
+const adminTrendMax = computed(() => Math.max(1, ...adminTrendPoints.value.map((row) => row.totalCalls)));
+const adminFailedModels = computed(() => adminState.overview?.failedModels || []);
+const adminTimeoutPercent = computed(() => (adminState.overview?.timeoutRate || 0) * 100);
+const adminSelectedModels = computed(() => adminState.models.filter((model) => adminState.selectedModelIds.includes(model.id)));
+const adminVisibleModelIds = computed(() => adminState.models.map((model) => model.id));
+const adminAllVisibleModelsSelected = computed(
+  () => adminVisibleModelIds.value.length > 0 && adminVisibleModelIds.value.every((id) => adminState.selectedModelIds.includes(id)),
+);
+const adminFilteredUsers = computed(() =>
+  adminState.users.filter((user) => {
+    if (adminState.userRoleFilter === "admin") return user.isAdmin;
+    if (adminState.userRoleFilter === "user") return !user.isAdmin;
+    return true;
+  }),
+);
+const adminSelectedUser = computed(() => adminState.users.find((user) => user.id === adminState.selectedUserId) || null);
+const adminSelectedRecord = computed(() =>
+  adminRecordList(adminState.activeTab).find((record) => record.id === adminState.selectedRecordId) || null,
+);
+const adminPromptModelOverview = computed(() =>
+  adminState.models.map((model) => {
+    const modelTemplate = adminState.templates.find(
+      (template) => template.modelGroupId === model.id && template.templateType === "prompt_optimize",
+    );
+    const defaultTemplate = adminState.templates.find(
+      (template) => !template.modelGroupId && template.capability === model.capability && template.templateType === "prompt_optimize",
+    );
+    const template = modelTemplate || defaultTemplate;
+    return {
+      model,
+      template,
+      enabled: model.promptOptimizeEnabled !== false && (template?.enabled ?? false),
+    };
+  }),
+);
 
 const conversationState = reactive({
   listOpen: false,
@@ -1173,6 +1223,13 @@ function formatAdminDuration(value: number | undefined | null): string {
   return `${Math.round(duration)}ms`;
 }
 
+function formatAdminQuota(value: number | undefined | null): string {
+  const quota = Math.max(0, Number(value || 0));
+  if (quota >= 1000000) return `${(quota / 1000000).toFixed(2)}M`;
+  if (quota >= 1000) return `${(quota / 1000).toFixed(1)}K`;
+  return quota.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
+}
+
 function adminBarWidth(value: number, max: number): string {
   return `${Math.max(4, adminRatio(value, max))}%`;
 }
@@ -1189,6 +1246,370 @@ function adminDonutGradient(segments: Array<{ value: number; color: string }>): 
       return `${segment.color} ${start.toFixed(2)}deg ${cursor.toFixed(2)}deg`;
     });
   return `conic-gradient(${stops.join(", ")})`;
+}
+
+function adminTrendHeight(value: number): string {
+  return `${Math.max(8, adminRatio(value, adminTrendMax.value))}%`;
+}
+
+function adminRiskLabel(value: string | undefined): string {
+  if (value === "high") return "高风险";
+  if (value === "medium") return "需关注";
+  return "普通";
+}
+
+function adminRiskBadge(value: string | undefined): string {
+  if (value === "high") return "badge-danger";
+  if (value === "medium") return "badge-warn";
+  return "badge-success";
+}
+
+function adminCapabilityLabel(value: string | undefined): string {
+  if (value === "text" || value === "image" || value === "video") return CAPABILITY_LABELS[value];
+  return "未知类型";
+}
+
+function jsonRecord(value: Record<string, unknown> | undefined): Record<string, unknown> {
+  return value && typeof value === "object" ? value : {};
+}
+
+function nestedRecordValue(value: unknown, keys: string[]): unknown {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>;
+    for (const key of Object.keys(record)) {
+      if (keys.includes(key.toLowerCase())) return record[key];
+    }
+    for (const item of Object.values(record)) {
+      const nested = nestedRecordValue(item, keys);
+      if (nested !== undefined && nested !== "") return nested;
+    }
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const nested = nestedRecordValue(item, keys);
+      if (nested !== undefined && nested !== "") return nested;
+    }
+  }
+  return undefined;
+}
+
+function adminRecordParam(record: AdminCreationRecord, keys: string[], fallback = "-"): string {
+  const value = nestedRecordValue(record.requestParams || {}, keys.map((key) => key.toLowerCase()));
+  if (value === undefined || value === null || value === "") return fallback;
+  return String(value);
+}
+
+function adminRecordReferenceCount(record: AdminCreationRecord): number {
+  const params = jsonRecord(record.requestParams);
+  const candidates = [
+    params.images,
+    params.image,
+    params.referenceImages,
+    params.reference_images,
+    params.attachments,
+    params.firstFrame,
+    params.lastFrame,
+  ];
+  return candidates.reduce<number>((sum, item) => {
+    if (Array.isArray(item)) return sum + item.filter(Boolean).length;
+    return item ? sum + 1 : sum;
+  }, 0);
+}
+
+function adminRecordTimeline(record: AdminCreationRecord): Array<{ label: string; value: string; tone: string }> {
+  const rows = [
+    { label: "请求创建", value: formatConversationTime(record.createdAt), tone: "normal" },
+    {
+      label: record.taskId ? "任务 ID" : "处理阶段",
+      value: record.taskId || "同步请求",
+      tone: record.taskId ? "info" : "normal",
+    },
+  ];
+  if (record.durationMs) rows.push({ label: "服务耗时", value: formatAdminDuration(record.durationMs), tone: "normal" });
+  rows.push({
+    label: adminStatusLabel(record.status),
+    value: record.errorMessage || adminRecordResponse(record),
+    tone: record.status === "error" ? "danger" : record.status === "success" ? "success" : "warn",
+  });
+  return rows;
+}
+
+function adminDefaultParameterRows(model: ModelDefinition): Array<{ key: string; value: string }> {
+  const draft = adminState.modelDrafts[model.id];
+  if (!draft?.defaultParametersText.trim()) return [];
+  try {
+    const parsed = JSON.parse(draft.defaultParametersText) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
+    return Object.entries(parsed).map(([key, value]) => ({
+      key,
+      value: typeof value === "string" ? value : JSON.stringify(value),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function setAdminDefaultParameter(model: ModelDefinition, key: string, value: string) {
+  const draft = adminState.modelDrafts[model.id];
+  if (!draft) return;
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = JSON.parse(draft.defaultParametersText || "{}") as Record<string, unknown>;
+  } catch {
+    parsed = {};
+  }
+  const trimmed = value.trim();
+  if (!trimmed) delete parsed[key];
+  else if (trimmed === "true" || trimmed === "false") parsed[key] = trimmed === "true";
+  else if (!Number.isNaN(Number(trimmed)) && trimmed !== "") parsed[key] = Number(trimmed);
+  else {
+    try {
+      parsed[key] = JSON.parse(trimmed);
+    } catch {
+      parsed[key] = value;
+    }
+  }
+  draft.defaultParametersText = JSON.stringify(parsed, null, 2);
+}
+
+function setAdminDefaultParameterFromEvent(model: ModelDefinition, key: string, event: Event) {
+  const target = event.target;
+  setAdminDefaultParameter(model, key, target instanceof HTMLInputElement ? target.value : "");
+}
+
+function addAdminDefaultParameter(model: ModelDefinition) {
+  const draft = adminState.modelDrafts[model.id];
+  if (!draft) return;
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = JSON.parse(draft.defaultParametersText || "{}") as Record<string, unknown>;
+  } catch {
+    parsed = {};
+  }
+  const base = "param";
+  let index = 1;
+  while (`${base}${index}` in parsed) index += 1;
+  parsed[`${base}${index}`] = "";
+  draft.defaultParametersText = JSON.stringify(parsed, null, 2);
+}
+
+function adminIconError(model: ModelDefinition): string {
+  return adminState.modelIconErrors[model.id] || "";
+}
+
+function markAdminIconFailed(model: ModelDefinition, event: Event) {
+  hideBrokenModelIcon(event);
+  adminState.modelIconErrors[model.id] = "图标加载失败，请检查 URL 或跨域访问。";
+}
+
+function clearAdminIconError(model: ModelDefinition) {
+  delete adminState.modelIconErrors[model.id];
+}
+
+function toggleAdminModelSelection(modelId: string) {
+  if (adminState.selectedModelIds.includes(modelId)) {
+    adminState.selectedModelIds = adminState.selectedModelIds.filter((id) => id !== modelId);
+  } else {
+    adminState.selectedModelIds = [...adminState.selectedModelIds, modelId];
+  }
+}
+
+function toggleAdminSelectAllModels() {
+  adminState.selectedModelIds = adminAllVisibleModelsSelected.value ? [] : [...adminVisibleModelIds.value];
+}
+
+function adminApplyFailedModelFilter(row: { modelGroupId: string; capability: Capability | "" }) {
+  adminState.recordModelGroupId = row.modelGroupId;
+  if (row.capability === "image" || row.capability === "video" || row.capability === "text") {
+    switchAdminRecordCapability(row.capability);
+  }
+}
+
+async function bulkSetAdminPublicState(isPublic: boolean) {
+  const targets = adminSelectedModels.value.filter((model) => model.isPublic !== isPublic);
+  if (!targets.length) {
+    showToast("没有需要变更的模型", "info");
+    return;
+  }
+  if (!window.confirm(`确认批量${isPublic ? "设为公用" : "取消公用"} ${targets.length} 个模型吗？`)) return;
+  adminState.saving = "bulk-public";
+  adminState.error = "";
+  try {
+    for (const model of targets) {
+      const updated = isPublic ? await publishAdminModel(model.id) : await unpublishAdminModel(model.id);
+      const nextModel = mapServerModel(updated);
+      const index = adminState.models.findIndex((item) => item.id === model.id);
+      if (index >= 0) adminState.models[index] = nextModel;
+      delete adminState.modelDrafts[model.id];
+      ensureAdminModelDraft(nextModel);
+    }
+    await refreshServerModels();
+    showToast(`已更新 ${targets.length} 个模型`, "success");
+  } catch (error) {
+    adminState.error = adminSaveError(error, "批量更新公用状态失败。");
+    showToast(adminState.error, "error");
+  } finally {
+    adminState.saving = "";
+  }
+}
+
+async function bulkSetAdminPromptOptimize(enabled: boolean) {
+  const targets = adminSelectedModels.value.filter((model) => (model.promptOptimizeEnabled !== false) !== enabled);
+  if (!targets.length) {
+    showToast("没有需要变更的模型", "info");
+    return;
+  }
+  adminState.saving = "bulk-prompt";
+  adminState.error = "";
+  try {
+    for (const model of targets) {
+      const updated = await updateAdminModel(model.id, { promptOptimizeEnabled: enabled });
+      const nextModel = mapServerModel(updated);
+      const index = adminState.models.findIndex((item) => item.id === model.id);
+      if (index >= 0) adminState.models[index] = nextModel;
+      delete adminState.modelDrafts[model.id];
+      ensureAdminModelDraft(nextModel);
+    }
+    showToast(`已${enabled ? "启用" : "禁用"} ${targets.length} 个模型的 AI 文案优化`, "success");
+  } catch (error) {
+    adminState.error = adminSaveError(error, "批量更新提示优化失败。");
+    showToast(adminState.error, "error");
+  } finally {
+    adminState.saving = "";
+  }
+}
+
+function csvEscape(value: unknown): string {
+  const text = String(value ?? "");
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function downloadCsv(filename: string, rows: unknown[][]) {
+  const csv = rows.map((row) => row.map(csvEscape).join(",")).join("\n");
+  const blob = new Blob([`\ufeff${csv}`], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportAdminUsers() {
+  downloadCsv("genstudio-users.csv", [
+    ["ID", "邮箱", "昵称", "角色", "状态", "会话数", "最近活跃", "最近登录 IP"],
+    ...adminFilteredUsers.value.map((user) => [
+      user.id,
+      user.email,
+      user.nickname,
+      user.isAdmin ? "管理员" : "用户",
+      user.status,
+      user.sessionCount || 0,
+      user.lastSeenAt || "",
+      user.recentLoginIp || "未记录",
+    ]),
+  ]);
+}
+
+function exportAdminAuditLogs() {
+  downloadCsv("genstudio-audit-logs.csv", [
+    ["时间", "动作", "目标类型", "目标 ID", "风险", "状态", "摘要"],
+    ...adminState.auditLogs.map((log) => [
+      log.createdAt,
+      log.action,
+      log.targetType,
+      log.targetId,
+      adminRiskLabel(log.riskLevel),
+      log.status,
+      compactJson(log.summary || {}),
+    ]),
+  ]);
+}
+
+async function copyAdminText(value: string, label = "内容") {
+  try {
+    await navigator.clipboard.writeText(value);
+    showToast(`${label}已复制`, "success");
+  } catch {
+    showToast("复制失败，请手动复制。", "error");
+  }
+}
+
+function currentAdminRecordFilters(): Record<string, string> {
+  return {
+    status: adminState.recordStatus,
+    userSearch: adminState.recordUserSearch,
+    modelGroupId: adminState.recordModelGroupId,
+    keyword: adminState.recordKeyword,
+    size: adminState.recordSize,
+    ratio: adminState.recordRatio,
+    refCount: adminState.recordRefCount,
+    duration: adminState.recordDuration,
+    resolution: adminState.recordResolution,
+    mode: adminState.recordMode,
+  };
+}
+
+function applyAdminRecordFilters(filters: Record<string, string>) {
+  adminState.recordStatus = filters.status || "";
+  adminState.recordUserSearch = filters.userSearch || "";
+  adminState.recordModelGroupId = filters.modelGroupId || "";
+  adminState.recordKeyword = filters.keyword || "";
+  adminState.recordSize = filters.size || "";
+  adminState.recordRatio = filters.ratio || "";
+  adminState.recordRefCount = filters.refCount || "";
+  adminState.recordDuration = filters.duration || "";
+  adminState.recordResolution = filters.resolution || "";
+  adminState.recordMode = filters.mode || "";
+  void loadAdminRecords(capabilityForAdminRecordTab(adminState.activeTab));
+}
+
+function saveAdminRecordFilter() {
+  const capability = capabilityForAdminRecordTab(adminState.activeTab);
+  const filled = Object.entries(currentAdminRecordFilters()).filter(([, value]) => value);
+  if (!filled.length) {
+    showToast("请先设置筛选条件", "info");
+    return;
+  }
+  const name = `${CAPABILITY_LABELS[capability]}筛选 ${adminState.recordKeyword || adminState.recordStatus || filled[0][1]}`;
+  adminState.recordSavedFilters.unshift({
+    id: createLocalId("admin-filter"),
+    name,
+    capability,
+    filters: currentAdminRecordFilters(),
+  });
+  adminState.recordSavedFilters = adminState.recordSavedFilters.slice(0, 8);
+  showToast("常用筛选已保存", "success");
+}
+
+function clearAdminRecordFilters() {
+  adminState.recordStatus = "";
+  adminState.recordUserSearch = "";
+  adminState.recordModelGroupId = "";
+  adminState.recordKeyword = "";
+  adminState.recordSize = "";
+  adminState.recordRatio = "";
+  adminState.recordRefCount = "";
+  adminState.recordDuration = "";
+  adminState.recordResolution = "";
+  adminState.recordMode = "";
+  void loadAdminRecords(capabilityForAdminRecordTab(adminState.activeTab));
+}
+
+function openAdminRecordDetail(record: AdminCreationRecord) {
+  adminState.selectedRecordId = record.id;
+}
+
+function closeAdminRecordDetail() {
+  adminState.selectedRecordId = "";
+}
+
+function adminRecordMarkdownHtml(record: AdminCreationRecord): string {
+  return markdownPreview(adminRecordResponse(record));
+}
+
+function adminRecordIsMarkdownCapable(record: AdminCreationRecord): boolean {
+  return record.capability === "text" && adminState.recordMarkdownPreview && Boolean(adminRecordResponse(record).trim());
 }
 
 function formatConversationTime(value: string): string {
@@ -1349,9 +1770,7 @@ function adminRecordList(tab: AdminTab): AdminCreationRecord[] {
 }
 
 function capabilityForAdminRecordTab(tab: AdminTab): Capability {
-  if (tab === "image-records") return "image";
-  if (tab === "video-records") return "video";
-  return "text";
+  return ADMIN_RECORD_CAPABILITY_BY_TAB[tab] || "text";
 }
 
 function adminRecordTabForCapability(capability: Capability): AdminTab {
@@ -1414,6 +1833,11 @@ function adminRecordMediaAssets(record: AdminCreationRecord): Array<{ type: stri
   return (record.assets || []).filter((asset) => asset.url);
 }
 
+function markAdminRecordAssetBroken(event: Event) {
+  const target = event.currentTarget as HTMLElement | null;
+  target?.closest(".admin-record-asset")?.classList.add("admin-record-asset-broken");
+}
+
 function adminRecordJsonInitiallyOpen(record: AdminCreationRecord): boolean {
   void record;
   return false;
@@ -1469,6 +1893,7 @@ async function loadAdminModels() {
       publicState: adminState.modelPublicState,
     });
     adminState.models = models.map(mapServerModel);
+    adminState.selectedModelIds = adminState.selectedModelIds.filter((id) => adminState.models.some((model) => model.id === id));
     syncAdminModelDrafts();
   } catch (error) {
     adminState.error = adminSaveError(error, "加载公用模型配置失败。");
@@ -1513,6 +1938,7 @@ async function saveAdminModel(model: ModelDefinition) {
 }
 
 async function toggleAdminPublicModel(model: ModelDefinition) {
+  if (model.isPublic && !window.confirm(`确认取消公用模型「${modelDisplayName(model)}」吗？`)) return;
   adminState.saving = `${model.id}:public`;
   adminState.error = "";
   try {
@@ -1577,6 +2003,7 @@ async function savePromptTemplate() {
   adminState.saving = "prompt-template";
   adminState.error = "";
   try {
+    const previous = adminState.templates.find((item) => item.id === adminState.templateDraft.id);
     const template = await saveAdminPromptTemplateApi(adminState.templateDraft.id || "new", {
       capability: adminState.templateDraft.capability,
       modelGroupId: adminState.templateDraft.modelGroupId,
@@ -1585,6 +2012,19 @@ async function savePromptTemplate() {
       content: adminState.templateDraft.content,
       enabled: adminState.templateDraft.enabled,
     });
+    if (previous) {
+      adminState.templateHistory.unshift({
+        id: createLocalId("admin-template-history"),
+        templateId: previous.id,
+        name: previous.name,
+        capability: previous.capability,
+        modelGroupId: previous.modelGroupId,
+        content: previous.content,
+        enabled: previous.enabled,
+        savedAt: new Date().toISOString(),
+      });
+      adminState.templateHistory = adminState.templateHistory.slice(0, 20);
+    }
     const index = adminState.templates.findIndex((item) => item.id === template.id);
     if (index >= 0) adminState.templates[index] = template;
     else adminState.templates.unshift(template);
@@ -1602,12 +2042,23 @@ async function testAdminPromptTemplate() {
   adminState.saving = "prompt-preview";
   adminState.error = "";
   try {
-    const result = await testAdminPromptTemplateApi({
-      capability: adminState.templateDraft.capability,
-      content: adminState.templateDraft.content,
-      prompt: adminState.templateDraft.testPrompt,
-    });
-    adminState.templateDraft.preview = result.prompt;
+    const samples = adminState.templateDraft.testSamplesText
+      .split("\n")
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .slice(0, 5);
+    const inputs = samples.length ? samples : [adminState.templateDraft.testPrompt];
+    const previews = [];
+    for (const prompt of inputs) {
+      const result = await testAdminPromptTemplateApi({
+        capability: adminState.templateDraft.capability,
+        content: adminState.templateDraft.content,
+        prompt,
+      });
+      previews.push({ input: prompt, output: result.prompt });
+    }
+    adminState.templateDraft.previews = previews;
+    adminState.templateDraft.preview = previews[0]?.output || "";
   } catch (error) {
     adminState.error = adminSaveError(error, "测试提示语模板失败。");
   } finally {
@@ -1621,6 +2072,9 @@ async function loadAdminUsers() {
   adminState.error = "";
   try {
     adminState.users = await fetchAdminUsers(adminState.userSearch);
+    if (adminState.selectedUserId && !adminState.users.some((user) => user.id === adminState.selectedUserId)) {
+      adminState.selectedUserId = "";
+    }
   } catch (error) {
     adminState.error = adminSaveError(error, "加载用户列表失败。");
   } finally {
@@ -1652,6 +2106,8 @@ async function saveAdminUser(user: AdminUserDefinition) {
 }
 
 async function setAdminUserStatus(user: AdminUserDefinition, action: "enable" | "disable" | "delete" | "restore") {
+  const riskyAction = action === "disable" || action === "delete";
+  if (riskyAction && !window.confirm(`确认${action === "delete" ? "删除" : "禁用"}用户「${adminUserLabel(user)}」吗？`)) return;
   adminState.saving = `${user.id}:${action}`;
   adminState.error = "";
   try {
@@ -1683,6 +2139,13 @@ async function loadAdminRecords(capability: Capability) {
       userSearch: adminState.recordUserSearch,
       modelGroupId: adminState.recordModelGroupId,
       status: adminState.recordStatus,
+      keyword: adminState.recordKeyword,
+      size: adminState.recordSize,
+      ratio: adminState.recordRatio,
+      refCount: adminState.recordRefCount,
+      duration: adminState.recordDuration,
+      resolution: adminState.recordResolution,
+      mode: adminState.recordMode,
     });
     if (capability === "text") adminState.textRecords = records;
     if (capability === "image") adminState.imageRecords = records;
@@ -1702,6 +2165,9 @@ async function loadAdminAuditLogs() {
     adminState.auditLogs = await fetchAdminAuditLogs({
       action: adminState.auditAction,
       adminUserId: adminState.auditAdminUserId,
+      targetType: adminState.auditTargetType,
+      targetId: adminState.auditTargetId,
+      risk: adminState.auditRisk,
     });
   } catch (error) {
     adminState.error = adminSaveError(error, "加载操作记录失败。");
@@ -1722,8 +2188,15 @@ async function loadAdminTab(tab: AdminTab = adminState.activeTab) {
   if (tab === "audit") await loadAdminAuditLogs();
 }
 
+function scrollAdminConsoleToTop() {
+  window.requestAnimationFrame(() => {
+    document.querySelector(".admin-console-main")?.scrollTo({ top: 0, behavior: "auto" });
+  });
+}
+
 function switchAdminTab(tab: AdminTab) {
   adminState.activeTab = tab;
+  scrollAdminConsoleToTop();
   void loadAdminTab(tab);
 }
 
@@ -3862,7 +4335,7 @@ async function batchDelete() {
           <p class="eyebrow">Admin Console</p>
           <h2>需要管理员权限</h2>
           <p class="muted">当前账号没有后台管理权限。普通用户可以继续使用创作页面和模型设置页。</p>
-          <button @click="navigate('images')">返回创作</button>
+          <button @click="navigate('images')">返回创作台</button>
         </section>
 
         <div v-else class="admin-console">
@@ -3873,14 +4346,14 @@ async function batchDelete() {
               </div>
               <div>
                 <strong>塞隆 Studio</strong>
-                <span>管理控制台</span>
+                <span>Admin Console</span>
               </div>
             </div>
 
             <div class="admin-sidebar-status">
-              <span>当前账号</span>
+              <span>当前管理员</span>
               <strong>{{ auth.state.user?.nickname || auth.state.user?.email || "管理员" }}</strong>
-              <small>主管理员 · 本地控制台</small>
+              <small>{{ auth.state.user?.email || "本地控制台" }}</small>
             </div>
 
             <nav class="admin-tabs" aria-label="后台功能">
@@ -3892,13 +4365,17 @@ async function batchDelete() {
                   :class="['admin-tab', adminState.activeTab === tabValue ? 'admin-tab-active' : '']"
                   @click="switchAdminTab(tabValue)"
                 >
-                  <strong>{{ adminTabs.find((tab) => tab.value === tabValue)?.label }}</strong>
-                  <span>{{ adminTabs.find((tab) => tab.value === tabValue)?.hint }}</span>
+                  <span :class="['admin-nav-icon', `admin-nav-icon-${adminTabs.find((tab) => tab.value === tabValue)?.icon || 'dot'}`]"></span>
+                  <span class="admin-nav-copy">
+                    <strong>{{ adminTabs.find((tab) => tab.value === tabValue)?.label }}</strong>
+                    <span>{{ adminTabs.find((tab) => tab.value === tabValue)?.hint }}</span>
+                  </span>
                 </button>
               </section>
             </nav>
 
             <div class="admin-sidebar-footer">
+              <span>studio.cylonai.cn</span>
               <button class="button-secondary" @click="navigate('images')">返回创作台</button>
             </div>
           </aside>
@@ -3906,16 +4383,13 @@ async function batchDelete() {
           <section class="admin-console-main">
             <header class="admin-topbar">
               <div>
-                <p class="eyebrow">Admin Console</p>
+                <p class="eyebrow">Cylon Studio Console</p>
                 <h2>{{ adminActiveTab.label }}</h2>
                 <p class="muted">{{ adminActiveTab.hint }}</p>
               </div>
               <div class="admin-topbar-actions">
-                <span class="admin-env-pill">studio.cylonai.cn</span>
-                <span class="admin-user-pill">
-                  {{ auth.state.user?.email || "admin" }}
-                  <small>管理员</small>
-                </span>
+                <span class="admin-env-pill"><i></i> studio.cylonai.cn</span>
+                <span class="admin-user-pill">{{ auth.state.user?.email || "admin" }}<small>管理员</small></span>
                 <button class="button-secondary" :disabled="adminState.loading" @click="loadAdminTab()">刷新当前页</button>
               </div>
             </header>
@@ -3923,6 +4397,17 @@ async function batchDelete() {
             <main class="admin-content">
               <div v-if="adminState.error" class="inline-message inline-danger">{{ adminState.error }}</div>
               <div v-if="adminState.loading" class="admin-loading">加载中...</div>
+              <section class="admin-insight-strip" aria-label="当前页面巡检建议">
+                <article>
+                  <span>当前模块</span>
+                  <strong>{{ adminActiveTab.label }}</strong>
+                  <small>{{ adminActiveTab.hint }}</small>
+                </article>
+                <article v-for="suggestion in ADMIN_PAGE_SUGGESTIONS[adminState.activeTab]" :key="suggestion">
+                  <span>优化建议</span>
+                  <strong>{{ suggestion }}</strong>
+                </article>
+              </section>
 
               <template v-if="adminState.activeTab === 'overview'">
                 <div class="admin-section-head">
@@ -3964,9 +4449,69 @@ async function batchDelete() {
                     <strong>{{ formatAdminNumber(adminState.overview?.privateModelCalls) }}</strong>
                     <small>用户自有模型</small>
                   </article>
+                  <article class="admin-metric">
+                    <span><i>QTA</i> 额度消耗</span>
+                    <strong>{{ formatAdminQuota(adminState.overview?.quotaUnits) }}</strong>
+                    <small>从调用日志推算</small>
+                  </article>
+                  <article class="admin-metric">
+                    <span><i>QUE</i> 平均排队</span>
+                    <strong>{{ formatAdminDuration(adminState.overview?.averageQueueMs) }}</strong>
+                    <small>有队列字段时统计</small>
+                  </article>
+                  <article class="admin-metric admin-metric-alert">
+                    <span><i>TO</i> 超时率</span>
+                    <strong>{{ adminPercentLabel(adminTimeoutPercent) }}</strong>
+                    <small>{{ formatAdminNumber(adminState.overview?.timeoutCalls) }} 次疑似超时</small>
+                  </article>
                 </div>
 
                 <div class="admin-ops-grid">
+                  <section class="admin-subpanel admin-chart-card admin-wide-panel">
+                    <div class="admin-subpanel-head">
+                      <h4>调用趋势</h4>
+                      <div class="admin-segmented">
+                        <button :class="adminState.trendPeriod === 'day' ? 'active' : ''" @click="adminState.trendPeriod = 'day'">日</button>
+                        <button :class="adminState.trendPeriod === 'week' ? 'active' : ''" @click="adminState.trendPeriod = 'week'">周</button>
+                        <button :class="adminState.trendPeriod === 'month' ? 'active' : ''" @click="adminState.trendPeriod = 'month'">月</button>
+                      </div>
+                    </div>
+                    <div class="admin-trend-chart">
+                      <div v-for="point in adminTrendPoints" :key="`${adminState.trendPeriod}-${point.label}`" class="admin-trend-column">
+                        <div class="admin-trend-stack">
+                          <i class="admin-trend-success" :style="{ height: adminTrendHeight(point.successCalls) }"></i>
+                          <i v-if="point.failedCalls" class="admin-trend-failed" :style="{ height: adminTrendHeight(point.failedCalls) }"></i>
+                        </div>
+                        <strong>{{ formatAdminNumber(point.totalCalls) }}</strong>
+                        <span>{{ point.label }}</span>
+                      </div>
+                    </div>
+                    <div class="admin-trend-foot">
+                      <span>绿色为成功，红色为失败；额度与耗时来自后端日志聚合。</span>
+                      <strong>本周期额度 {{ formatAdminQuota(adminTrendPoints.reduce((sum, point) => sum + (point.quotaUnits || 0), 0)) }}</strong>
+                    </div>
+                  </section>
+
+                  <section class="admin-subpanel admin-chart-card">
+                    <div class="admin-subpanel-head">
+                      <h4>失败模型联动</h4>
+                      <span>Failed models</span>
+                    </div>
+                    <div class="admin-failed-model-list">
+                      <button
+                        v-for="row in adminFailedModels"
+                        :key="row.modelGroupId"
+                        class="admin-failed-model"
+                        @click="adminApplyFailedModelFilter(row)"
+                      >
+                        <strong>{{ row.modelName }}</strong>
+                        <span>{{ adminCapabilityLabel(row.capability) }} / 失败 {{ formatAdminNumber(row.failedCalls) }} / {{ adminPercentLabel((row.failureRate || 0) * 100) }}</span>
+                        <small>{{ row.lastError || "点击查看相关记录" }}</small>
+                      </button>
+                      <p v-if="!adminFailedModels.length" class="admin-empty">暂无失败模型样本</p>
+                    </div>
+                  </section>
+
                   <section class="admin-subpanel admin-chart-card">
                     <div class="admin-subpanel-head">
                       <h4>调用状态</h4>
@@ -4095,6 +4640,13 @@ async function batchDelete() {
                   <button class="button-secondary" @click="loadAdminModels">刷新模型</button>
                 </div>
 
+                <div class="admin-mini-metrics">
+                  <article><span>模型总数</span><strong>{{ formatAdminNumber(adminState.models.length) }}</strong><small>当前筛选结果</small></article>
+                  <article><span>公用模型</span><strong>{{ formatAdminNumber(adminPublicModelCount) }}</strong><small>所有用户可见</small></article>
+                  <article><span>私有模型</span><strong>{{ formatAdminNumber(adminPrivateModelCount) }}</strong><small>管理员未发布</small></article>
+                  <article><span>提示优化</span><strong>{{ formatAdminNumber(adminState.models.filter((model) => model.promptOptimizeEnabled !== false).length) }}</strong><small>AI 图标可用</small></article>
+                </div>
+
                 <div class="admin-toolbar">
                   <div class="settings-filter-tabs" role="tablist" aria-label="后台模型分组">
                     <button
@@ -4118,14 +4670,36 @@ async function batchDelete() {
                   <button class="button-secondary" @click="loadAdminModels">筛选</button>
                 </div>
 
+                <div class="admin-bulk-bar">
+                  <label class="admin-check">
+                    <input :checked="adminAllVisibleModelsSelected" type="checkbox" @change="toggleAdminSelectAllModels" />
+                    选择当前列表
+                  </label>
+                  <span>已选择 {{ formatAdminNumber(adminSelectedModels.length) }} 个模型</span>
+                  <button class="button-secondary" :disabled="!adminSelectedModels.length || adminState.saving === 'bulk-public'" @click="bulkSetAdminPublicState(true)">批量设为公用</button>
+                  <button class="button-secondary" :disabled="!adminSelectedModels.length || adminState.saving === 'bulk-public'" @click="bulkSetAdminPublicState(false)">批量取消公用</button>
+                  <button class="button-secondary" :disabled="!adminSelectedModels.length || adminState.saving === 'bulk-prompt'" @click="bulkSetAdminPromptOptimize(true)">批量启用 AI 文案</button>
+                  <button class="button-secondary" :disabled="!adminSelectedModels.length || adminState.saving === 'bulk-prompt'" @click="bulkSetAdminPromptOptimize(false)">批量禁用 AI 文案</button>
+                </div>
+
                 <div class="admin-data-table admin-model-table">
                   <div class="admin-data-row admin-data-head">
-                    <span>模型</span><span>能力</span><span>公开状态</span><span>主模型</span><span>提示优化</span><span>操作</span>
+                    <span>选择</span><span>模型</span><span>能力</span><span>公开状态</span><span>主模型</span><span>提示优化</span><span>操作</span>
                   </div>
                   <article v-for="model in adminState.models" :key="model.id" class="admin-data-row admin-model-row">
+                    <label class="admin-row-check">
+                      <input :checked="adminState.selectedModelIds.includes(model.id)" type="checkbox" @change="toggleAdminModelSelection(model.id)" />
+                    </label>
                     <div class="admin-model-cell">
                       <div :class="['model-avatar', `model-avatar-${model.capability}`, modelIconUrl(model) ? 'model-avatar-has-icon' : '']">
-                        <img v-if="modelIconUrl(model)" :src="modelIconUrl(model)" :alt="modelDisplayName(model)" loading="lazy" @error="hideBrokenModelIcon" />
+                        <img
+                          v-if="modelIconUrl(model)"
+                          :src="modelIconUrl(model)"
+                          :alt="modelDisplayName(model)"
+                          loading="lazy"
+                          @error="markAdminIconFailed(model, $event)"
+                          @load="clearAdminIconError(model)"
+                        />
                         <span>{{ model.capability === 'text' ? 'T' : model.capability === 'image' ? 'I' : 'V' }}</span>
                       </div>
                       <div>
@@ -4145,11 +4719,37 @@ async function batchDelete() {
                     </div>
                     <div v-if="adminState.editingModelId === model.id && adminState.modelDrafts[model.id]" class="admin-row-editor admin-model-form">
                       <label><span>公用展示名</span><input v-model="adminState.modelDrafts[model.id].publicDisplayName" /></label>
-                      <label><span>图标 URL</span><input v-model="adminState.modelDrafts[model.id].iconUrl" placeholder="https://...svg" /></label>
+                      <label><span>图标 URL</span><input v-model="adminState.modelDrafts[model.id].iconUrl" placeholder="https://...svg" @input="clearAdminIconError(model)" /></label>
+                      <div class="admin-icon-preview">
+                        <div :class="['model-avatar', `model-avatar-${model.capability}`, adminState.modelDrafts[model.id].iconUrl ? 'model-avatar-has-icon' : '']">
+                          <img
+                            v-if="adminState.modelDrafts[model.id].iconUrl"
+                            :src="adminState.modelDrafts[model.id].iconUrl"
+                            alt="模型图标预览"
+                            @error="markAdminIconFailed(model, $event)"
+                            @load="clearAdminIconError(model)"
+                          />
+                          <span>{{ model.capability === 'text' ? 'T' : model.capability === 'image' ? 'I' : 'V' }}</span>
+                        </div>
+                        <small :class="adminIconError(model) ? 'admin-inline-error' : ''">{{ adminIconError(model) || "图标会展示在模型列表和聊天输入区。" }}</small>
+                      </div>
                       <label class="field-full"><span>公用描述</span><textarea v-model="adminState.modelDrafts[model.id].publicDescription" rows="3" /></label>
                       <label class="field-full"><span>输入框默认提示语 hint</span><textarea v-model="adminState.modelDrafts[model.id].inputHint" rows="3" /></label>
                       <label><span>标签</span><input v-model="adminState.modelDrafts[model.id].publicTagsText" placeholder="公用, 推荐" /></label>
                       <label class="admin-check"><input v-model="adminState.modelDrafts[model.id].promptOptimizeEnabled" type="checkbox" /> 启用 AI 文案优化</label>
+                      <div class="admin-param-editor field-full">
+                        <div class="admin-param-editor-head">
+                          <span>默认参数结构化表单</span>
+                          <button class="button-secondary" type="button" @click="addAdminDefaultParameter(model)">添加参数</button>
+                        </div>
+                        <div v-if="adminDefaultParameterRows(model).length" class="admin-param-grid">
+                          <label v-for="row in adminDefaultParameterRows(model)" :key="row.key">
+                            <span>{{ row.key }}</span>
+                            <input :value="row.value" @input="setAdminDefaultParameterFromEvent(model, row.key, $event)" />
+                          </label>
+                        </div>
+                        <p v-else class="muted">暂无默认参数。可以添加常用参数，或直接编辑下面的高级 JSON。</p>
+                      </div>
                       <label class="field-full"><span>默认参数 JSON</span><textarea v-model="adminState.modelDrafts[model.id].defaultParametersText" rows="5" /></label>
                       <div class="admin-row-actions field-full">
                         <button :disabled="adminState.saving === model.id" @click="saveAdminModel(model)">保存配置</button>
@@ -4168,6 +4768,14 @@ async function batchDelete() {
                     <p class="muted">配置三种创作模式中 AI 图标使用的提示词优化模板，可绑定全局或单个模型。</p>
                   </div>
                   <button class="button-secondary" @click="loadPromptTemplates">刷新模板</button>
+                </div>
+
+                <div class="admin-mini-metrics">
+                  <article><span>模板数量</span><strong>{{ formatAdminNumber(adminPromptTemplateCount) }}</strong><small>已保存模板</small></article>
+                  <article><span>启用模板</span><strong>{{ formatAdminNumber(adminState.templates.filter((template) => template.enabled).length) }}</strong><small>可用于优化提示词</small></article>
+                  <article><span>当前能力</span><strong>{{ CAPABILITY_LABELS[adminState.templateDraft.capability] }}</strong><small>编辑器目标</small></article>
+                  <article><span>测试状态</span><strong>{{ adminState.templateDraft.preview ? "已生成" : "待测试" }}</strong><small>预览优化结果</small></article>
+                  <article><span>模型启用总览</span><strong>{{ formatAdminNumber(adminPromptModelOverview.filter((row) => row.enabled).length) }}</strong><small>模型开关 + 模板开关</small></article>
                 </div>
 
                 <div class="admin-template-layout">
@@ -4194,8 +4802,14 @@ async function batchDelete() {
                       <h4>测试与模板列表</h4>
                       <span>{{ adminState.templates.length }} 个模板</span>
                     </div>
-                    <label class="field field-full"><span>测试提示词</span><textarea v-model="adminState.templateDraft.testPrompt" rows="4" /></label>
-                    <pre class="admin-preview">{{ adminState.templateDraft.preview || "点击测试预览后显示渲染结果。" }}</pre>
+                    <label class="field field-full"><span>多样例测试</span><textarea v-model="adminState.templateDraft.testSamplesText" rows="5" placeholder="每行一个测试提示词，最多 5 条" /></label>
+                    <div v-if="adminState.templateDraft.previews.length" class="admin-template-previews">
+                      <article v-for="item in adminState.templateDraft.previews" :key="item.input">
+                        <span>{{ item.input }}</span>
+                        <pre>{{ item.output }}</pre>
+                      </article>
+                    </div>
+                    <pre v-else class="admin-preview">{{ adminState.templateDraft.preview || "点击测试预览后显示渲染结果。" }}</pre>
                     <div class="admin-template-list">
                       <button
                         v-for="template in adminState.templates"
@@ -4206,6 +4820,37 @@ async function batchDelete() {
                         <strong>{{ template.name }}</strong>
                         <span>{{ CAPABILITY_LABELS[template.capability] }} / {{ template.modelGroupId ? "模型专属" : "默认" }} / {{ template.enabled ? "启用" : "禁用" }}</span>
                       </button>
+                    </div>
+                  </section>
+
+                  <section class="admin-subpanel admin-wide-panel">
+                    <div class="admin-subpanel-head">
+                      <h4>模型级启用状态</h4>
+                      <span>Prompt optimizer matrix</span>
+                    </div>
+                    <div class="admin-prompt-model-grid">
+                      <article v-for="row in adminPromptModelOverview" :key="row.model.id">
+                        <strong>{{ modelDisplayName(row.model) }}</strong>
+                        <span>{{ CAPABILITY_LABELS[row.model.capability] }} / {{ row.template?.name || "未配置模板" }}</span>
+                        <b :class="['badge', row.enabled ? 'badge-success' : 'badge-warn']">{{ row.enabled ? "可用" : "未启用" }}</b>
+                      </article>
+                    </div>
+                  </section>
+
+                  <section class="admin-subpanel admin-wide-panel">
+                    <div class="admin-subpanel-head">
+                      <h4>版本历史</h4>
+                      <span>最近 {{ adminState.templateHistory.length }} 次保存前快照</span>
+                    </div>
+                    <div class="admin-template-history">
+                      <article v-for="item in adminState.templateHistory" :key="item.id">
+                        <div>
+                          <strong>{{ item.name }}</strong>
+                          <span>{{ CAPABILITY_LABELS[item.capability] }} / {{ item.modelGroupId || "默认模板" }} / {{ formatConversationTime(item.savedAt) }}</span>
+                        </div>
+                        <button class="button-secondary" @click="adminState.templateDraft.capability = item.capability; adminState.templateDraft.modelGroupId = item.modelGroupId; adminState.templateDraft.name = item.name; adminState.templateDraft.content = item.content; adminState.templateDraft.enabled = item.enabled">恢复到编辑器</button>
+                      </article>
+                      <p v-if="!adminState.templateHistory.length" class="admin-empty">保存模板后会在这里保留上一个版本的快照。</p>
                     </div>
                   </section>
                 </div>
@@ -4220,14 +4865,28 @@ async function batchDelete() {
                   <button class="button-secondary" @click="loadAdminUsers">刷新用户</button>
                 </div>
 
-                <div class="admin-toolbar">
-                  <label class="settings-search-box admin-search"><span>搜索</span><input v-model="adminState.userSearch" placeholder="邮箱、昵称、手机号、ID" @keyup.enter="loadAdminUsers" /></label>
-                  <button class="button-secondary" @click="loadAdminUsers">筛选</button>
+                <div class="admin-mini-metrics">
+                  <article><span>用户总数</span><strong>{{ formatAdminNumber(adminState.users.length) }}</strong><small>当前搜索结果</small></article>
+                  <article><span>启用用户</span><strong>{{ formatAdminNumber(adminActiveUserCount) }}</strong><small>可正常使用</small></article>
+                  <article><span>管理员</span><strong>{{ formatAdminNumber(adminState.users.filter((user) => user.isAdmin).length) }}</strong><small>受保护账号</small></article>
+                  <article><span>禁用/删除</span><strong>{{ formatAdminNumber(adminState.users.filter((user) => user.status !== "active").length) }}</strong><small>需复核账号</small></article>
                 </div>
 
-                <div class="admin-data-table admin-user-table">
-                  <div class="admin-data-row admin-data-head"><span>用户</span><span>联系方式</span><span>状态</span><span>更新时间</span><span>操作</span></div>
-                  <article v-for="user in adminState.users" :key="user.id" class="admin-data-row admin-user-row">
+                <div class="admin-toolbar">
+                  <label class="settings-search-box admin-search"><span>搜索</span><input v-model="adminState.userSearch" placeholder="邮箱、昵称、手机号、ID" @keyup.enter="loadAdminUsers" /></label>
+                  <select v-model="adminState.userRoleFilter">
+                    <option value="all">全部角色</option>
+                    <option value="admin">仅管理员</option>
+                    <option value="user">仅普通用户</option>
+                  </select>
+                  <button class="button-secondary" @click="loadAdminUsers">筛选</button>
+                  <button class="button-secondary" @click="exportAdminUsers">导出用户</button>
+                </div>
+
+                <div class="admin-users-layout">
+                  <div class="admin-data-table admin-user-table">
+                    <div class="admin-data-row admin-data-head"><span>用户</span><span>联系方式</span><span>状态</span><span>最近活跃</span><span>操作</span></div>
+                    <article v-for="user in adminFilteredUsers" :key="user.id" class="admin-data-row admin-user-row">
                     <div class="admin-user-cell">
                       <div class="admin-user-avatar">{{ (user.nickname || user.email || "U").slice(0, 1) }}</div>
                       <div>
@@ -4240,8 +4899,9 @@ async function batchDelete() {
                       <small>{{ user.phone || "未填写手机" }}</small>
                     </div>
                     <span :class="['badge', adminStatusBadge(user.status)]">{{ user.isAdmin ? "管理员" : adminStatusLabel(user.status) }}</span>
-                    <span>{{ formatConversationTime(user.updatedAt) }}</span>
+                    <span>{{ user.lastSeenAt ? formatConversationTime(user.lastSeenAt) : formatConversationTime(user.updatedAt) }}</span>
                     <div class="admin-action-cell">
+                      <button class="button-secondary" @click="adminState.selectedUserId = user.id">详情</button>
                       <button class="button-secondary" @click="editAdminUser(user)">{{ adminState.editingUserId === user.id ? "收起" : "编辑" }}</button>
                       <button class="button-secondary" :disabled="user.isAdmin" @click="setAdminUserStatus(user, 'enable')">启用</button>
                       <button class="button-secondary" :disabled="user.isAdmin" @click="setAdminUserStatus(user, 'disable')">禁用</button>
@@ -4258,7 +4918,36 @@ async function batchDelete() {
                       </div>
                     </div>
                   </article>
-                  <p v-if="!adminState.users.length" class="admin-empty">暂无用户</p>
+                    <p v-if="!adminFilteredUsers.length" class="admin-empty">暂无用户</p>
+                  </div>
+
+                  <aside class="admin-detail-drawer admin-user-drawer" :class="adminSelectedUser ? 'admin-detail-open' : ''">
+                    <div class="admin-detail-head">
+                      <div>
+                        <span>用户详情</span>
+                        <strong>{{ adminSelectedUser ? adminUserLabel(adminSelectedUser) : "请选择用户" }}</strong>
+                      </div>
+                      <button class="button-secondary" @click="adminState.selectedUserId = ''">关闭</button>
+                    </div>
+                    <template v-if="adminSelectedUser">
+                      <div class="admin-user-profile-card">
+                        <div class="admin-user-avatar">{{ (adminSelectedUser.nickname || adminSelectedUser.email || "U").slice(0, 1) }}</div>
+                        <div>
+                          <strong>{{ adminUserLabel(adminSelectedUser) }}</strong>
+                          <span>{{ adminSelectedUser.email || "未填写邮箱" }}</span>
+                        </div>
+                      </div>
+                      <dl class="admin-detail-list">
+                        <dt>角色</dt><dd>{{ adminSelectedUser.isAdmin ? "管理员" : "普通用户" }}</dd>
+                        <dt>状态</dt><dd>{{ adminStatusLabel(adminSelectedUser.status) }}</dd>
+                        <dt>活跃会话</dt><dd>{{ formatAdminNumber(adminSelectedUser.sessionCount || 0) }}</dd>
+                        <dt>最近登录 IP</dt><dd>{{ adminSelectedUser.recentLoginIp || "未记录" }}</dd>
+                        <dt>最近活跃</dt><dd>{{ adminSelectedUser.lastSeenAt ? formatConversationTime(adminSelectedUser.lastSeenAt) : "-" }}</dd>
+                        <dt>创建时间</dt><dd>{{ formatConversationTime(adminSelectedUser.createdAt) }}</dd>
+                      </dl>
+                    </template>
+                    <p v-else class="admin-empty">点击用户行里的“详情”查看用户画像、会话和登录信息。</p>
+                  </aside>
                 </div>
               </template>
 
@@ -4269,6 +4958,13 @@ async function batchDelete() {
                     <p class="muted">按类型、用户和状态查看创作请求，正文优先展示提问、回答和媒体结果。</p>
                   </div>
                   <button class="button-secondary" @click="loadAdminRecords(capabilityForAdminRecordTab(adminState.activeTab))">刷新记录</button>
+                </div>
+
+                <div class="admin-mini-metrics">
+                  <article><span>记录数</span><strong>{{ formatAdminNumber(adminRecordCount) }}</strong><small>当前筛选结果</small></article>
+                  <article><span>成功</span><strong>{{ formatAdminNumber(adminRecordList(adminState.activeTab).filter((record) => record.status === "success").length) }}</strong><small>已完成调用</small></article>
+                  <article><span>失败</span><strong>{{ formatAdminNumber(adminRecordList(adminState.activeTab).filter((record) => record.status === "error").length) }}</strong><small>可排查样本</small></article>
+                  <article><span>处理中</span><strong>{{ formatAdminNumber(adminRecordList(adminState.activeTab).filter((record) => record.status === "processing").length) }}</strong><small>长任务追踪</small></article>
                 </div>
 
                 <div class="admin-toolbar admin-record-toolbar">
@@ -4291,6 +4987,10 @@ async function batchDelete() {
                       @keyup.enter="loadAdminRecords(capabilityForAdminRecordTab(adminState.activeTab))"
                     />
                   </label>
+                  <label class="settings-search-box admin-search admin-record-keyword-search">
+                    <span>关键词</span>
+                    <input v-model="adminState.recordKeyword" placeholder="提示词、回答、错误内容" @keyup.enter="loadAdminRecords(capabilityForAdminRecordTab(adminState.activeTab))" />
+                  </label>
                   <select v-model="adminState.recordStatus" @change="loadAdminRecords(capabilityForAdminRecordTab(adminState.activeTab))">
                     <option value="">全部状态</option>
                     <option value="success">success</option>
@@ -4303,18 +5003,66 @@ async function batchDelete() {
                       <span>模型 ID</span>
                       <input v-model="adminState.recordModelGroupId" placeholder="可选" @keyup.enter="loadAdminRecords(capabilityForAdminRecordTab(adminState.activeTab))" />
                     </label>
+                    <label v-if="adminState.activeTab === 'image-records'" class="settings-search-box admin-search">
+                      <span>尺寸</span>
+                      <input v-model="adminState.recordSize" placeholder="1024x1024" @keyup.enter="loadAdminRecords('image')" />
+                    </label>
+                    <label v-if="adminState.activeTab !== 'text-records'" class="settings-search-box admin-search">
+                      <span>比例</span>
+                      <input v-model="adminState.recordRatio" placeholder="16:9" @keyup.enter="loadAdminRecords(capabilityForAdminRecordTab(adminState.activeTab))" />
+                    </label>
+                    <label v-if="adminState.activeTab !== 'text-records'" class="settings-search-box admin-search">
+                      <span>参考图数量</span>
+                      <input v-model="adminState.recordRefCount" placeholder="0 / 1 / 2" @keyup.enter="loadAdminRecords(capabilityForAdminRecordTab(adminState.activeTab))" />
+                    </label>
+                    <label v-if="adminState.activeTab === 'video-records'" class="settings-search-box admin-search">
+                      <span>时长</span>
+                      <input v-model="adminState.recordDuration" placeholder="8" @keyup.enter="loadAdminRecords('video')" />
+                    </label>
+                    <label v-if="adminState.activeTab === 'video-records'" class="settings-search-box admin-search">
+                      <span>分辨率</span>
+                      <input v-model="adminState.recordResolution" placeholder="720p" @keyup.enter="loadAdminRecords('video')" />
+                    </label>
+                    <label v-if="adminState.activeTab === 'video-records'" class="settings-search-box admin-search">
+                      <span>模式</span>
+                      <input v-model="adminState.recordMode" placeholder="reference / first_last_frame" @keyup.enter="loadAdminRecords('video')" />
+                    </label>
                   </details>
                   <button class="button-secondary" @click="loadAdminRecords(capabilityForAdminRecordTab(adminState.activeTab))">筛选</button>
+                  <button class="button-secondary" @click="saveAdminRecordFilter">保存筛选</button>
+                  <button class="button-secondary" @click="clearAdminRecordFilters">清空</button>
+                  <label v-if="adminState.activeTab === 'text-records'" class="admin-check admin-inline-toggle">
+                    <input v-model="adminState.recordMarkdownPreview" type="checkbox" />
+                    Markdown 预览
+                  </label>
+                  <label v-if="adminState.activeTab === 'image-records'" class="admin-check admin-inline-toggle">
+                    <input v-model="adminState.recordWaterfall" type="checkbox" />
+                    瀑布流
+                  </label>
                 </div>
 
-                <div class="admin-record-list">
+                <div v-if="adminState.recordSavedFilters.length" class="admin-saved-filters">
+                  <button
+                    v-for="filter in adminState.recordSavedFilters"
+                    :key="filter.id"
+                    class="button-secondary"
+                    @click="switchAdminRecordCapability(filter.capability); applyAdminRecordFilters(filter.filters)"
+                  >
+                    {{ filter.name }}
+                  </button>
+                </div>
+
+                <div :class="['admin-record-list', adminState.activeTab === 'image-records' && adminState.recordWaterfall ? 'admin-record-waterfall' : '']">
                   <article v-for="record in adminRecordList(adminState.activeTab)" :key="record.id" class="admin-record-card">
                     <div class="admin-record-head">
                       <div>
                         <strong>{{ record.modelName || "未知模型" }}</strong>
                         <span>{{ adminUserLabel(record.user) }} / {{ CAPABILITY_LABELS[record.capability] }} / {{ formatConversationTime(record.createdAt) }}</span>
                       </div>
-                      <span :class="['badge', adminStatusBadge(record.status)]">{{ adminStatusLabel(record.status) }}</span>
+                      <div class="admin-record-actions">
+                        <span :class="['badge', adminStatusBadge(record.status)]">{{ adminStatusLabel(record.status) }}</span>
+                        <button class="button-secondary" @click="openAdminRecordDetail(record)">详情</button>
+                      </div>
                     </div>
 
                     <div v-if="record.capability === 'text'" class="admin-record-qa">
@@ -4324,7 +5072,8 @@ async function batchDelete() {
                       </section>
                       <section>
                         <span>回答</span>
-                        <p>{{ adminRecordResponse(record) }}</p>
+                        <div v-if="adminRecordIsMarkdownCapable(record)" class="markdown-preview admin-markdown-preview" v-html="adminRecordMarkdownHtml(record)"></div>
+                        <p v-else>{{ adminRecordResponse(record) }}</p>
                       </section>
                     </div>
 
@@ -4333,14 +5082,16 @@ async function batchDelete() {
                         <span>请求</span>
                         <p>{{ adminRecordPrompt(record) }}</p>
                         <small v-if="record.taskId">任务 ID: {{ record.taskId }}</small>
+                        <small>参数：{{ adminRecordParam(record, ['size']) }} / {{ adminRecordParam(record, ['aspect_ratio', 'ratio']) }} / 参考图 {{ adminRecordReferenceCount(record) }}</small>
                       </section>
                       <section class="admin-record-result">
                         <span>响应结果</span>
                         <div v-if="adminRecordMediaAssets(record).length" class="admin-record-assets">
-                          <a v-for="asset in adminRecordMediaAssets(record)" :key="asset.url" :href="asset.url" target="_blank" rel="noreferrer">
-                        <img v-if="asset.type === 'image'" :src="asset.thumbnailUrl || asset.url" alt="record asset" />
-                            <video v-else-if="asset.type === 'video'" :src="asset.url" :poster="asset.thumbnailUrl" muted playsinline />
+                          <a v-for="asset in adminRecordMediaAssets(record)" :key="asset.url" class="admin-record-asset" :href="asset.url" target="_blank" rel="noreferrer" @click.prevent="openAdminRecordDetail(record)">
+                            <img v-if="asset.type === 'image'" :src="asset.thumbnailUrl || asset.url" alt="record asset" @error="markAdminRecordAssetBroken" />
+                            <video v-else-if="asset.type === 'video'" :src="asset.url" :poster="asset.thumbnailUrl" controls playsinline @error="markAdminRecordAssetBroken" />
                             <span v-else>打开资源</span>
+                            <span class="admin-record-asset-fallback">资源加载失败<br />打开详情查看原链接</span>
                           </a>
                         </div>
                         <p v-else>{{ adminRecordResponse(record) }}</p>
@@ -4357,6 +5108,55 @@ async function batchDelete() {
                   </article>
                   <p v-if="!adminRecordList(adminState.activeTab).length" class="admin-empty">暂无记录</p>
                 </div>
+
+                <aside class="admin-detail-drawer admin-record-drawer" :class="adminSelectedRecord ? 'admin-detail-open' : ''">
+                  <div class="admin-detail-head">
+                    <div>
+                      <span>记录详情</span>
+                      <strong>{{ adminSelectedRecord?.modelName || "请选择记录" }}</strong>
+                    </div>
+                    <button class="button-secondary" @click="closeAdminRecordDetail">关闭</button>
+                  </div>
+                  <template v-if="adminSelectedRecord">
+                    <div class="admin-record-detail-media" v-if="adminRecordMediaAssets(adminSelectedRecord).length">
+                      <a v-for="asset in adminRecordMediaAssets(adminSelectedRecord)" :key="asset.url" class="admin-record-asset" :href="asset.url" target="_blank" rel="noreferrer">
+                        <img v-if="asset.type === 'image'" :src="asset.thumbnailUrl || asset.url" alt="record asset" @error="markAdminRecordAssetBroken" />
+                        <video v-else-if="asset.type === 'video'" :src="asset.url" :poster="asset.thumbnailUrl" controls playsinline @error="markAdminRecordAssetBroken" />
+                        <span class="admin-record-asset-fallback">资源加载失败<br />点击打开原链接</span>
+                      </a>
+                    </div>
+                    <div v-if="adminSelectedRecord.capability === 'video'" class="admin-task-timeline">
+                      <article v-for="item in adminRecordTimeline(adminSelectedRecord)" :key="item.label" :class="`admin-timeline-${item.tone}`">
+                        <span>{{ item.label }}</span>
+                        <strong>{{ item.value }}</strong>
+                      </article>
+                    </div>
+                    <dl class="admin-detail-list">
+                      <dt>用户</dt><dd>{{ adminUserLabel(adminSelectedRecord.user) }}</dd>
+                      <dt>状态</dt><dd>{{ adminStatusLabel(adminSelectedRecord.status) }}</dd>
+                      <dt>任务 ID</dt><dd><button v-if="adminSelectedRecord.taskId" class="button-secondary" @click="copyAdminText(adminSelectedRecord.taskId || '', '任务 ID')">复制 {{ adminSelectedRecord.taskId }}</button><span v-else>-</span></dd>
+                      <dt>尺寸/比例</dt><dd>{{ adminRecordParam(adminSelectedRecord, ['size']) }} / {{ adminRecordParam(adminSelectedRecord, ['aspect_ratio', 'ratio']) }}</dd>
+                      <dt>时长/分辨率/模式</dt><dd>{{ adminRecordParam(adminSelectedRecord, ['duration']) }} / {{ adminRecordParam(adminSelectedRecord, ['resolution']) }} / {{ adminRecordParam(adminSelectedRecord, ['video_mode', 'mode']) }}</dd>
+                      <dt>参考图数量</dt><dd>{{ adminRecordReferenceCount(adminSelectedRecord) }}</dd>
+                    </dl>
+                    <section class="admin-record-detail-copy">
+                      <span>提示词</span>
+                      <p>{{ adminRecordPrompt(adminSelectedRecord) }}</p>
+                    </section>
+                    <section class="admin-record-detail-copy">
+                      <span>响应</span>
+                      <div v-if="adminRecordIsMarkdownCapable(adminSelectedRecord)" class="markdown-preview" v-html="adminRecordMarkdownHtml(adminSelectedRecord)"></div>
+                      <p v-else>{{ adminRecordResponse(adminSelectedRecord) }}</p>
+                    </section>
+                    <details class="admin-record-json">
+                      <summary>完整 JSON</summary>
+                      <div class="admin-record-json-grid">
+                        <div><span>请求参数</span><pre>{{ compactJson(adminSelectedRecord.requestParams || {}) }}</pre></div>
+                        <div><span>响应摘要</span><pre>{{ compactJson(adminSelectedRecord.responseSummary || {}) }}</pre></div>
+                      </div>
+                    </details>
+                  </template>
+                </aside>
               </template>
 
               <template v-else-if="adminState.activeTab === 'audit'">
@@ -4368,18 +5168,40 @@ async function batchDelete() {
                   <button class="button-secondary" @click="loadAdminAuditLogs">刷新审计</button>
                 </div>
 
+                <div class="admin-mini-metrics">
+                  <article><span>审计记录</span><strong>{{ formatAdminNumber(adminAuditCount) }}</strong><small>当前筛选结果</small></article>
+                  <article><span>成功操作</span><strong>{{ formatAdminNumber(adminState.auditLogs.filter((log) => log.status === "success").length) }}</strong><small>已落库变更</small></article>
+                  <article><span>异常操作</span><strong>{{ formatAdminNumber(adminState.auditLogs.filter((log) => log.status === "error").length) }}</strong><small>需复核记录</small></article>
+                  <article><span>高风险操作</span><strong>{{ formatAdminNumber(adminState.auditLogs.filter((log) => log.riskLevel === "high").length) }}</strong><small>删除、禁用、取消公用等</small></article>
+                </div>
+
                 <div class="admin-toolbar">
                   <label class="settings-search-box admin-search"><span>动作</span><input v-model="adminState.auditAction" placeholder="publish_model" @keyup.enter="loadAdminAuditLogs" /></label>
                   <label class="settings-search-box admin-search"><span>管理员 ID</span><input v-model="adminState.auditAdminUserId" placeholder="可选" @keyup.enter="loadAdminAuditLogs" /></label>
+                  <select v-model="adminState.auditTargetType" @change="loadAdminAuditLogs">
+                    <option value="">全部对象</option>
+                    <option value="model">模型</option>
+                    <option value="user">用户</option>
+                    <option value="prompt_template">提示语模板</option>
+                  </select>
+                  <label class="settings-search-box admin-search"><span>目标 ID</span><input v-model="adminState.auditTargetId" placeholder="模型或用户 ID" @keyup.enter="loadAdminAuditLogs" /></label>
+                  <select v-model="adminState.auditRisk" @change="loadAdminAuditLogs">
+                    <option value="">全部风险</option>
+                    <option value="high">高风险</option>
+                    <option value="medium">需关注</option>
+                    <option value="normal">普通</option>
+                  </select>
                   <button class="button-secondary" @click="loadAdminAuditLogs">筛选</button>
+                  <button class="button-secondary" @click="exportAdminAuditLogs">导出审计</button>
                 </div>
 
                 <div class="admin-data-table admin-audit-table">
-                  <div class="admin-data-row admin-data-head"><span>时间</span><span>动作</span><span>目标</span><span>状态</span><span>摘要</span></div>
+                  <div class="admin-data-row admin-data-head"><span>时间</span><span>动作</span><span>目标</span><span>风险</span><span>状态</span><span>摘要</span></div>
                   <div v-for="log in adminState.auditLogs" :key="log.id" class="admin-data-row">
                     <span>{{ formatConversationTime(log.createdAt) }}</span>
                     <strong>{{ log.action }}</strong>
                     <span>{{ log.targetType }} / {{ log.targetId }}</span>
+                    <span :class="['badge', adminRiskBadge(log.riskLevel)]">{{ adminRiskLabel(log.riskLevel) }}</span>
                     <span :class="['badge', adminStatusBadge(log.status)]">{{ adminStatusLabel(log.status) }}</span>
                     <pre>{{ compactJson(log.summary || {}) }}</pre>
                   </div>

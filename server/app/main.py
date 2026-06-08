@@ -454,13 +454,21 @@ def find_image_task_message(conversation: Conversation, task_id: str) -> Convers
     for message in conversation.messages:
         if message.role != "assistant" or message.capability != "image":
             continue
-        try:
-            response = json.loads(message.response_json or "{}")
-        except ValueError:
-            response = {}
-        if isinstance(response, dict) and pick_nested_task_id(response) == task_id:
+        response = load_message_response(message)
+        if response_matches_task(response, task_id) or pick_nested_task_id(response) == task_id:
             return message
     return None
+
+
+def find_legacy_local_image_task_message(conversation: Conversation) -> ConversationMessage | None:
+    candidates = [
+        message
+        for message in conversation.messages
+        if message.role == "assistant"
+        and message.capability == "image"
+        and message.status in {"error", "processing"}
+    ]
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def delete_duplicate_image_task_messages(db: Session, conversation: Conversation, keep_message: ConversationMessage, task_id: str) -> None:
@@ -588,15 +596,17 @@ def serialize_local_image_task_result(conversation: Conversation, message: Conve
         for asset in message.assets
         if asset.asset_type == "image" and asset.url
     ]
-    return {
+    result = {
         "taskId": next_task_id,
         "status": status,
         "progress": raw.get("progress") if isinstance(raw.get("progress"), (str, int, float)) else None,
         "images": images,
-        "raw": raw,
         "conversation": serialize_conversation(conversation).model_dump(),
         "assistantMessage": serialize_message(message).model_dump(),
     }
+    if status != "failed":
+        result["raw"] = raw
+    return result
 
 
 async def wait_for_forward_or_handoff(
@@ -815,11 +825,17 @@ async def complete_image_long_task(
             response, raw = httpx.Response(503, text="502 Bad Gateway"), "502 Bad Gateway"
         duration_ms = elapsed_ms(started_at)
         if not response.is_success or not isinstance(raw, dict):
+            failure_raw = {
+                "taskId": task_id,
+                "localTaskId": task_id,
+                "status": "failed",
+                "upstream": sanitize_error_raw(raw),
+            }
             error_message = update_async_message_error(
                 db,
                 conversation,
                 message,
-                raw=raw,
+                raw=failure_raw,
                 fallback="图片请求失败。",
                 public_message=GENERATION_FAILED_MESSAGE,
             )
@@ -2713,6 +2729,8 @@ async def proxy_image_query(
     if current_user and conversation_id and is_image_long_task_id(task_id):
         conversation = get_conversation(db, current_user, conversation_id)
         message = find_image_task_message(conversation, task_id)
+        if not message:
+            message = find_legacy_local_image_task_message(conversation)
         if not message:
             raise HTTPException(status_code=404, detail={"message": "图片任务不存在或已被清理。"})
         return serialize_local_image_task_result(conversation, message, task_id)

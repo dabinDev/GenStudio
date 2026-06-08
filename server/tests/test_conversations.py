@@ -778,6 +778,85 @@ def test_image_long_request_marks_message_failed_when_background_parser_crashes(
         assert failed["assistantMessage"]["canRetry"] is True
 
 
+def test_image_long_request_query_finds_failed_message_after_upstream_error_without_task_id(monkeypatch) -> None:
+    async def fake_forward_json(method, url, api_key, body=None):
+        await asyncio.sleep(0.05)
+        return httpx.Response(502, json={"error": {"message": "policy rejected"}}), {
+            "error": {"message": "policy rejected"}
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    settings = main_module.get_settings()
+    monkeypatch.setattr(settings, "long_request_handoff_seconds", 0.01, raising=False)
+
+    with TestClient(app) as client:
+        login(client, "alice")
+        sub_model_id = create_model(client, "image", "image-openai", "gpt-image-2")
+        headers = csrf_headers(client)
+
+        response = client.post(
+            "/api/proxy/image",
+            headers=headers,
+            json={"subModelId": sub_model_id, "requestBody": {"prompt": "slow rejected image"}},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        failed = wait_for_task_status(
+            client,
+            "/api/proxy/image/query",
+            headers,
+            {
+                "subModelId": sub_model_id,
+                "conversationId": payload["conversation"]["id"],
+                "taskId": payload["taskId"],
+            },
+            "failed",
+        )
+
+        assert failed["assistantMessage"]["status"] == "error"
+        assert failed["assistantMessage"]["canRetry"] is True
+        assert failed["assistantMessage"]["errorMessage"] == "生成失败，请稍后重试。"
+        assert "raw" not in failed
+
+
+def test_image_query_uses_single_failed_message_as_legacy_local_task_fallback(monkeypatch) -> None:
+    async def fake_forward_json(method, url, api_key, body=None):
+        return httpx.Response(502, json={"error": {"message": "policy rejected"}}), {
+            "error": {"message": "policy rejected"}
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+
+    with TestClient(app) as client:
+        login(client, "alice")
+        sub_model_id = create_model(client, "image", "image-openai", "gpt-image-2")
+        headers = csrf_headers(client)
+
+        response = client.post(
+            "/api/proxy/image",
+            headers=headers,
+            json={"subModelId": sub_model_id, "requestBody": {"prompt": "legacy rejected image"}},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        queried = client.post(
+            "/api/proxy/image/query",
+            headers=headers,
+            json={
+                "subModelId": sub_model_id,
+                "conversationId": payload["conversation"]["id"],
+                "taskId": "local-image-task-legacy",
+            },
+        )
+
+        assert queried.status_code == 200
+        assert queried.json()["status"] == "failed"
+        assert queried.json()["assistantMessage"]["status"] == "error"
+        assert "raw" not in queried.json()
+
+
 def test_image_proxy_normalizes_html_gateway_timeout(monkeypatch) -> None:
     html = "<html><head><title>504 Gateway Time-out</title></head><body>nginx</body></html>"
 

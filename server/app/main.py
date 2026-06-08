@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import asyncio
 import copy
 import json
 from pathlib import Path
@@ -75,7 +76,7 @@ from app.catalog_service import (
     serialize_catalog_model,
     sync_catalog_details,
 )
-from app.database import get_db, init_db
+from app.database import SessionLocal, get_db, init_db
 from app.db_models import CallLog, Conversation, ConversationMessage, GeneratedAsset, User, utcnow
 from app.model_service import (
     create_model_group,
@@ -145,6 +146,9 @@ LOCAL_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 MAX_INLINE_REFERENCE_LENGTH = 10 * 1024 * 1024
 FRONTEND_ROUTES = {"auth", "auth-error", "text", "images", "videos", "settings", "profile", "admin"}
 rate_limiter = InMemoryRateLimiter()
+TEXT_LONG_TASK_PREFIX = "text-task-"
+IMAGE_LONG_TASK_PREFIX = "local-image-task-"
+GENERATION_FAILED_MESSAGE = "生成失败，请稍后重试。"
 
 
 def safe_frontend_hash_path(value: str, fallback: str = "#/settings") -> str:
@@ -516,6 +520,399 @@ def mark_image_task_message(
     delete_duplicate_image_task_messages(db, conversation, message, task_id)
     db.flush()
     return message
+
+
+def new_long_task_id(prefix: str) -> str:
+    return f"{prefix}{uuid4().hex}"
+
+
+def is_text_long_task_id(task_id: str) -> bool:
+    return task_id.startswith(TEXT_LONG_TASK_PREFIX)
+
+
+def is_image_long_task_id(task_id: str) -> bool:
+    return task_id.startswith(IMAGE_LONG_TASK_PREFIX)
+
+
+def load_message_response(message: ConversationMessage) -> dict[str, Any]:
+    try:
+        parsed = json.loads(message.response_json or "{}")
+    except ValueError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def response_matches_task(response: dict[str, Any], task_id: str) -> bool:
+    return task_id in {
+        str(response.get("taskId") or ""),
+        str(response.get("localTaskId") or ""),
+        str(response.get("providerTaskId") or ""),
+    }
+
+
+def find_text_task_message(conversation: Conversation, task_id: str) -> ConversationMessage | None:
+    for message in conversation.messages:
+        if message.role == "assistant" and message.capability == "text" and message.content == task_id:
+            return message
+    for message in conversation.messages:
+        if message.role != "assistant" or message.capability != "text":
+            continue
+        if response_matches_task(load_message_response(message), task_id):
+            return message
+    return None
+
+
+def serialize_text_task_result(conversation: Conversation, message: ConversationMessage, task_id: str) -> dict[str, Any]:
+    status = "completed" if message.status == "success" else "failed" if message.status == "error" else "processing"
+    raw = load_message_response(message) or {"taskId": task_id, "status": status}
+    return {
+        "taskId": task_id,
+        "status": status,
+        "content": message.content if message.status == "success" else "",
+        "usage": raw.get("usage") if isinstance(raw.get("usage"), dict) else None,
+        "raw": raw,
+        "conversation": serialize_conversation(conversation).model_dump(),
+        "assistantMessage": serialize_message(message).model_dump(),
+    }
+
+
+def serialize_local_image_task_result(conversation: Conversation, message: ConversationMessage, task_id: str) -> dict[str, Any]:
+    status = "completed" if message.status == "success" else "failed" if message.status == "error" else "processing"
+    raw = load_message_response(message) or {"taskId": task_id, "status": status}
+    next_task_id = message.content if message.status == "processing" and message.content and message.content != task_id else task_id
+    images = [
+        {
+            "src": asset.url,
+            "revisedPrompt": load_message_response(message).get("revisedPrompt", ""),
+        }
+        for asset in message.assets
+        if asset.asset_type == "image" and asset.url
+    ]
+    return {
+        "taskId": next_task_id,
+        "status": status,
+        "progress": raw.get("progress") if isinstance(raw.get("progress"), (str, int, float)) else None,
+        "images": images,
+        "raw": raw,
+        "conversation": serialize_conversation(conversation).model_dump(),
+        "assistantMessage": serialize_message(message).model_dump(),
+    }
+
+
+async def wait_for_forward_or_handoff(
+    task: asyncio.Task[tuple[httpx.Response, dict[str, Any] | str]],
+    settings: Settings,
+) -> tuple[bool, tuple[httpx.Response, dict[str, Any] | str] | None]:
+    timeout = max(0.0, settings.long_request_handoff_seconds)
+    done, _pending = await asyncio.wait({task}, timeout=timeout)
+    if task not in done:
+        return False, None
+    return True, await task
+
+
+def update_async_message_error(
+    db: Session,
+    conversation: Conversation,
+    message: ConversationMessage,
+    *,
+    raw: Any,
+    fallback: str,
+    public_message: str | None = None,
+) -> str:
+    error_message = public_message or pick_error_message(raw, fallback)
+    message.content = ""
+    message.status = "error"
+    message.error_message = error_message
+    message.can_retry = True
+    message.response_json = dumps_for_storage(raw)
+    conversation.updated_at = utcnow()
+    db.flush()
+    return error_message
+
+
+def should_return_generation_failure_payload(response: httpx.Response) -> bool:
+    return response.status_code in {502, 503, 504}
+
+
+def fail_async_message_after_exception(
+    db: Session,
+    *,
+    user_id: str,
+    conversation_id: str,
+    message_id: str,
+    capability: str,
+    endpoint: str,
+    started_at: float,
+    model_group_id: str | None,
+    sub_model_id: str | None,
+    request_payload: dict[str, Any],
+    task_id: str,
+    exc: Exception,
+) -> None:
+    try:
+        db.rollback()
+        user = db.get(User, user_id)
+        message = db.get(ConversationMessage, message_id)
+        conversation = db.get(Conversation, conversation_id)
+        if not user or not message or not conversation:
+            return
+        raw = {
+            "taskId": task_id,
+            "status": "failed",
+            "error": {
+                "message": "Background task failed.",
+                "type": exc.__class__.__name__,
+            },
+        }
+        error_message = update_async_message_error(
+            db,
+            conversation,
+            message,
+            raw=raw,
+            fallback=f"{capability} request failed.",
+            public_message=GENERATION_FAILED_MESSAGE,
+        )
+        message.request_json = dumps_for_storage(request_payload)
+        if model_group_id and sub_model_id:
+            record_call_log(
+                db,
+                user=user,
+                model_group_id=model_group_id,
+                sub_model_id=sub_model_id,
+                capability=capability,
+                endpoint=endpoint,
+                status="error",
+                duration_ms=elapsed_ms(started_at),
+                error_message=error_message,
+                conversation_id=conversation_id,
+                message_id=message_id,
+            )
+        else:
+            db.commit()
+    except Exception:
+        db.rollback()
+
+
+async def complete_text_long_task(
+    forward_task: asyncio.Task[tuple[httpx.Response, dict[str, Any] | str]],
+    *,
+    started_at: float,
+    user_id: str,
+    conversation_id: str,
+    message_id: str,
+    model_group_id: str,
+    sub_model_id: str,
+    body: dict[str, Any],
+    task_id: str,
+) -> None:
+    db = SessionLocal()
+    try:
+        user = db.get(User, user_id)
+        message = db.get(ConversationMessage, message_id)
+        if not user or not message:
+            return
+        conversation = db.get(Conversation, conversation_id)
+        if not conversation:
+            return
+        try:
+            response, raw = await forward_task
+        except httpx.TimeoutException:
+            response, raw = httpx.Response(504, text="504 Gateway Timeout"), "504 Gateway Timeout"
+        except httpx.HTTPError:
+            response, raw = httpx.Response(503, text="502 Bad Gateway"), "502 Bad Gateway"
+        duration_ms = elapsed_ms(started_at)
+        if not response.is_success or not isinstance(raw, dict):
+            error_message = update_async_message_error(
+                db,
+                conversation,
+                message,
+                raw=raw,
+                fallback="文案请求失败。",
+                public_message=GENERATION_FAILED_MESSAGE,
+            )
+            record_call_log(
+                db,
+                user=user,
+                model_group_id=model_group_id,
+                sub_model_id=sub_model_id,
+                capability="text",
+                endpoint="/api/proxy/text",
+                status="error",
+                duration_ms=duration_ms,
+                error_message=error_message,
+                conversation_id=conversation_id,
+                message_id=message_id,
+            )
+            return
+        content = pick_text_content(raw)
+        message.content = content
+        message.status = "success"
+        message.error_message = ""
+        message.can_retry = False
+        message.request_json = dumps_for_storage(body)
+        message.response_json = dumps_for_storage({"taskId": task_id, "status": "completed", **raw})
+        conversation.updated_at = utcnow()
+        db.flush()
+        record_call_log(
+            db,
+            user=user,
+            model_group_id=model_group_id,
+            sub_model_id=sub_model_id,
+            capability="text",
+            endpoint="/api/proxy/text",
+            status="success",
+            duration_ms=duration_ms,
+            prompt_summary=str(body.get("messages", ""))[:512],
+            usage=raw.get("usage"),
+            conversation_id=conversation_id,
+            message_id=message_id,
+        )
+    except Exception as exc:
+        fail_async_message_after_exception(
+            db,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            message_id=message_id,
+            capability="text",
+            endpoint="/api/proxy/text",
+            started_at=started_at,
+            model_group_id=model_group_id,
+            sub_model_id=sub_model_id,
+            request_payload=body,
+            task_id=task_id,
+            exc=exc,
+        )
+    finally:
+        db.close()
+
+
+async def complete_image_long_task(
+    forward_task: asyncio.Task[tuple[httpx.Response, dict[str, Any] | str]],
+    *,
+    started_at: float,
+    user_id: str,
+    conversation_id: str,
+    message_id: str,
+    model_group_id: str | None,
+    sub_model_id: str | None,
+    body: dict[str, Any],
+    task_id: str,
+) -> None:
+    db = SessionLocal()
+    try:
+        user = db.get(User, user_id)
+        message = db.get(ConversationMessage, message_id)
+        if not user or not message:
+            return
+        conversation = db.get(Conversation, conversation_id)
+        if not conversation:
+            return
+        try:
+            response, raw = await forward_task
+        except httpx.TimeoutException:
+            response, raw = httpx.Response(504, text="504 Gateway Timeout"), "504 Gateway Timeout"
+        except httpx.HTTPError:
+            response, raw = httpx.Response(503, text="502 Bad Gateway"), "502 Bad Gateway"
+        duration_ms = elapsed_ms(started_at)
+        if not response.is_success or not isinstance(raw, dict):
+            error_message = update_async_message_error(
+                db,
+                conversation,
+                message,
+                raw=raw,
+                fallback="图片请求失败。",
+                public_message=GENERATION_FAILED_MESSAGE,
+            )
+            if model_group_id and sub_model_id:
+                record_call_log(
+                    db,
+                    user=user,
+                    model_group_id=model_group_id,
+                    sub_model_id=sub_model_id,
+                    capability="image",
+                    endpoint="/api/proxy/image",
+                    status="error",
+                    duration_ms=duration_ms,
+                    error_message=error_message,
+                    conversation_id=conversation_id,
+                    message_id=message_id,
+                )
+            else:
+                db.commit()
+            return
+        images, safe_raw = extract_images_from_response(raw)
+        provider_task_id = pick_nested_task_id(raw)
+        task_status_source = first_string_at_paths(
+            raw,
+            [("status",), ("data", "status"), ("data", "data", "status"), ("result", "status"), ("output", "status")],
+        )
+        task_status = normalize_task_status(str(task_status_source or "processing"))
+        if provider_task_id and not images and task_status != "failed":
+            message.content = provider_task_id
+            message.status = "processing"
+            message.error_message = ""
+            message.can_retry = False
+            message.response_json = dumps_for_storage({
+                "taskId": task_id,
+                "localTaskId": task_id,
+                "providerTaskId": provider_task_id,
+                "status": "processing",
+                "upstream": safe_raw,
+            })
+        else:
+            message.content = "completed" if images else ""
+            message.status = "success" if images else "error"
+            message.error_message = "" if images else "图片请求没有返回有效图片。"
+            message.can_retry = not images
+            message.response_json = dumps_for_storage({"taskId": task_id, "status": "completed" if images else "failed", "upstream": safe_raw})
+            db.query(GeneratedAsset).filter(GeneratedAsset.message_id == message.id).delete()
+            for image in images:
+                add_asset(
+                    db,
+                    message,
+                    user,
+                    capability="image",
+                    asset_type="image",
+                    url=image["src"],
+                    metadata={"taskId": task_id, "revisedPrompt": image.get("revisedPrompt")},
+                )
+        message.request_json = dumps_for_storage(body)
+        conversation.updated_at = utcnow()
+        db.flush()
+        if model_group_id and sub_model_id:
+            record_call_log(
+                db,
+                user=user,
+                model_group_id=model_group_id,
+                sub_model_id=sub_model_id,
+                capability="image",
+                endpoint="/api/proxy/image",
+                status="success" if message.status != "error" else "error",
+                duration_ms=duration_ms,
+                prompt_summary=str(body.get("prompt", ""))[:512],
+                usage=raw.get("usage"),
+                conversation_id=conversation_id,
+                message_id=message_id,
+            )
+        else:
+            db.commit()
+    except Exception as exc:
+        fail_async_message_after_exception(
+            db,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            message_id=message_id,
+            capability="image",
+            endpoint="/api/proxy/image",
+            started_at=started_at,
+            model_group_id=model_group_id,
+            sub_model_id=sub_model_id,
+            request_payload=body,
+            task_id=task_id,
+            exc=exc,
+        )
+    finally:
+        db.close()
 
 
 def persist_generated_image_from_b64(value: str) -> str:
@@ -1828,11 +2225,57 @@ async def proxy_text(
             request=body,
         )
     started_at = time.perf_counter()
-    response, raw = await forward_json("POST", target_url, api_key, body)
+    forward_task = asyncio.create_task(forward_json("POST", target_url, api_key, body))
+    if current_user and model_group and sub_model and conversation:
+        completed, result = await wait_for_forward_or_handoff(forward_task, settings)
+        if not completed:
+            task_id = new_long_task_id(TEXT_LONG_TASK_PREFIX)
+            assistant_message = add_message(
+                db,
+                conversation,
+                current_user,
+                role="assistant",
+                capability="text",
+                content=task_id,
+                status="processing",
+                can_retry=False,
+                model_group_id=model_group.id,
+                sub_model_id=sub_model.id,
+                request=body,
+                response={"taskId": task_id, "status": "processing"},
+            )
+            db.commit()
+            refreshed = reload_conversation(db, current_user, conversation.id)
+            asyncio.create_task(
+                complete_text_long_task(
+                    forward_task,
+                    started_at=started_at,
+                    user_id=current_user.id,
+                    conversation_id=conversation.id,
+                    message_id=assistant_message.id,
+                    model_group_id=model_group.id,
+                    sub_model_id=sub_model.id,
+                    body=body,
+                    task_id=task_id,
+                )
+            )
+            return {
+                "content": "",
+                "taskId": task_id,
+                "status": "processing",
+                "usage": None,
+                "raw": {"taskId": task_id, "status": "processing"},
+                "conversation": serialize_conversation(refreshed).model_dump(),
+                "assistantMessage": serialize_message(assistant_message).model_dump(),
+            }
+        response, raw = result if result is not None else await forward_task
+    else:
+        response, raw = await forward_task
     duration_ms = elapsed_ms(started_at)
 
     if not response.is_success or not isinstance(raw, dict):
-        message = pick_error_message(raw, "文案请求失败。")
+        upstream_message = pick_error_message(raw, "文案请求失败。")
+        message = GENERATION_FAILED_MESSAGE
         failed_message = None
         if current_user and model_group and sub_model:
             if conversation:
@@ -1860,12 +2303,22 @@ async def proxy_text(
                 endpoint="/api/proxy/text",
                 status="error",
                 duration_ms=duration_ms,
-                error_message=message,
+                error_message=upstream_message,
             )
-        detail = upstream_error(raw, "文案请求失败。", response.status_code).detail
-        if conversation and failed_message:
+        detail = {"message": message}
+        if conversation and failed_message and current_user and should_return_generation_failure_payload(response):
             db.commit()
-            refreshed = reload_conversation(db, current_user, conversation.id) if current_user else conversation
+            refreshed = reload_conversation(db, current_user, conversation.id)
+            return {
+                "content": "",
+                "status": "failed",
+                "usage": None,
+                "conversation": serialize_conversation(refreshed).model_dump(mode="json"),
+                "assistantMessage": serialize_message(failed_message).model_dump(mode="json"),
+            }
+        if conversation and failed_message and current_user:
+            db.commit()
+            refreshed = reload_conversation(db, current_user, conversation.id)
             detail = {
                 **detail,
                 "conversation": serialize_conversation(refreshed).model_dump(mode="json"),
@@ -1918,6 +2371,36 @@ async def proxy_text(
         if assistant_message:
             result["assistantMessage"] = serialize_message(assistant_message).model_dump()
     return result
+
+
+@app.post("/api/proxy/text/query")
+async def proxy_text_query(
+    payload: dict[str, Any],
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    check_rate_limit(
+        limiter=rate_limiter,
+        request=request,
+        settings=settings,
+        bucket="generation-text-query",
+        limit=settings.rate_limit_generation_per_window,
+        user_id=current_user.id,
+    )
+    conversation_id = str(payload.get("conversationId") or "").strip()
+    task_id = str(payload.get("taskId") or "").strip()
+    if not conversation_id:
+        raise HTTPException(status_code=400, detail={"message": "缺少会话 ID。"})
+    if not task_id:
+        raise HTTPException(status_code=400, detail={"message": "缺少任务 ID。"})
+    conversation = get_conversation(db, current_user, conversation_id)
+    message = find_text_task_message(conversation, task_id)
+    if not message:
+        raise HTTPException(status_code=404, detail={"message": "文本任务不存在或已被清理。"})
+    return serialize_text_task_result(conversation, message, task_id)
 
 
 @app.post("/api/proxy/image")
@@ -1988,8 +2471,8 @@ async def proxy_image(
             sub_model_id=sub_model.id if sub_model else None,
             request=body,
         )
-    started_at = time.perf_counter()
-    try:
+    async def send_image_request() -> tuple[httpx.Response, dict[str, Any] | str]:
+        nonlocal body, target_url
         if edit_references:
             edit_data = {
                 key: str(value)
@@ -2005,8 +2488,58 @@ async def proxy_image(
                 body = expand_local_image_references(copy.deepcopy(body))
                 target_url = resolve_url(base_url, "/v1/images/generations")
                 response, raw = await forward_json("POST", target_url, api_key, body)
+            return response, raw
         else:
-            response, raw = await forward_json("POST", target_url, api_key, body)
+            return await forward_json("POST", target_url, api_key, body)
+
+    started_at = time.perf_counter()
+    try:
+        forward_task = asyncio.create_task(send_image_request())
+        if current_user and conversation:
+            completed, result = await wait_for_forward_or_handoff(forward_task, settings)
+            if not completed:
+                task_id = new_long_task_id(IMAGE_LONG_TASK_PREFIX)
+                assistant_message = add_message(
+                    db,
+                    conversation,
+                    current_user,
+                    role="assistant",
+                    capability="image",
+                    content=task_id,
+                    status="processing",
+                    can_retry=False,
+                    model_group_id=model_group.id if model_group else None,
+                    sub_model_id=sub_model.id if sub_model else None,
+                    request=body,
+                    response={"taskId": task_id, "status": "processing"},
+                )
+                db.commit()
+                refreshed = reload_conversation(db, current_user, conversation.id)
+                asyncio.create_task(
+                    complete_image_long_task(
+                        forward_task,
+                        started_at=started_at,
+                        user_id=current_user.id,
+                        conversation_id=conversation.id,
+                        message_id=assistant_message.id,
+                        model_group_id=model_group.id if model_group else None,
+                        sub_model_id=sub_model.id if sub_model else None,
+                        body=body,
+                        task_id=task_id,
+                    )
+                )
+                return {
+                    "images": [],
+                    "taskId": task_id,
+                    "status": "processing",
+                    "progress": None,
+                    "raw": {"taskId": task_id, "status": "processing"},
+                    "conversation": serialize_conversation(refreshed).model_dump(),
+                    "assistantMessage": serialize_message(assistant_message).model_dump(),
+                }
+            response, raw = result if result is not None else await forward_task
+        else:
+            response, raw = await forward_task
     except httpx.TimeoutException:
         response = httpx.Response(504, text="504 Gateway Timeout")
         raw = "504 Gateway Timeout"
@@ -2016,7 +2549,8 @@ async def proxy_image(
     duration_ms = elapsed_ms(started_at)
 
     if not response.is_success or not isinstance(raw, dict):
-        message = pick_error_message(raw, "图片请求失败。")
+        upstream_message = pick_error_message(raw, "图片请求失败。")
+        message = GENERATION_FAILED_MESSAGE
         failed_message = None
         if current_user:
             if conversation:
@@ -2044,9 +2578,19 @@ async def proxy_image(
                     endpoint="/api/proxy/image",
                     status="error",
                     duration_ms=duration_ms,
-                    error_message=message,
+                    error_message=upstream_message,
                 )
-        detail = upstream_error(raw, "图片请求失败。", response.status_code).detail
+        detail = {"message": message}
+        if conversation and failed_message and current_user and should_return_generation_failure_payload(response):
+            db.commit()
+            refreshed = reload_conversation(db, current_user, conversation.id)
+            return {
+                "images": [],
+                "status": "failed",
+                "progress": None,
+                "conversation": serialize_conversation(refreshed).model_dump(mode="json"),
+                "assistantMessage": serialize_message(failed_message).model_dump(mode="json"),
+            }
         if conversation and failed_message and current_user:
             db.commit()
             refreshed = reload_conversation(db, current_user, conversation.id)
@@ -2165,6 +2709,13 @@ async def proxy_image_query(
     task_id = str(payload.get("taskId", "")).strip()
     if not task_id:
         raise HTTPException(status_code=400, detail={"message": "缂哄皯浠诲姟 ID銆?"})
+
+    if current_user and conversation_id and is_image_long_task_id(task_id):
+        conversation = get_conversation(db, current_user, conversation_id)
+        message = find_image_task_message(conversation, task_id)
+        if not message:
+            raise HTTPException(status_code=404, detail={"message": "图片任务不存在或已被清理。"})
+        return serialize_local_image_task_result(conversation, message, task_id)
 
     target_url = resolve_url(base_url, resolve_image_query_path(task_id))
     started_at = time.perf_counter()

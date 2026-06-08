@@ -159,15 +159,17 @@ interface ImageResult {
   taskId?: string;
   status?: string;
   progress?: number | string | null;
-  raw: Record<string, unknown>;
+  raw?: Record<string, unknown>;
   conversation?: ConversationDefinition;
   assistantMessage?: ConversationMessage;
 }
 
 interface TextResult {
   content: string;
+  taskId?: string;
+  status?: string;
   usage?: Record<string, unknown>;
-  raw: Record<string, unknown>;
+  raw?: Record<string, unknown>;
   conversation?: ConversationDefinition;
   assistantMessage?: ConversationMessage;
 }
@@ -324,6 +326,8 @@ const videoState = reactive({
   createResult: null as VideoCreateResult | null,
   taskResult: null as VideoQueryResult | null,
 });
+let textPollTimer: number | null = null;
+let textPollTaskId = "";
 let imagePollTimer: number | null = null;
 let imagePollTaskId = "";
 let videoPollTimer: number | null = null;
@@ -748,6 +752,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  stopTextPolling();
   stopImagePolling();
   stopVideoPolling();
   window.removeEventListener("hashchange", handleHashChange);
@@ -1181,6 +1186,7 @@ function clearRequestController(controller: AbortController) {
 }
 
 function stopActiveRequest() {
+  stopTextPolling();
   stopImagePolling();
   stopVideoPolling();
   conversationState.activeRequest?.abort();
@@ -1674,6 +1680,13 @@ function taskIdFromConversation(): string {
     (message) => message.capability === "video" && message.status === "processing" && message.content.trim(),
   );
   return processing?.content.trim() || videoState.createResult?.taskId || "";
+}
+
+function textTaskIdFromConversation(): string {
+  const processing = [...currentMessages.value].reverse().find(
+    (message) => message.capability === "text" && message.status === "processing" && message.content.trim(),
+  );
+  return processing?.content.trim() || textState.result?.taskId || "";
 }
 
 function imageTaskIdFromConversation(): string {
@@ -2559,9 +2572,17 @@ async function handleTextSubmit() {
       },
     }), controller.signal);
     textState.result = response;
+    const isAsyncTextTask = Boolean(response.taskId && shouldContinuePollingTask(response.status || "processing"));
     if (response.conversation) {
       setCurrentConversation(response.conversation);
-      simulateStreamingPreview(response.assistantMessage);
+      if (!isAsyncTextTask) simulateStreamingPreview(response.assistantMessage);
+    } else if (isAsyncTextTask && response.taskId) {
+      setCurrentConversation(updateLocalConversationMessage(pendingConversation, pendingAssistantId, {
+        content: response.taskId,
+        status: "processing",
+        errorMessage: "",
+        canRetry: false,
+      }));
     } else {
       const localConversation = updateLocalConversationMessage(pendingConversation, pendingAssistantId, {
         content: response.content || "已返回响应",
@@ -2571,6 +2592,10 @@ async function handleTextSubmit() {
       });
       setCurrentConversation(localConversation);
       simulateStreamingPreview(localConversation.messages[localConversation.messages.length - 1]);
+    }
+    if (isAsyncTextTask && response.taskId) {
+      startTextPolling(response.taskId);
+      return;
     }
     store.addHistory({
       id: createLocalId("history"),
@@ -2594,6 +2619,93 @@ async function handleTextSubmit() {
   } finally {
     clearRequestController(controller);
     textState.loading = false;
+  }
+}
+
+function stopTextPolling() {
+  if (textPollTimer !== null) {
+    window.clearTimeout(textPollTimer);
+    textPollTimer = null;
+  }
+  textPollTaskId = "";
+}
+
+function scheduleTextPolling(taskId: string) {
+  if (!taskId || textPollTaskId !== taskId) return;
+  if (textPollTimer !== null) window.clearTimeout(textPollTimer);
+  textPollTimer = window.setTimeout(() => {
+    void handleTextQuery(taskId, { fromPoll: true });
+  }, TASK_POLL_INTERVAL_MS);
+}
+
+function startTextPolling(taskId: string) {
+  if (!taskId) return;
+  stopTextPolling();
+  textPollTaskId = taskId;
+  scheduleTextPolling(taskId);
+}
+
+async function handleTextQuery(taskIdArg?: string, options: { fromPoll?: boolean } = {}) {
+  const model = activeModel.value;
+  const setting = activeSetting.value;
+  const taskId = taskIdArg || textTaskIdFromConversation();
+  if (!model || !setting || !taskId) {
+    if (!options.fromPoll) textState.error = "暂无可查询的文案任务 ID。";
+    if (options.fromPoll) stopTextPolling();
+    return;
+  }
+
+  textState.error = "";
+  const controller = options.fromPoll ? new AbortController() : createRequestController();
+  try {
+    const response = await postProxyWithSignal<TextResult>("/api/proxy/text/query", buildModelProxyPayload(model, setting, {
+      conversationId: persistedConversationIdFor("text"),
+      taskId,
+    }), controller.signal);
+    textState.result = response;
+    const messageStatus = videoMessageStatusFromTaskStatus(response.status || "");
+    if (response.conversation) {
+      setCurrentConversation(response.conversation);
+      if (messageStatus === "success") simulateStreamingPreview(response.assistantMessage);
+    } else {
+      const updatedConversation = updateLocalConversationTaskMessage(conversationState.current, taskId, {
+        content: messageStatus === "success" ? response.content || "" : taskId,
+        status: messageStatus,
+        errorMessage: messageStatus === "error" ? "文案任务失败，请检查模型后台或重新发送。" : "",
+        canRetry: messageStatus === "error",
+      });
+      if (updatedConversation) setCurrentConversation(updatedConversation);
+    }
+    if (shouldContinuePollingTask(response.status || "")) {
+      const nextTaskId = response.taskId || taskId;
+      if (nextTaskId !== taskId) {
+        startTextPolling(nextTaskId);
+      } else {
+        scheduleTextPolling(taskId);
+      }
+    } else {
+      stopTextPolling();
+      if (messageStatus === "success") {
+        store.addHistory({
+          id: createLocalId("history"),
+          capability: "text",
+          modelId: model.id,
+          modelName: modelDisplayName(model),
+          title: "文案创作",
+          status: "success",
+          createdAt: Date.now(),
+          summary: shortText(response.content || "已返回响应"),
+        });
+      }
+      if (messageStatus === "error") {
+        textState.error = response.assistantMessage?.errorMessage || "文案任务失败，请检查模型后台或重新发送。";
+      }
+    }
+  } catch (error) {
+    textState.error = handleRequestError(error, "文案任务查询失败。");
+    stopTextPolling();
+  } finally {
+    if (!options.fromPoll) clearRequestController(controller);
   }
 }
 
@@ -2784,6 +2896,11 @@ async function handleImageQuery(taskIdArg?: string, options: { fromPoll?: boolea
       }));
     }
     if (shouldContinuePollingTask(imageState.result.status || "")) {
+      const nextTaskId = imageState.result.taskId || taskId;
+      if (nextTaskId !== taskId) {
+        startImagePolling(nextTaskId);
+        return;
+      }
       if (options.fromPoll) {
         scheduleImagePolling(taskId);
       } else {

@@ -81,6 +81,7 @@ class Settings(BaseModel):
     login_max_failed_attempts: int = _int_env("GENSTUDIO_LOGIN_MAX_FAILED_ATTEMPTS", 5)
     login_lock_minutes: int = _int_env("GENSTUDIO_LOGIN_LOCK_MINUTES", 15)
     request_timeout_seconds: float = float(os.getenv("GENSTUDIO_REQUEST_TIMEOUT_SECONDS", "120"))
+    long_request_handoff_seconds: float = float(os.getenv("GENSTUDIO_LONG_REQUEST_HANDOFF_SECONDS", "12"))
     upstream_retry_attempts: int = _int_env("GENSTUDIO_UPSTREAM_RETRY_ATTEMPTS", 1)
     rate_limit_window_seconds: int = _int_env("GENSTUDIO_RATE_LIMIT_WINDOW_SECONDS", 60)
     rate_limit_login_per_window: int = _int_env("GENSTUDIO_RATE_LIMIT_LOGIN_PER_WINDOW", 20)

@@ -4,6 +4,8 @@ import os
 import sys
 import tempfile
 import base64
+import asyncio
+import time
 
 import httpx
 from fastapi.testclient import TestClient
@@ -44,6 +46,40 @@ def csrf_headers(client: TestClient) -> dict[str, str]:
     response = client.get("/api/auth/csrf")
     assert response.status_code == 200
     return {"X-CSRF-Token": response.json()["csrfToken"]}
+
+
+def wait_for_completed_task(client: TestClient, endpoint: str, headers: dict[str, str], body: dict, *, timeout: float = 2.0) -> dict:
+    deadline = time.time() + timeout
+    last_payload: dict = {}
+    while time.time() < deadline:
+        response = client.post(endpoint, headers=headers, json=body)
+        assert response.status_code == 200
+        last_payload = response.json()
+        if last_payload.get("status") == "completed":
+            return last_payload
+        time.sleep(0.05)
+    raise AssertionError(f"task did not complete before timeout: {last_payload}")
+
+
+def wait_for_task_status(
+    client: TestClient,
+    endpoint: str,
+    headers: dict[str, str],
+    body: dict,
+    status: str,
+    *,
+    timeout: float = 2.0,
+) -> dict:
+    deadline = time.time() + timeout
+    last_payload: dict = {}
+    while time.time() < deadline:
+        response = client.post(endpoint, headers=headers, json=body)
+        assert response.status_code == 200
+        last_payload = response.json()
+        if last_payload.get("status") == status:
+            return last_payload
+        time.sleep(0.05)
+    raise AssertionError(f"task did not reach {status} before timeout: {last_payload}")
 
 
 def create_text_model(client: TestClient) -> str:
@@ -165,6 +201,136 @@ def test_text_proxy_records_successful_conversation_message(monkeypatch) -> None
     assert summary.json()["summary"]["total"] == 1
     assert summary.json()["summary"]["success"] == 1
     assert summary.json()["summary"]["byCapability"]["text"]["success"] == 1
+
+
+def test_text_proxy_returns_failed_conversation_for_gateway_timeout(monkeypatch) -> None:
+    html = "<html><head><title>504 Gateway Time-out</title></head><body>nginx</body></html>"
+
+    async def fake_forward_json(method, url, api_key, body=None):
+        return httpx.Response(504, text=html), html
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+
+    with TestClient(app) as client:
+        login(client, "alice")
+        sub_model_id = create_text_model(client)
+        response = client.post(
+            "/api/proxy/text",
+            headers=csrf_headers(client),
+            json={
+                "subModelId": sub_model_id,
+                "conversationId": "",
+                "requestBody": {"messages": [{"role": "user", "content": "timeout text"}]},
+            },
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "failed"
+        assert payload["content"] == ""
+        assert payload["assistantMessage"]["status"] == "error"
+        assert payload["assistantMessage"]["canRetry"] is True
+        conversation = client.get(f"/api/conversations/{payload['conversation']['id']}").json()["conversation"]
+        assert conversation["messages"][-1]["errorMessage"] == "生成失败，请稍后重试。"
+
+
+def test_text_proxy_hands_off_long_request_and_query_updates_message(monkeypatch) -> None:
+    async def fake_forward_json(method, url, api_key, body=None):
+        await asyncio.sleep(0.05)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "long text done"}}]}), {
+            "choices": [{"message": {"content": "long text done"}}],
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    settings = main_module.get_settings()
+    monkeypatch.setattr(settings, "long_request_handoff_seconds", 0.01, raising=False)
+
+    with TestClient(app) as client:
+        login(client, "alice")
+        sub_model_id = create_text_model(client)
+        headers = csrf_headers(client)
+
+        response = client.post(
+            "/api/proxy/text",
+            headers=headers,
+            json={
+                "subModelId": sub_model_id,
+                "conversationId": "",
+                "requestBody": {"messages": [{"role": "user", "content": "slow text"}]},
+            },
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "processing"
+        assert payload["taskId"].startswith("text-task-")
+        assert payload["assistantMessage"]["content"] == payload["taskId"]
+        assert payload["assistantMessage"]["status"] == "processing"
+
+        completed = wait_for_completed_task(
+            client,
+            "/api/proxy/text/query",
+            headers,
+            {
+                "subModelId": sub_model_id,
+                "conversationId": payload["conversation"]["id"],
+                "taskId": payload["taskId"],
+            },
+        )
+
+        assert completed["content"] == "long text done"
+        assert completed["assistantMessage"]["status"] == "success"
+        assert completed["assistantMessage"]["content"] == "long text done"
+        conversation = client.get(f"/api/conversations/{payload['conversation']['id']}").json()["conversation"]
+        assert conversation["messages"][-1]["content"] == "long text done"
+
+
+def test_text_long_request_marks_message_failed_when_background_parser_crashes(monkeypatch) -> None:
+    async def fake_forward_json(method, url, api_key, body=None):
+        await asyncio.sleep(0.05)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ignored"}}]}), {
+            "choices": [{"message": {"content": "ignored"}}],
+        }
+
+    def broken_pick_text_content(raw):
+        raise RuntimeError("parser exploded")
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    monkeypatch.setattr(main_module, "pick_text_content", broken_pick_text_content)
+    settings = main_module.get_settings()
+    monkeypatch.setattr(settings, "long_request_handoff_seconds", 0.01, raising=False)
+
+    with TestClient(app) as client:
+        login(client, "alice")
+        sub_model_id = create_text_model(client)
+        headers = csrf_headers(client)
+
+        response = client.post(
+            "/api/proxy/text",
+            headers=headers,
+            json={
+                "subModelId": sub_model_id,
+                "conversationId": "",
+                "requestBody": {"messages": [{"role": "user", "content": "slow text crash"}]},
+            },
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        failed = wait_for_task_status(
+            client,
+            "/api/proxy/text/query",
+            headers,
+            {
+                "subModelId": sub_model_id,
+                "conversationId": payload["conversation"]["id"],
+                "taskId": payload["taskId"],
+            },
+            "failed",
+        )
+
+        assert failed["assistantMessage"]["status"] == "error"
+        assert failed["assistantMessage"]["canRetry"] is True
 
 
 def test_public_text_model_records_assistant_message_for_non_admin_user(monkeypatch) -> None:
@@ -395,11 +561,11 @@ def test_text_proxy_records_retryable_failed_message(monkeypatch) -> None:
 
     assert response.status_code == 401
     detail = response.json()["detail"]
-    assert detail["message"] == "Invalid API key"
+    assert detail["message"] == "生成失败，请稍后重试。"
     assert detail["assistantMessage"]["status"] == "error"
     assert detail["assistantMessage"]["canRetry"] is True
     messages = client.get(f"/api/conversations/{detail['conversation']['id']}").json()["conversation"]["messages"]
-    assert messages[-1]["errorMessage"] == "Invalid API key"
+    assert messages[-1]["errorMessage"] == "生成失败，请稍后重试。"
 
 
 def test_image_proxy_records_generated_assets(monkeypatch) -> None:
@@ -518,6 +684,100 @@ def test_image_query_updates_processing_message_with_generated_asset(monkeypatch
     assert conversation["messages"][-1]["assets"][0]["assetType"] == "image"
 
 
+def test_image_proxy_hands_off_long_request_and_query_updates_asset(monkeypatch) -> None:
+    async def fake_forward_json(method, url, api_key, body=None):
+        assert method == "POST"
+        await asyncio.sleep(0.05)
+        return httpx.Response(200, json={"data": [{"url": "https://cdn.example.com/slow-image.png"}]}), {
+            "data": [{"url": "https://cdn.example.com/slow-image.png"}],
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    settings = main_module.get_settings()
+    monkeypatch.setattr(settings, "long_request_handoff_seconds", 0.01, raising=False)
+
+    with TestClient(app) as client:
+        login(client, "alice")
+        sub_model_id = create_model(client, "image", "image-openai", "gpt-image-2")
+        headers = csrf_headers(client)
+
+        response = client.post(
+            "/api/proxy/image",
+            headers=headers,
+            json={"subModelId": sub_model_id, "requestBody": {"prompt": "slow image"}},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "processing"
+        assert payload["taskId"].startswith("local-image-task-")
+        assert payload["images"] == []
+        assert payload["assistantMessage"]["content"] == payload["taskId"]
+        assert payload["assistantMessage"]["status"] == "processing"
+
+        completed = wait_for_completed_task(
+            client,
+            "/api/proxy/image/query",
+            headers,
+            {
+                "subModelId": sub_model_id,
+                "conversationId": payload["conversation"]["id"],
+                "taskId": payload["taskId"],
+            },
+        )
+
+        assert completed["images"][0]["src"] == "https://cdn.example.com/slow-image.png"
+        assert completed["assistantMessage"]["status"] == "success"
+        assert completed["assistantMessage"]["assets"][0]["url"] == "https://cdn.example.com/slow-image.png"
+        conversation = client.get(f"/api/conversations/{payload['conversation']['id']}").json()["conversation"]
+        assert conversation["messages"][-1]["assets"][0]["assetType"] == "image"
+
+
+def test_image_long_request_marks_message_failed_when_background_parser_crashes(monkeypatch) -> None:
+    async def fake_forward_json(method, url, api_key, body=None):
+        assert method == "POST"
+        await asyncio.sleep(0.05)
+        return httpx.Response(200, json={"data": [{"url": "https://cdn.example.com/slow-image.png"}]}), {
+            "data": [{"url": "https://cdn.example.com/slow-image.png"}],
+        }
+
+    def broken_extract_images_from_response(raw):
+        raise RuntimeError("image parser exploded")
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    monkeypatch.setattr(main_module, "extract_images_from_response", broken_extract_images_from_response)
+    settings = main_module.get_settings()
+    monkeypatch.setattr(settings, "long_request_handoff_seconds", 0.01, raising=False)
+
+    with TestClient(app) as client:
+        login(client, "alice")
+        sub_model_id = create_model(client, "image", "image-openai", "gpt-image-2")
+        headers = csrf_headers(client)
+
+        response = client.post(
+            "/api/proxy/image",
+            headers=headers,
+            json={"subModelId": sub_model_id, "requestBody": {"prompt": "slow image crash"}},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        failed = wait_for_task_status(
+            client,
+            "/api/proxy/image/query",
+            headers,
+            {
+                "subModelId": sub_model_id,
+                "conversationId": payload["conversation"]["id"],
+                "taskId": payload["taskId"],
+            },
+            "failed",
+        )
+
+        assert failed["assistantMessage"]["status"] == "error"
+        assert failed["assistantMessage"]["canRetry"] is True
+
+
 def test_image_proxy_normalizes_html_gateway_timeout(monkeypatch) -> None:
     html = "<html><head><title>504 Gateway Time-out</title></head><body>nginx</body></html>"
 
@@ -535,14 +795,46 @@ def test_image_proxy_normalizes_html_gateway_timeout(monkeypatch) -> None:
         json={"subModelId": sub_model_id, "requestBody": {"prompt": "timeout image"}},
     )
 
-    assert response.status_code == 504
-    detail = response.json()["detail"]
-    assert detail["message"] == "上游服务超时，请稍后重试。"
-    assert "raw" not in detail
-    assert detail["assistantMessage"]["status"] == "error"
-    assert detail["assistantMessage"]["canRetry"] is True
-    conversation = client.get(f"/api/conversations/{detail['conversation']['id']}").json()["conversation"]
-    assert conversation["messages"][-1]["errorMessage"] == "上游服务超时，请稍后重试。"
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "failed"
+    assert payload["images"] == []
+    assert payload["assistantMessage"]["status"] == "error"
+    assert payload["assistantMessage"]["canRetry"] is True
+    conversation = client.get(f"/api/conversations/{payload['conversation']['id']}").json()["conversation"]
+    assert conversation["messages"][-1]["errorMessage"] == "生成失败，请稍后重试。"
+
+
+def test_image_proxy_hides_non_json_upstream_details_from_user(monkeypatch) -> None:
+    raw = {
+        "error": {
+            "message": "invalid character '<' looking for beginning of value",
+            "type": "bad_response_body",
+            "code": "bad_response_body",
+        }
+    }
+
+    async def fake_forward_json(method, url, api_key, body=None):
+        return httpx.Response(502, json=raw), raw
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+    sub_model_id = create_model(client, "image", "image-openai", "new-api-image")
+
+    response = client.post(
+        "/api/proxy/image",
+        headers=csrf_headers(client),
+        json={"subModelId": sub_model_id, "requestBody": {"prompt": "bad json image"}},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "failed"
+    assert "raw" not in payload
+    assert payload["assistantMessage"]["errorMessage"] == "生成失败，请稍后重试。"
+    conversation = client.get(f"/api/conversations/{payload['conversation']['id']}").json()["conversation"]
+    assert conversation["messages"][-1]["errorMessage"] == "生成失败，请稍后重试。"
 
 
 def test_image_proxy_records_config_path_timeout_in_conversation(monkeypatch) -> None:
@@ -567,15 +859,15 @@ def test_image_proxy_records_config_path_timeout_in_conversation(monkeypatch) ->
         },
     )
 
-    assert response.status_code == 504
-    detail = response.json()["detail"]
-    assert detail["message"] == "上游服务超时，请稍后重试。"
-    assert "raw" not in detail
-    assert detail["conversation"]["messages"][-1]["status"] == "error"
-    assert detail["conversation"]["messages"][-1]["canRetry"] is True
-    conversation = client.get(f"/api/conversations/{detail['conversation']['id']}").json()["conversation"]
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "failed"
+    assert payload["images"] == []
+    assert payload["conversation"]["messages"][-1]["status"] == "error"
+    assert payload["conversation"]["messages"][-1]["canRetry"] is True
+    conversation = client.get(f"/api/conversations/{payload['conversation']['id']}").json()["conversation"]
     assert [message["role"] for message in conversation["messages"]] == ["user", "assistant"]
-    assert conversation["messages"][-1]["errorMessage"] == "上游服务超时，请稍后重试。"
+    assert conversation["messages"][-1]["errorMessage"] == "生成失败，请稍后重试。"
 
 
 def test_image_proxy_returns_transient_conversation_for_anonymous_config_timeout(monkeypatch) -> None:
@@ -602,7 +894,7 @@ def test_image_proxy_returns_transient_conversation_for_anonymous_config_timeout
 
     assert response.status_code == 504
     detail = response.json()["detail"]
-    message = "\u4e0a\u6e38\u670d\u52a1\u8d85\u65f6\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5\u3002"
+    message = "生成失败，请稍后重试。"
     assert detail["message"] == message
     assert "raw" not in detail
     conversation = detail["conversation"]
@@ -891,14 +1183,14 @@ def test_image_proxy_records_http_error_as_retryable_conversation_message(monkey
         },
     )
 
-    assert response.status_code == 504
-    detail = response.json()["detail"]
-    assert detail["message"] == "上游服务超时，请稍后重试。"
-    assert detail["assistantMessage"]["status"] == "error"
-    assert detail["assistantMessage"]["canRetry"] is True
-    conversation = client.get(f"/api/conversations/{detail['conversation']['id']}").json()["conversation"]
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "failed"
+    assert payload["assistantMessage"]["status"] == "error"
+    assert payload["assistantMessage"]["canRetry"] is True
+    conversation = client.get(f"/api/conversations/{payload['conversation']['id']}").json()["conversation"]
     assert [message["role"] for message in conversation["messages"]] == ["user", "assistant"]
-    assert conversation["messages"][-1]["errorMessage"] == "上游服务超时，请稍后重试。"
+    assert conversation["messages"][-1]["errorMessage"] == "生成失败，请稍后重试。"
 
 
 def test_image_proxy_returns_latest_messages_when_appending_to_existing_conversation(monkeypatch) -> None:

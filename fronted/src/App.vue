@@ -521,6 +521,14 @@ const conversationState = reactive({
 
 const mediaPreviewState = reactive({
   asset: null as ConversationAsset | null,
+  scale: 1,
+  offsetX: 0,
+  offsetY: 0,
+  dragging: false,
+  dragStartX: 0,
+  dragStartY: 0,
+  dragOriginX: 0,
+  dragOriginY: 0,
 });
 
 const composerUiState = reactive({
@@ -1624,12 +1632,122 @@ function formatConversationTime(value: string): string {
   return time.toLocaleString("zh-CN", { hour12: false });
 }
 
+function uploadedAssetAsConversationAsset(asset: UploadedAsset, role = "reference", label = "参考图") {
+  const capability = (activeCapability.value || "image") as Capability;
+  return {
+    id: asset.id || createLocalId("local-asset"),
+    capability,
+    assetType: "image",
+    url: asset.localPreviewUrl || asset.publicUrl,
+    thumbnailUrl: asset.localPreviewUrl || asset.publicUrl,
+    metadata: {
+      role,
+      label,
+      source: "input",
+      fileName: asset.fileName,
+      publicUrl: asset.publicUrl,
+    },
+    createdAt: new Date().toISOString(),
+  } satisfies ConversationAsset;
+}
+
+function uploadedAssetsAsConversationAssets(assets: UploadedAsset[], role = "reference", label = "参考图"): ConversationAsset[] {
+  return assets.map((asset) => uploadedAssetAsConversationAsset(asset, role, label));
+}
+
+function currentImageReferenceAssets(): ConversationAsset[] {
+  return uploadedAssetsAsConversationAssets(imageState.references, "reference", "参考图");
+}
+
+function currentVideoReferenceAssets(): ConversationAsset[] {
+  const assets: ConversationAsset[] = [];
+  if (supportsUnifiedAdapter(activeModel.value?.adapter)) {
+    assets.push(...uploadedAssetsAsConversationAssets(videoState.unifiedImages, "reference", "参考图"));
+  }
+  if (activeModel.value?.adapter === "video-seedance") {
+    assets.push(...uploadedAssetsAsConversationAssets(videoState.seedanceReferences, "reference", "参考图"));
+    if (videoState.seedanceFirst) assets.push(uploadedAssetAsConversationAsset(videoState.seedanceFirst, "first_frame", "首帧"));
+    if (videoState.seedanceLast) assets.push(uploadedAssetAsConversationAsset(videoState.seedanceLast, "last_frame", "尾帧"));
+  }
+  return assets;
+}
+
+function assetDisplayLabel(asset: ConversationAsset, message?: ConversationMessage): string {
+  const label = asset.metadata?.label;
+  if (typeof label === "string" && label.trim()) return label;
+  const role = typeof asset.metadata?.role === "string" ? asset.metadata.role : "";
+  if (role === "first_frame") return "首帧";
+  if (role === "last_frame") return "尾帧";
+  if (role === "mask") return "蒙版";
+  if (asset.metadata?.source === "input" || message?.role === "user") return "参考图";
+  return asset.assetType === "video" ? "视频结果" : "图片结果";
+}
+
+function resetMediaPreviewTransform() {
+  mediaPreviewState.scale = 1;
+  mediaPreviewState.offsetX = 0;
+  mediaPreviewState.offsetY = 0;
+  mediaPreviewState.dragging = false;
+}
+
 function openMediaPreview(asset: ConversationAsset) {
   mediaPreviewState.asset = asset;
+  resetMediaPreviewTransform();
+}
+
+function openUploadedMediaPreview(asset: UploadedAsset, role = "reference", label = "参考图") {
+  openMediaPreview(uploadedAssetAsConversationAsset(asset, role, label));
 }
 
 function closeMediaPreview() {
   mediaPreviewState.asset = null;
+  resetMediaPreviewTransform();
+}
+
+function mediaPreviewTransform(): string {
+  return `translate(${mediaPreviewState.offsetX}px, ${mediaPreviewState.offsetY}px) scale(${mediaPreviewState.scale})`;
+}
+
+function zoomMediaPreview(delta: number) {
+  const nextScale = Math.min(6, Math.max(0.4, Number((mediaPreviewState.scale + delta).toFixed(2))));
+  mediaPreviewState.scale = nextScale;
+  if (nextScale <= 1) {
+    mediaPreviewState.offsetX = 0;
+    mediaPreviewState.offsetY = 0;
+  }
+}
+
+function handleMediaPreviewWheel(event: WheelEvent) {
+  if (mediaPreviewState.asset?.assetType !== "image") return;
+  const direction = event.deltaY > 0 ? -0.16 : 0.16;
+  zoomMediaPreview(direction);
+}
+
+function startMediaPreviewPan(event: PointerEvent) {
+  if (mediaPreviewState.asset?.assetType !== "image" || mediaPreviewState.scale <= 1) return;
+  mediaPreviewState.dragging = true;
+  mediaPreviewState.dragStartX = event.clientX;
+  mediaPreviewState.dragStartY = event.clientY;
+  mediaPreviewState.dragOriginX = mediaPreviewState.offsetX;
+  mediaPreviewState.dragOriginY = mediaPreviewState.offsetY;
+  (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+}
+
+function moveMediaPreviewPan(event: PointerEvent) {
+  if (!mediaPreviewState.dragging) return;
+  mediaPreviewState.offsetX = mediaPreviewState.dragOriginX + event.clientX - mediaPreviewState.dragStartX;
+  mediaPreviewState.offsetY = mediaPreviewState.dragOriginY + event.clientY - mediaPreviewState.dragStartY;
+}
+
+function stopMediaPreviewPan(event?: PointerEvent) {
+  if (event?.currentTarget instanceof HTMLElement && event.pointerId) {
+    try {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    } catch {
+      // Pointer capture may already be released by the browser.
+    }
+  }
+  mediaPreviewState.dragging = false;
 }
 
 function useGeneratedAsset(asset: ConversationAsset) {
@@ -2547,7 +2665,7 @@ async function handleTextSubmit() {
     modelGroupId: model.id,
     subModelId: model.primarySubModelId || null,
     messages: [
-      { role: "user", content: finalPrompt },
+      { role: "user", content: finalPrompt, assets: currentVideoReferenceAssets() },
       { role: "assistant", content: "", status: "processing" },
     ],
   });
@@ -2756,7 +2874,7 @@ async function handleImageSubmit() {
     modelGroupId: model.id,
     subModelId: model.primarySubModelId || null,
     messages: [
-      { role: "user", content: finalPrompt },
+      { role: "user", content: finalPrompt, assets: currentImageReferenceAssets() },
       { role: "assistant", content: "", status: "processing" },
     ],
   });
@@ -3747,10 +3865,10 @@ async function batchDelete() {
     <aside v-if="view !== 'admin'" class="sidebar">
       <div class="sidebar-logo">
         <div class="logo-mark">
-          <img src="/brand/cylon-studio-logo.png" alt="塞隆studio" />
+          <img src="/brand/cylon-studio-logo.png" alt="创意工坊" />
         </div>
         <div>
-          <strong>塞隆studio</strong>
+          <strong>创意工坊</strong>
           <span>多模型创作调试台</span>
         </div>
       </div>
@@ -3890,8 +4008,9 @@ async function batchDelete() {
               </div>
               <div v-if="message.assets.length" class="message-assets">
                 <article v-for="asset in message.assets" :key="asset.id" class="message-asset-card">
+                  <span class="asset-kind-badge">{{ assetDisplayLabel(asset, message) }}</span>
                   <button v-if="asset.assetType === 'image'" class="asset-preview-trigger" @click="openMediaPreview(asset)">
-                    <img :src="asset.url" alt="生成图片" />
+                    <img :src="asset.thumbnailUrl || asset.url" :alt="assetDisplayLabel(asset, message)" />
                   </button>
                   <video v-else-if="asset.assetType === 'video'" :src="asset.url" :poster="asset.thumbnailUrl || undefined" controls playsinline preload="metadata" />
                   <div class="asset-actions">
@@ -3994,8 +4113,10 @@ async function batchDelete() {
             </div>
             <div v-if="imageState.references.length" class="reference-strip">
               <article v-for="asset in imageState.references" :key="asset.id" class="reference-thumb">
-                <img :src="asset.localPreviewUrl" :alt="asset.fileName" />
-                <button title="移除参考图" @click="removeImageReference(asset.id)">×</button>
+                <button type="button" class="reference-preview-button" title="查看参考图" @click="openUploadedMediaPreview(asset)">
+                  <img :src="asset.localPreviewUrl" :alt="asset.fileName" />
+                </button>
+                <button type="button" class="reference-remove-button" title="移除参考图" @click.stop="removeImageReference(asset.id)">×</button>
               </article>
             </div>
             <div class="composer-footer-bar">
@@ -4086,7 +4207,9 @@ async function batchDelete() {
                     <div class="popover-title-row"><strong>参考与高级 JSON</strong><button class="button-link" @click="closeComposerPopover">关闭</button></div>
                     <div v-if="imageState.references.length" class="asset-grid asset-grid-compact">
                       <article v-for="asset in imageState.references" :key="asset.id" class="asset-card">
-                        <img :src="asset.localPreviewUrl" :alt="asset.fileName" />
+                        <button type="button" class="asset-card-preview" @click="openUploadedMediaPreview(asset)">
+                          <img :src="asset.localPreviewUrl" :alt="asset.fileName" />
+                        </button>
                         <div class="asset-card-body"><strong>{{ asset.fileName }}</strong><p class="muted">{{ asset.publicUrl }}</p></div>
                       </article>
                     </div>
@@ -4128,22 +4251,30 @@ async function batchDelete() {
             </div>
             <div v-if="videoState.unifiedImages.length || videoState.seedanceFirst || videoState.seedanceLast || videoState.seedanceReferences.length" class="reference-strip">
               <article v-for="asset in videoState.unifiedImages" :key="asset.id" class="reference-thumb">
-                <img :src="asset.localPreviewUrl" :alt="asset.fileName" />
-                <button title="移除参考图" @click="removeUnifiedVideoReference(asset.id)">×</button>
+                <button type="button" class="reference-preview-button" title="查看参考图" @click="openUploadedMediaPreview(asset)">
+                  <img :src="asset.localPreviewUrl" :alt="asset.fileName" />
+                </button>
+                <button type="button" class="reference-remove-button" title="移除参考图" @click.stop="removeUnifiedVideoReference(asset.id)">×</button>
               </article>
               <article v-if="videoState.seedanceFirst" class="reference-thumb">
-                <img :src="videoState.seedanceFirst.localPreviewUrl" :alt="videoState.seedanceFirst.fileName" />
+                <button type="button" class="reference-preview-button" title="查看首帧" @click="openUploadedMediaPreview(videoState.seedanceFirst, 'first_frame', '首帧')">
+                  <img :src="videoState.seedanceFirst.localPreviewUrl" :alt="videoState.seedanceFirst.fileName" />
+                </button>
                 <span>首帧</span>
-                <button title="移除首帧" @click="videoState.seedanceFirst = null">×</button>
+                <button type="button" class="reference-remove-button" title="移除首帧" @click.stop="videoState.seedanceFirst = null">×</button>
               </article>
               <article v-if="videoState.seedanceLast" class="reference-thumb">
-                <img :src="videoState.seedanceLast.localPreviewUrl" :alt="videoState.seedanceLast.fileName" />
+                <button type="button" class="reference-preview-button" title="查看尾帧" @click="openUploadedMediaPreview(videoState.seedanceLast, 'last_frame', '尾帧')">
+                  <img :src="videoState.seedanceLast.localPreviewUrl" :alt="videoState.seedanceLast.fileName" />
+                </button>
                 <span>尾帧</span>
-                <button title="移除尾帧" @click="videoState.seedanceLast = null">×</button>
+                <button type="button" class="reference-remove-button" title="移除尾帧" @click.stop="videoState.seedanceLast = null">×</button>
               </article>
               <article v-for="asset in videoState.seedanceReferences" :key="asset.id" class="reference-thumb">
-                <img :src="asset.localPreviewUrl" :alt="asset.fileName" />
-                <button title="移除参考图" @click="removeSeedanceReference(asset.id)">×</button>
+                <button type="button" class="reference-preview-button" title="查看参考图" @click="openUploadedMediaPreview(asset)">
+                  <img :src="asset.localPreviewUrl" :alt="asset.fileName" />
+                </button>
+                <button type="button" class="reference-remove-button" title="移除参考图" @click.stop="removeSeedanceReference(asset.id)">×</button>
               </article>
             </div>
             <div class="composer-footer-bar">
@@ -4260,7 +4391,7 @@ async function batchDelete() {
         <section class="auth-panel">
           <div class="auth-copy">
             <p class="eyebrow">Account</p>
-            <h2>登录 塞隆studio</h2>
+            <h2>登录 创意工坊</h2>
             <p class="muted">账号、密钥、模型、子模型和创作记录都会按用户隔离保存。官网创意工坊跳转过来的 code 登录仍然保留。</p>
             <div class="auth-security-list">
               <span>HttpOnly 会话 cookie</span>
@@ -4332,7 +4463,7 @@ async function batchDelete() {
             <div v-else class="auth-code-block auth-official-only">
               <div>
                 <strong>Official SSO</strong>
-                <span>从官网进入塞隆studio，回调地址为 /auth/callback?code=xxx。</span>
+                <span>从官网进入创意工坊，回调地址为 /auth/callback?code=xxx。</span>
               </div>
             </div>
           </div>
@@ -4459,10 +4590,10 @@ async function batchDelete() {
           <aside class="admin-sidebar">
             <div class="admin-sidebar-brand">
               <div class="admin-brand-mark">
-                <img src="/brand/cylon-studio-logo.png" alt="Cylon Studio" />
+                <img src="/brand/cylon-studio-logo.png" alt="创意工坊" />
               </div>
               <div>
-                <strong>塞隆 Studio</strong>
+                <strong>创意工坊</strong>
                 <span>Admin Console</span>
               </div>
             </div>
@@ -4500,7 +4631,7 @@ async function batchDelete() {
           <section class="admin-console-main">
             <header class="admin-topbar">
               <div>
-                <p class="eyebrow">Cylon Studio Console</p>
+                <p class="eyebrow">Creative Workshop Console</p>
                 <h2>{{ adminActiveTab.label }}</h2>
                 <p class="muted">{{ adminActiveTab.hint }}</p>
               </div>
@@ -5335,7 +5466,7 @@ async function batchDelete() {
           <div>
             <p class="eyebrow">Model Settings</p>
             <h2>模型配置</h2>
-            <p class="muted">{{ auth.state.user ? "配置会保存到塞隆studio数据库，密钥只由后端调用。" : "未登录时配置会缓存在当前浏览器，登录后可保存到数据库。" }}</p>
+            <p class="muted">{{ auth.state.user ? "配置会保存到创意工坊数据库，密钥只由后端调用。" : "未登录时配置会缓存在当前浏览器，登录后可保存到数据库。" }}</p>
           </div>
           <div class="settings-hero-stats">
             <span class="badge">{{ store.models.value.length }} 个模型</span>
@@ -5719,11 +5850,21 @@ async function batchDelete() {
 
       <div v-if="mediaPreviewState.asset" class="media-preview-backdrop" @click.self="closeMediaPreview">
         <section class="media-preview-panel" aria-label="媒体预览">
-          <div class="media-preview-stage">
+          <div
+            :class="['media-preview-stage', mediaPreviewState.asset.assetType === 'image' ? 'media-preview-stage-image' : '', mediaPreviewState.dragging ? 'media-preview-stage-dragging' : '']"
+            @wheel.prevent="handleMediaPreviewWheel"
+            @pointerdown="startMediaPreviewPan"
+            @pointermove="moveMediaPreviewPan"
+            @pointerup="stopMediaPreviewPan"
+            @pointercancel="stopMediaPreviewPan"
+            @dblclick="resetMediaPreviewTransform"
+          >
             <img
               v-if="mediaPreviewState.asset.assetType === 'image'"
               :src="mediaPreviewState.asset.url"
               alt="生成图片预览"
+              :style="{ transform: mediaPreviewTransform() }"
+              draggable="false"
             />
             <video
               v-else-if="mediaPreviewState.asset.assetType === 'video'"
@@ -5737,10 +5878,15 @@ async function batchDelete() {
           <div class="media-preview-actions">
             <div>
               <strong>{{ generatedAssetReferenceFileName(mediaPreviewState.asset) }}</strong>
-              <span>{{ mediaPreviewState.asset.assetType === "image" ? "图片创作结果" : "视频创作结果" }}</span>
+              <span>{{ assetDisplayLabel(mediaPreviewState.asset) }}</span>
             </div>
             <div class="media-preview-button-row">
               <span class="sr-only">{{ mediaPreviewActionLabels(mediaPreviewState.asset.assetType).join("、") }}</span>
+              <div v-if="mediaPreviewState.asset.assetType === 'image'" class="media-zoom-controls">
+                <button class="button-secondary" @click="zoomMediaPreview(-0.25)">−</button>
+                <button class="button-secondary" @click="resetMediaPreviewTransform">{{ Math.round(mediaPreviewState.scale * 100) }}%</button>
+                <button class="button-secondary" @click="zoomMediaPreview(0.25)">+</button>
+              </div>
               <a class="button-secondary" :href="mediaPreviewState.asset.url" download target="_blank" rel="noreferrer">保存</a>
               <button
                 v-if="mediaPreviewState.asset.assetType === 'image'"

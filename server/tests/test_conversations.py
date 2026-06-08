@@ -595,6 +595,85 @@ def test_image_proxy_records_generated_assets(monkeypatch) -> None:
     assert conversation["messages"][-1]["assets"][0]["assetType"] == "image"
 
 
+def test_image_proxy_records_reference_assets_on_user_message(monkeypatch) -> None:
+    upload_name = "conversation-reference.jpg"
+    (main_module.LOCAL_UPLOAD_DIR / upload_name).write_bytes(b"fake-reference-image")
+    reference_url = f"/api/assets/uploads/{upload_name}"
+
+    async def fake_forward_multipart(url, api_key, *, data=None, files=None):
+        assert url == "https://token.example.com/v1/images/edits"
+        return httpx.Response(200, json={"data": [{"url": "https://cdn.example.com/edited.png"}]}), {
+            "data": [{"url": "https://cdn.example.com/edited.png"}]
+        }
+
+    monkeypatch.setattr(main_module, "forward_multipart", fake_forward_multipart)
+    client = TestClient(app)
+    login(client, "alice")
+    sub_model_id = create_model(client, "image", "image-openai", "gpt-image-2")
+
+    response = client.post(
+        "/api/proxy/image",
+        headers=csrf_headers(client),
+        json={
+            "subModelId": sub_model_id,
+            "requestBody": {"prompt": "参考图编辑", "image": [reference_url]},
+        },
+    )
+
+    assert response.status_code == 200
+    conversation = response.json()["conversation"]
+    user_message = conversation["messages"][0]
+    assert user_message["role"] == "user"
+    assert user_message["assets"][0]["url"] == reference_url
+    assert user_message["assets"][0]["metadata"]["role"] == "reference"
+    assert user_message["assets"][0]["metadata"]["source"] == "input"
+
+
+def test_image_proxy_returns_policy_specific_user_message(monkeypatch) -> None:
+    raw = {"error": {"message": "Your request was rejected because it violated our relevant policies."}}
+
+    async def fake_forward_json(method, url, api_key, body=None):
+        return httpx.Response(400, json=raw), raw
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+    sub_model_id = create_model(client, "image", "image-openai", "gpt-image-2")
+
+    response = client.post(
+        "/api/proxy/image",
+        headers=csrf_headers(client),
+        json={"subModelId": sub_model_id, "requestBody": {"prompt": "会被审核拦截的图片"}},
+    )
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert detail["message"] == "内容未通过安全审核，请调整提示词或参考图后重试。"
+    assert detail["assistantMessage"]["errorMessage"] == "内容未通过安全审核，请调整提示词或参考图后重试。"
+    assert "raw" not in detail
+
+
+def test_image_proxy_returns_parameter_specific_user_message(monkeypatch) -> None:
+    raw = {"error": {"message": "size 480p is not supported", "code": "invalid_request"}}
+
+    async def fake_forward_json(method, url, api_key, body=None):
+        return httpx.Response(400, json=raw), raw
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+    sub_model_id = create_model(client, "image", "image-openai", "gpt-image-2")
+
+    response = client.post(
+        "/api/proxy/image",
+        headers=csrf_headers(client),
+        json={"subModelId": sub_model_id, "requestBody": {"prompt": "参数错误", "size": "480p"}},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["message"] == "当前模型不支持所选参数，请调整尺寸、比例、分辨率或时长后再试。"
+
+
 def test_image_proxy_records_async_task_as_processing_message(monkeypatch) -> None:
     async def fake_forward_json(method, url, api_key, body=None):
         assert method == "POST"

@@ -138,7 +138,7 @@ from app.schemas import (
 from app.security import decrypt_secret
 from app.storage import create_presigned_put_url
 
-app = FastAPI(title="塞隆studio Server")
+app = FastAPI(title="创意工坊 Server")
 GENERATED_ASSET_DIR = Path(__file__).resolve().parents[2] / "generated_assets"
 GENERATED_ASSET_DIR.mkdir(parents=True, exist_ok=True)
 LOCAL_UPLOAD_DIR = Path(__file__).resolve().parents[2] / "uploaded_assets"
@@ -149,6 +149,212 @@ rate_limiter = InMemoryRateLimiter()
 TEXT_LONG_TASK_PREFIX = "text-task-"
 IMAGE_LONG_TASK_PREFIX = "local-image-task-"
 GENERATION_FAILED_MESSAGE = "生成失败，请稍后重试。"
+GENERATION_POLICY_MESSAGE = "内容未通过安全审核，请调整提示词或参考图后重试。"
+GENERATION_REFERENCE_INVALID_MESSAGE = "参考图无法识别或格式不支持，请重新上传清晰图片后再试。"
+GENERATION_REFERENCE_TOO_LARGE_MESSAGE = "参考图过大，请压缩或更换图片后再试。"
+GENERATION_RATE_LIMIT_MESSAGE = "请求过于频繁，请稍后再试。"
+GENERATION_QUOTA_MESSAGE = "模型额度不足，请检查密钥余额或更换模型。"
+GENERATION_AUTH_MESSAGE = "模型密钥不可用，请检查配置后再试。"
+GENERATION_PARAMETER_MESSAGE = "当前模型不支持所选参数，请调整尺寸、比例、分辨率或时长后再试。"
+GENERATION_MODEL_MESSAGE = "模型不存在或未开通，请检查模型配置。"
+NO_IMAGE_RETURNED_MESSAGE = "模型没有返回可展示的图片，请稍后重试或更换模型。"
+
+
+def _flatten_error_text(value: Any) -> str:
+    chunks: list[str] = []
+
+    def collect(item: Any) -> None:
+        if isinstance(item, str):
+            chunks.append(item)
+            return
+        if isinstance(item, dict):
+            for key in ("message", "msg", "detail", "error", "type", "code", "reason", "status", "raw", "upstream"):
+                if key in item:
+                    collect(item[key])
+            return
+        if isinstance(item, list):
+            for child in item[:20]:
+                collect(child)
+
+    collect(value)
+    return " ".join(chunks).strip().lower()
+
+
+def generation_public_error_message(raw: Any, status_code: int = 500) -> str:
+    text = _flatten_error_text(raw)
+    if not text:
+        text = str(raw or "").strip().lower()
+
+    if any(token in text for token in ("<html", "<body", "invalid character '<'", "bad_response_body", "non json", "non-json")):
+        return GENERATION_FAILED_MESSAGE
+    if status_code in {502, 503, 504} or any(
+        token in text
+        for token in (
+            "timeout",
+            "timed out",
+            "time-out",
+            "deadline",
+            "gateway",
+            "bad gateway",
+            "service unavailable",
+            "internal server error",
+            "bad_response_status_code",
+            "openai_error",
+        )
+    ):
+        return GENERATION_FAILED_MESSAGE
+
+    if any(token in text for token in ("policy", "policies", "safety", "moderation", "content_filter", "content filter", "unsafe", "nsfw", "审核", "安全")):
+        return GENERATION_POLICY_MESSAGE
+    if status_code == 413 or any(token in text for token in ("too large", "payload too large", "file too large", "image too large", "exceeds", "max file size", "413")):
+        return GENERATION_REFERENCE_TOO_LARGE_MESSAGE
+    if any(
+        token in text
+        for token in (
+            "invalid image",
+            "unsupported image",
+            "image format",
+            "file format",
+            "could not decode",
+            "decode image",
+            "not a valid image",
+            "invalid base64",
+            "reference image",
+        )
+    ):
+        return GENERATION_REFERENCE_INVALID_MESSAGE
+    if status_code == 429 or any(token in text for token in ("rate limit", "rate_limit", "too many requests", "429")):
+        return GENERATION_RATE_LIMIT_MESSAGE
+    if any(token in text for token in ("quota", "billing", "balance", "credit", "insufficient", "余额", "额度")):
+        return GENERATION_QUOTA_MESSAGE
+    if status_code in {401, 403} or any(token in text for token in ("invalid api key", "incorrect api key", "unauthorized", "forbidden", "permission denied", "无权限")):
+        return GENERATION_AUTH_MESSAGE
+    if any(token in text for token in ("model not found", "model does not exist", "unknown model", "模型不存在")):
+        return GENERATION_MODEL_MESSAGE
+    if any(
+        token in text
+        for token in (
+            "invalid_request",
+            "invalid request",
+            "invalid parameter",
+            "unsupported parameter",
+            "not supported",
+            "unsupported value",
+            "size",
+            "resolution",
+            "duration",
+            "aspect_ratio",
+            "ratio",
+        )
+    ):
+        return GENERATION_PARAMETER_MESSAGE
+
+    return GENERATION_FAILED_MESSAGE
+
+
+def _reference_role_from_key(key: str, fallback: str = "reference") -> str:
+    normalized = key.strip().lower()
+    if normalized in {"first_frame", "first-frame", "start_image", "start_frame"}:
+        return "first_frame"
+    if normalized in {"last_frame", "last-frame", "end_image", "end_frame"}:
+        return "last_frame"
+    if normalized in {"mask"}:
+        return "mask"
+    return fallback
+
+
+def _reference_label(role: str) -> str:
+    return {
+        "first_frame": "首帧",
+        "last_frame": "尾帧",
+        "mask": "蒙版",
+    }.get(role, "参考图")
+
+
+def _is_storable_reference_url(value: str) -> bool:
+    clean = value.strip()
+    return clean.startswith("/api/assets/") or clean.startswith("http://") or clean.startswith("https://")
+
+
+def collect_reference_image_assets(value: Any) -> list[dict[str, str]]:
+    references: list[dict[str, str]] = []
+    seen: set[str] = set()
+    reference_keys = {
+        "image",
+        "images",
+        "image_url",
+        "img_url",
+        "reference_image",
+        "reference_images",
+        "first_frame",
+        "last_frame",
+        "start_image",
+        "end_image",
+        "mask",
+    }
+
+    def add(url: str, role: str) -> None:
+        clean = url.strip()
+        if not clean or clean in seen or not _is_storable_reference_url(clean):
+            return
+        seen.add(clean)
+        references.append({"url": clean, "role": role, "label": _reference_label(role)})
+
+    def collect(item: Any, role: str = "reference", active: bool = False) -> None:
+        if isinstance(item, str):
+            if active:
+                add(item, role)
+            return
+        if isinstance(item, list):
+            for child in item:
+                collect(child, role, active)
+            return
+        if not isinstance(item, dict):
+            return
+
+        item_role = str(item.get("role") or role or "reference")
+        if isinstance(item.get("image_url"), dict):
+            url = item["image_url"].get("url")
+            if isinstance(url, str):
+                add(url, _reference_role_from_key(item_role, item_role))
+        if isinstance(item.get("url"), str) and active:
+            add(item["url"], _reference_role_from_key(item_role, item_role))
+
+        for key, child in item.items():
+            lower_key = key.lower()
+            if lower_key in reference_keys:
+                next_role = _reference_role_from_key(lower_key, item_role)
+                collect(child, next_role, True)
+            elif lower_key in {"content", "input", "metadata"} or isinstance(child, (dict, list)):
+                collect(child, item_role, False)
+
+    collect(value)
+    return references
+
+
+def add_reference_assets(
+    db: Session,
+    message: ConversationMessage,
+    user: User,
+    *,
+    capability: str,
+    references: list[dict[str, str]],
+) -> None:
+    for index, reference in enumerate(references):
+        add_asset(
+            db,
+            message,
+            user,
+            capability=capability,
+            asset_type="image",
+            url=reference["url"],
+            metadata={
+                "role": reference.get("role") or "reference",
+                "label": reference.get("label") or "参考图",
+                "source": "input",
+                "index": index,
+            },
+        )
 
 
 def safe_frontend_hash_path(value: str, fallback: str = "#/settings") -> str:
@@ -216,7 +422,7 @@ def build_prompt_optimize_messages(payload: PromptOptimizeRequest) -> list[dict[
         {
             "role": "system",
             "content": (
-                "你是塞隆studio的专业提示词优化助手。请把用户的简短需求扩写成更准确、可执行的创作提示词。"
+                "你是创意工坊的专业提示词优化助手。请把用户的简短需求扩写成更准确、可执行的创作提示词。"
                 "必须保留用户原意和主体，不要添加无关品牌、网址、上游平台信息。"
                 "只输出优化后的提示词正文，不要解释过程，不要使用标题。"
             ),
@@ -239,7 +445,7 @@ def build_prompt_optimize_messages_from_template(payload: PromptOptimizeRequest,
     return [
         {
             "role": "system",
-            "content": "你是塞隆studio的专业提示词优化助手，只输出优化后的提示词正文。",
+            "content": "你是创意工坊的专业提示词优化助手，只输出优化后的提示词正文。",
         },
         {"role": "user", "content": rendered},
     ]
@@ -825,6 +1031,7 @@ async def complete_image_long_task(
             response, raw = httpx.Response(503, text="502 Bad Gateway"), "502 Bad Gateway"
         duration_ms = elapsed_ms(started_at)
         if not response.is_success or not isinstance(raw, dict):
+            public_message = generation_public_error_message(raw, response.status_code)
             failure_raw = {
                 "taskId": task_id,
                 "localTaskId": task_id,
@@ -837,7 +1044,7 @@ async def complete_image_long_task(
                 message,
                 raw=failure_raw,
                 fallback="图片请求失败。",
-                public_message=GENERATION_FAILED_MESSAGE,
+                public_message=public_message,
             )
             if model_group_id and sub_model_id:
                 record_call_log(
@@ -2448,7 +2655,9 @@ async def proxy_image(
     if not model:
         raise HTTPException(status_code=400, detail={"message": "缺少模型标识。"})
 
-    body = {"model": model, **(payload.get("requestBody") or {})}
+    request_body = copy.deepcopy(payload.get("requestBody") or {})
+    body = {"model": model, **request_body}
+    reference_assets = collect_reference_image_assets(body)
     edit_references = collect_image_edit_references(body)
     target_url = resolve_url(base_url, "/v1/images/edits" if edit_references else "/v1/images/generations")
     if not edit_references:
@@ -2476,7 +2685,7 @@ async def proxy_image(
             model_group_id=model_group.id if model_group else None,
             sub_model_id=sub_model.id if sub_model else None,
         )
-        add_message(
+        user_message = add_message(
             db,
             conversation,
             current_user,
@@ -2487,6 +2696,7 @@ async def proxy_image(
             sub_model_id=sub_model.id if sub_model else None,
             request=body,
         )
+        add_reference_assets(db, user_message, current_user, capability="image", references=reference_assets)
     async def send_image_request() -> tuple[httpx.Response, dict[str, Any] | str]:
         nonlocal body, target_url
         if edit_references:
@@ -2566,7 +2776,7 @@ async def proxy_image(
 
     if not response.is_success or not isinstance(raw, dict):
         upstream_message = pick_error_message(raw, "图片请求失败。")
-        message = GENERATION_FAILED_MESSAGE
+        message = generation_public_error_message(raw, response.status_code)
         failed_message = None
         if current_user:
             if conversation:
@@ -2724,7 +2934,7 @@ async def proxy_image_query(
         base_url, api_key = validate_config(payload.get("config"))
     task_id = str(payload.get("taskId", "")).strip()
     if not task_id:
-        raise HTTPException(status_code=400, detail={"message": "缂哄皯浠诲姟 ID銆?"})
+        raise HTTPException(status_code=400, detail={"message": "缺少任务 ID。"})
 
     if current_user and conversation_id and is_image_long_task_id(task_id):
         conversation = get_conversation(db, current_user, conversation_id)
@@ -2741,7 +2951,8 @@ async def proxy_image_query(
     duration_ms = elapsed_ms(started_at)
 
     if not response.is_success or not isinstance(raw, dict):
-        message = pick_error_message(raw, "鍥剧墖浠诲姟鏌ヨ澶辫触銆?")
+        upstream_message = pick_error_message(raw, "图片任务查询失败。")
+        message = generation_public_error_message(raw, response.status_code)
         failed_message = None
         conversation = None
         if current_user and model_group and sub_model:
@@ -2770,9 +2981,9 @@ async def proxy_image_query(
                 endpoint="/api/proxy/image/query",
                 status="error",
                 duration_ms=duration_ms,
-                error_message=message,
+                error_message=upstream_message,
             )
-        detail = upstream_error(raw, "鍥剧墖浠诲姟鏌ヨ澶辫触銆?", response.status_code).detail
+        detail = {"message": message}
         if conversation and failed_message and current_user:
             db.commit()
             refreshed = reload_conversation(db, current_user, conversation.id)
@@ -2795,7 +3006,7 @@ async def proxy_image_query(
             else "processing"
         )
         task_error_message = (
-            pick_video_task_error_message(raw, "鍥剧墖浠诲姟澶辫触锛岃妫€鏌ユā鍨嬪悗鍙版垨绋嶅悗閲嶈瘯銆?")
+            generation_public_error_message(raw)
             if message_status == "error"
             else ""
         )
@@ -2881,6 +3092,7 @@ async def proxy_video_create(
         raise HTTPException(status_code=400, detail={"message": "缺少视频适配器。"})
 
     request_body = payload.get("requestBody") or {}
+    reference_assets = collect_reference_image_assets(request_body if isinstance(request_body, dict) else {})
     if isinstance(request_body, dict):
         request_body = expand_local_video_references(copy.deepcopy(request_body))
         if is_kkyi_video_model(sub_model, base_url):
@@ -2898,7 +3110,7 @@ async def proxy_video_create(
             model_group_id=model_group.id,
             sub_model_id=sub_model.id,
         )
-        add_message(
+        user_message = add_message(
             db,
             conversation,
             current_user,
@@ -2909,6 +3121,7 @@ async def proxy_video_create(
             sub_model_id=sub_model.id,
             request=request_body,
         )
+        add_reference_assets(db, user_message, current_user, capability="video", references=reference_assets)
     started_at = time.perf_counter()
     response, raw = await forward_json("POST", target_url, api_key, request_body)
     duration_ms = elapsed_ms(started_at)

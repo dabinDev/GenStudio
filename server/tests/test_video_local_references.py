@@ -104,3 +104,8 @@ def test_seedance_video_expands_local_frame_references_before_forwarding(monkeyp
     content = seen["body"]["content"]
     assert content[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
     assert "/api/assets/uploads/" not in content[1]["image_url"]["url"]
+    conversation = response.json()["conversation"]
+    user_message = conversation["messages"][0]
+    assert user_message["role"] == "user"
+    assert user_message["assets"][0]["url"] == f"/api/assets/uploads/{upload_name}"
+    assert user_message["assets"][0]["metadata"]["role"] == "first_frame"

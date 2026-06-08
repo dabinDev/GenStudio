@@ -2626,11 +2626,23 @@ async def proxy_upload_presign(
     response, raw = await forward_json("POST", target_url, api_key, body)
 
     if not response.is_success or not isinstance(raw, dict):
-        raise upstream_error(raw, "获取上传地址失败。", response.status_code)
+        error = upstream_error(raw, "获取上传地址失败。", response.status_code)
+        if not settings.object_storage_enabled:
+            detail = error.detail if isinstance(error.detail, dict) else {"message": str(error.detail)}
+            upstream_message = str(detail.get("message") or "upload presign failed")
+            detail["message"] = f"object storage not configured; upstream upload presign failed: {upstream_message}"
+            raise HTTPException(status_code=error.status_code, detail=detail)
+        raise error
 
     data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
     if not raw.get("success") or not data:
-        raise upstream_error(raw, "上传服务未正确返回预签名地址。", 500)
+        error = upstream_error(raw, "上传服务未正确返回预签名地址。", 500)
+        if not settings.object_storage_enabled:
+            detail = error.detail if isinstance(error.detail, dict) else {"message": str(error.detail)}
+            upstream_message = str(detail.get("message") or "upload presign failed")
+            detail["message"] = f"object storage not configured; upstream upload presign failed: {upstream_message}"
+            raise HTTPException(status_code=error.status_code, detail=detail)
+        raise error
 
     return {
         "uploadUrl": data.get("upload_url") if isinstance(data.get("upload_url"), str) else "",

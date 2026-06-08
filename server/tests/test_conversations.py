@@ -1430,6 +1430,33 @@ def test_upload_presign_can_use_saved_sub_model_credentials(monkeypatch) -> None
     assert response.json()["publicUrl"] == "https://cdn.example.com/reference.png"
 
 
+def test_upload_presign_marks_object_storage_gap_when_provider_presign_is_unavailable(monkeypatch) -> None:
+    async def fake_forward_json(method, url, api_key, body=None):
+        assert method == "POST"
+        assert url == "https://token.example.com/api/upload/presign"
+        return httpx.Response(404, json={"message": "404 page not found"}), {"message": "404 page not found"}
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    settings = main_module.get_settings()
+    monkeypatch.setattr(settings, "object_storage_enabled", False)
+    client = TestClient(app)
+    login(client, "alice")
+    sub_model_id = create_model(client, "image", "image-openai", "gpt-image-2")
+
+    response = client.post(
+        "/api/proxy/upload/presign",
+        headers=csrf_headers(client),
+        json={
+            "subModelId": sub_model_id,
+            "fileName": "reference.png",
+            "contentType": "image/png",
+        },
+    )
+
+    assert response.status_code == 404
+    assert "object storage" in response.json()["detail"]["message"].lower()
+
+
 def test_upload_presign_uses_configured_object_storage(monkeypatch) -> None:
     async def fail_if_forwarded(method, url, api_key, body=None):
         raise AssertionError("object storage uploads should not forward to model provider")

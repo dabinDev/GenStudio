@@ -125,14 +125,17 @@ describe("model selection helpers", () => {
     expect(capabilityFilterForView("profile")).toBe("all");
   });
 
-  it("treats settings, profile, and history as private login-gated actions", () => {
+  it("treats settings, profile, admin, and history as private login-gated actions", () => {
     expect(isPrivateView("settings")).toBe(true);
     expect(isPrivateView("profile")).toBe(true);
+    expect(isPrivateView("admin")).toBe(true);
     expect(isPrivateView("images")).toBe(false);
     expect(loginRedirectForView("settings")).toBe("/auth?redirect=%2Fsettings");
     expect(loginRedirectForView("profile")).toBe("/auth?redirect=%2Fprofile");
+    expect(loginRedirectForView("admin")).toBe("/auth?redirect=%2Fadmin");
     expect(resolveAuthRedirect("#/auth?redirect=%2Fsettings")).toBe("settings");
     expect(resolveAuthRedirect("#/auth?redirect=%2Fprofile")).toBe("profile");
+    expect(resolveAuthRedirect("#/auth?redirect=%2Fadmin")).toBe("admin");
     expect(resolveAuthRedirect("#/auth?redirect=https%3A%2F%2Fevil.example")).toBe("images");
   });
 
@@ -543,6 +546,34 @@ describe("model selection helpers", () => {
     };
 
     expect(modelCatalogInputHint(catalogModel, fallback)).toBe(fallback);
+  });
+
+  it("prefers admin public metadata over catalog display fallbacks", () => {
+    const publicModel: ModelDefinition = {
+      ...textModel,
+      name: "gpt-5.5 ??",
+      publicDisplayName: "GPT 5.5 公用大模型",
+      inputHint: "输入你的创作目标，我会帮你补全提示词。",
+      iconUrl: "https://example.com/custom.svg",
+      catalog: {
+        id: "public-catalog",
+        displayName: "Broken",
+        modelName: "gpt-5.5",
+        modelType: 1,
+        capability: "text",
+        icon: "https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/OpenAI.svg",
+        description: "",
+        inputHint: "??????????????????????????????????Agent????????????????????????????????????????????????",
+        successRate: "",
+        source: "kkyi",
+        channelGroups: [],
+        parameters: [],
+      },
+    };
+
+    expect(modelDisplayNameForModel(publicModel, setting({}))).toBe("GPT 5.5 公用大模型");
+    expect(modelCatalogInputHint(publicModel, "Fallback prompt")).toBe("输入你的创作目标，我会帮你补全提示词。");
+    expect(modelCatalogIconUrl(publicModel)).toBe("https://example.com/custom.svg");
   });
 
   it("uses the selected sub-model catalog icon when available", () => {

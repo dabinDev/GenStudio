@@ -27,10 +27,32 @@ from app.auth import (
     issue_csrf_token,
     is_admin_user,
     register_local_user,
+    require_admin_user,
     require_csrf,
     serialize_user,
     update_user_profile,
     upsert_user,
+)
+from app.admin_service import (
+    admin_delete_user,
+    admin_disable_user,
+    admin_enable_user,
+    admin_overview,
+    admin_restore_user,
+    get_prompt_template_for_scope,
+    list_admin_audit_logs,
+    list_admin_creation_records,
+    list_admin_models,
+    list_admin_users,
+    list_prompt_templates,
+    publish_model,
+    render_prompt_template,
+    serialize_admin_user,
+    serialize_prompt_template,
+    unpublish_model,
+    update_admin_model,
+    update_admin_user,
+    upsert_prompt_template,
 )
 from app.config import Settings, get_settings
 from app.conversation_service import (
@@ -99,6 +121,8 @@ from app.proxy_utils import (
 )
 from app.rate_limit import InMemoryRateLimiter, check_rate_limit
 from app.schemas import (
+    AdminModelUpdate,
+    AdminUserUpdate,
     ConversationCreate,
     DevLoginRequest,
     LoginRequest,
@@ -106,6 +130,7 @@ from app.schemas import (
     ModelCreate,
     ModelUpdate,
     PromptOptimizeRequest,
+    PromptTemplateUpdate,
     ProfileUpdateRequest,
     RegisterRequest,
 )
@@ -118,7 +143,7 @@ GENERATED_ASSET_DIR.mkdir(parents=True, exist_ok=True)
 LOCAL_UPLOAD_DIR = Path(__file__).resolve().parents[2] / "uploaded_assets"
 LOCAL_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 MAX_INLINE_REFERENCE_LENGTH = 10 * 1024 * 1024
-FRONTEND_ROUTES = {"auth", "auth-error", "text", "images", "videos", "settings", "profile"}
+FRONTEND_ROUTES = {"auth", "auth-error", "text", "images", "videos", "settings", "profile", "admin"}
 rate_limiter = InMemoryRateLimiter()
 
 
@@ -193,6 +218,26 @@ def build_prompt_optimize_messages(payload: PromptOptimizeRequest) -> list[dict[
             ),
         },
         {"role": "user", "content": "\n\n".join(context)},
+    ]
+
+
+def build_prompt_optimize_messages_from_template(payload: PromptOptimizeRequest, template: str) -> list[dict[str, str]]:
+    rendered = render_prompt_template(
+        template,
+        {
+            "prompt": payload.prompt,
+            "capability": payload.capability,
+            "keywords": payload.keywords,
+            "referenceCount": payload.referenceCount,
+            "parameters": json.dumps(payload.parameters, ensure_ascii=False),
+        },
+    )
+    return [
+        {
+            "role": "system",
+            "content": "你是塞隆studio的专业提示词优化助手，只输出优化后的提示词正文。",
+        },
+        {"role": "user", "content": rendered},
     ]
 
 
@@ -1179,6 +1224,253 @@ async def sync_model_list(
     return result.model_dump()
 
 
+@app.get("/api/admin/models")
+async def admin_models(
+    capability: str = "all",
+    search: str = "",
+    publicState: str = "all",
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+) -> dict[str, Any]:
+    return {
+        "models": [
+            serialize_model(item, admin, is_admin=True).model_dump()
+            for item in list_admin_models(db, capability=capability, search=search, public_state=publicState)
+        ]
+    }
+
+
+@app.put("/api/admin/models/{model_id}")
+async def admin_update_model(
+    model_id: str,
+    payload: AdminModelUpdate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    model = update_admin_model(db, admin, model_id, payload)
+    return {"model": serialize_model(model, admin, is_admin=True).model_dump()}
+
+
+@app.post("/api/admin/models/{model_id}/publish")
+async def admin_publish_model(
+    model_id: str,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    model = publish_model(db, admin, model_id)
+    return {"model": serialize_model(model, admin, is_admin=True).model_dump()}
+
+
+@app.post("/api/admin/models/{model_id}/unpublish")
+async def admin_unpublish_model(
+    model_id: str,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    model = unpublish_model(db, admin, model_id)
+    return {"model": serialize_model(model, admin, is_admin=True).model_dump()}
+
+
+@app.get("/api/admin/overview")
+async def admin_overview_route(
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin_user),
+) -> dict[str, Any]:
+    return admin_overview(db)
+
+
+@app.get("/api/admin/overview/users")
+async def admin_overview_users_route(
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin_user),
+) -> dict[str, Any]:
+    rows = []
+    for user in list_admin_users(db):
+        logs = db.query(CallLog).filter(CallLog.user_id == user.id).all()
+        rows.append(
+            {
+                "user": serialize_admin_user(user),
+                "totalCalls": len(logs),
+                "publicModelCalls": len([item for item in logs if item.is_public_model]),
+                "privateModelCalls": len([item for item in logs if not item.is_public_model]),
+                "failedCalls": len([item for item in logs if item.status != "success"]),
+            }
+        )
+    return {"users": rows}
+
+
+@app.get("/api/admin/overview/models")
+async def admin_overview_models_route(
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+) -> dict[str, Any]:
+    rows = []
+    for model in list_admin_models(db):
+        logs = db.query(CallLog).filter(CallLog.model_group_id == model.id).all()
+        rows.append(
+            {
+                "model": serialize_model(model, admin, is_admin=True).model_dump(),
+                "totalCalls": len(logs),
+                "successCalls": len([item for item in logs if item.status == "success"]),
+                "failedCalls": len([item for item in logs if item.status != "success"]),
+                "averageDurationMs": int(sum(item.duration_ms for item in logs) / len(logs)) if logs else 0,
+            }
+        )
+    return {"models": rows}
+
+
+@app.get("/api/admin/prompt-templates")
+async def admin_prompt_templates(
+    capability: str = "all",
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin_user),
+) -> dict[str, Any]:
+    return {"templates": [serialize_prompt_template(item) for item in list_prompt_templates(db, capability=capability)]}
+
+
+@app.put("/api/admin/prompt-templates/{template_id}")
+async def admin_save_prompt_template(
+    template_id: str,
+    payload: PromptTemplateUpdate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    _ = template_id
+    item = upsert_prompt_template(db, admin, payload)
+    return {"template": serialize_prompt_template(item)}
+
+
+@app.post("/api/admin/prompt-templates/test")
+async def admin_test_prompt_template(
+    payload: dict[str, Any],
+    _admin: User = Depends(require_admin_user),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    content = str(payload.get("content") or "")
+    prompt = str(payload.get("prompt") or "")
+    rendered = render_prompt_template(content, {"prompt": prompt, "capability": payload.get("capability") or "text"})
+    return {"prompt": rendered}
+
+
+@app.get("/api/admin/users")
+async def admin_users(
+    search: str = "",
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin_user),
+) -> dict[str, Any]:
+    return {"users": [serialize_admin_user(item) for item in list_admin_users(db, search=search)]}
+
+
+@app.put("/api/admin/users/{user_id}")
+async def admin_update_user_route(
+    user_id: str,
+    payload: AdminUserUpdate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    return {"user": serialize_admin_user(update_admin_user(db, admin, user_id, payload))}
+
+
+@app.post("/api/admin/users/{user_id}/disable")
+async def admin_disable_user_route(
+    user_id: str,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    return {"user": serialize_admin_user(admin_disable_user(db, admin, user_id))}
+
+
+@app.post("/api/admin/users/{user_id}/enable")
+async def admin_enable_user_route(
+    user_id: str,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    return {"user": serialize_admin_user(admin_enable_user(db, admin, user_id))}
+
+
+@app.post("/api/admin/users/{user_id}/delete")
+async def admin_delete_user_route(
+    user_id: str,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    return {"user": serialize_admin_user(admin_delete_user(db, admin, user_id))}
+
+
+@app.post("/api/admin/users/{user_id}/restore")
+async def admin_restore_user_route(
+    user_id: str,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    return {"user": serialize_admin_user(admin_restore_user(db, admin, user_id))}
+
+
+@app.get("/api/admin/records/text")
+async def admin_text_records(
+    userId: str = "",
+    modelGroupId: str = "",
+    status: str = "",
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin_user),
+) -> dict[str, Any]:
+    return {
+        "records": list_admin_creation_records(
+            db, capability="text", user_id=userId, model_group_id=modelGroupId, status=status
+        )
+    }
+
+
+@app.get("/api/admin/records/images")
+async def admin_image_records(
+    userId: str = "",
+    modelGroupId: str = "",
+    status: str = "",
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin_user),
+) -> dict[str, Any]:
+    return {
+        "records": list_admin_creation_records(
+            db, capability="image", user_id=userId, model_group_id=modelGroupId, status=status
+        )
+    }
+
+
+@app.get("/api/admin/records/videos")
+async def admin_video_records(
+    userId: str = "",
+    modelGroupId: str = "",
+    status: str = "",
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin_user),
+) -> dict[str, Any]:
+    return {
+        "records": list_admin_creation_records(
+            db, capability="video", user_id=userId, model_group_id=modelGroupId, status=status
+        )
+    }
+
+
+@app.get("/api/admin/audit-logs")
+async def admin_audit_logs(
+    action: str = "",
+    adminUserId: str = "",
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin_user),
+) -> dict[str, Any]:
+    return {"logs": list_admin_audit_logs(db, action=action, admin_user_id=adminUserId)}
+
+
 @app.get("/api/calls")
 async def call_logs(
     current_user: User = Depends(get_current_user),
@@ -1378,10 +1670,18 @@ async def proxy_prompt_optimize(
     if not optimizer:
         raise HTTPException(status_code=404, detail={"message": "当前没有可用的公共文案模型用于优化提示词。"})
 
-    _model_group, sub_model, api_key_record, api_key = optimizer
+    model_group, sub_model, api_key_record, api_key = optimizer
+    messages = build_prompt_optimize_messages(payload)
+    try:
+        if model_group.prompt_optimize_enabled:
+            template = get_prompt_template_for_scope(db, payload.capability, model_group.id)
+            messages = build_prompt_optimize_messages_from_template(payload, template.content)
+    except HTTPException as exc:
+        if exc.status_code != 404:
+            raise
     body = {
         "model": sub_model.model_name,
-        "messages": build_prompt_optimize_messages(payload),
+        "messages": messages,
         "stream": False,
         "temperature": 0.35,
         "max_tokens": 1200,

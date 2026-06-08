@@ -53,7 +53,7 @@ export function capabilityFilterForView(viewName: string): Capability | "all" {
 }
 
 export function isPrivateView(viewName: string): boolean {
-  return viewName === "settings" || viewName === "profile";
+  return viewName === "settings" || viewName === "profile" || viewName === "admin";
 }
 
 export function loginRedirectForView(viewName: string): string {
@@ -66,7 +66,7 @@ export function resolveAuthRedirect(hash: string, fallback = "images"): string {
   const redirect = new URLSearchParams(query).get("redirect") || "";
   if (!redirect.startsWith("/") || redirect.startsWith("//")) return fallback;
   const route = redirect.replace(/^\/+/, "").split("?", 1)[0];
-  return ["text", "images", "videos", "settings", "profile"].includes(route) ? route : fallback;
+  return ["text", "images", "videos", "settings", "profile", "admin"].includes(route) ? route : fallback;
 }
 
 export function canEditModel(model: Pick<ModelDefinition, "serverManaged" | "isPublic" | "canEdit">): boolean {
@@ -166,6 +166,8 @@ export function hasCatalogParameters(model?: ModelDefinition | null): boolean {
 
 export function modelCatalogInputHint(model: ModelDefinition | null | undefined, fallback: string): string {
   if (!model) return fallback;
+  const publicHint = model.inputHint?.trim();
+  if (publicHint && !isBrokenDisplayText(publicHint)) return publicHint;
   const subCatalogHint = getPrimarySubModel(model)?.catalog?.inputHint?.trim();
   if (subCatalogHint && !isBrokenDisplayText(subCatalogHint)) return subCatalogHint;
   const modelCatalogHint = model.catalog?.inputHint?.trim();
@@ -188,6 +190,8 @@ function cleanDisplayText(value: string): string {
 
 export function modelCatalogIconUrl(model: ModelDefinition | null | undefined): string {
   if (!model) return "";
+  const publicIcon = model.iconUrl?.trim();
+  if (publicIcon) return publicIcon;
   const inferred = inferModelIconUrl(model);
   const primary = getPrimarySubModel(model);
   const subCatalogIcon = primary?.catalog?.icon?.trim();
@@ -839,6 +843,8 @@ export function isGeneratedModelDisplayName(value: string): boolean {
 }
 
 export function modelDisplayNameForModel(model: ModelDefinition, setting?: ModelSetting): string {
+  const publicName = cleanDisplayText(model.publicDisplayName || "");
+  if (publicName && !isBrokenDisplayText(publicName)) return publicName;
   const cleanName = cleanDisplayText(model.name || "");
   if (cleanName && !isGeneratedModelDisplayName(cleanName) && !isBrokenDisplayText(cleanName)) return cleanName;
   return modelDisplayNameFromPrimary(model.capability, resolveModelName(model, setting));

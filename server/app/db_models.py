@@ -206,6 +206,13 @@ class ModelGroup(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     primary_sub_model_id: Mapped[str] = mapped_column(String(64), default="")
     is_public: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    public_display_name: Mapped[str] = mapped_column(String(255), default="")
+    public_description: Mapped[str] = mapped_column(Text, default="")
+    input_hint: Mapped[str] = mapped_column(Text, default="")
+    icon_url: Mapped[str] = mapped_column(Text, default="")
+    public_tags_json: Mapped[str] = mapped_column(Text, default="[]")
+    prompt_optimize_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    default_parameters_json: Mapped[str] = mapped_column(Text, default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
@@ -239,6 +246,38 @@ class SubModel(Base):
     catalog_model: Mapped[CatalogModel | None] = relationship()
 
 
+class PromptTemplate(Base):
+    __tablename__ = "prompt_templates"
+    __table_args__ = (
+        UniqueConstraint("capability", "model_group_id", "template_type", name="uq_prompt_template_scope"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id("ptpl"))
+    capability: Mapped[str] = mapped_column(String(32), index=True)
+    model_group_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    template_type: Mapped[str] = mapped_column(String(64), default="prompt_optimize", index=True)
+    name: Mapped[str] = mapped_column(String(128), default="")
+    content: Mapped[str] = mapped_column(Text, default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    updated_by: Mapped[str] = mapped_column(String(64), default="", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class AdminOperationLog(Base):
+    __tablename__ = "admin_operation_logs"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id("alog"))
+    admin_user_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    action: Mapped[str] = mapped_column(String(64), index=True)
+    target_type: Mapped[str] = mapped_column(String(64), index=True)
+    target_id: Mapped[str] = mapped_column(String(128), default="", index=True)
+    status: Mapped[str] = mapped_column(String(32), default="success", index=True)
+    summary_json: Mapped[str] = mapped_column(Text, default="{}")
+    ip_hash: Mapped[str] = mapped_column(String(128), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
 class CallLog(Base):
     __tablename__ = "call_logs"
 
@@ -253,6 +292,11 @@ class CallLog(Base):
     prompt_summary: Mapped[str] = mapped_column(String(512), default="")
     error_message: Mapped[str] = mapped_column(String(512), default="")
     raw_usage_json: Mapped[str] = mapped_column(Text, default="")
+    request_params_json: Mapped[str] = mapped_column(Text, default="{}")
+    response_summary_json: Mapped[str] = mapped_column(Text, default="{}")
+    conversation_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    message_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    is_public_model: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
 
 

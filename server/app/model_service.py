@@ -73,6 +73,14 @@ def safe_model_description(model: ModelGroup, *, editable: bool) -> str:
     return re.sub(r"https?://[^\s)）]+", "", model.description or "").strip()
 
 
+def parse_model_json(value: str, fallback: Any) -> Any:
+    try:
+        parsed = json.loads(value or "")
+    except Exception:
+        return fallback
+    return parsed if isinstance(parsed, type(fallback)) else fallback
+
+
 def serialize_model(model: ModelGroup, user: User | None = None, *, is_admin: bool = False) -> ModelOut:
     primary = next((item for item in model.sub_models if item.id == model.primary_sub_model_id), None)
     if not primary:
@@ -94,6 +102,13 @@ def serialize_model(model: ModelGroup, user: User | None = None, *, is_admin: bo
         catalogModelId=catalog_external_id(model.catalog_model),
         catalog=serialize_catalog_model(model.catalog_model) if model.catalog_model else None,
         subModels=[serialize_sub_model(item, model.primary_sub_model_id) for item in model.sub_models],
+        publicDisplayName=model.public_display_name,
+        publicDescription=model.public_description if editable else "",
+        inputHint=model.input_hint,
+        iconUrl=model.icon_url,
+        publicTags=parse_model_json(model.public_tags_json, []),
+        promptOptimizeEnabled=bool(model.prompt_optimize_enabled),
+        defaultParameters=parse_model_json(model.default_parameters_json, {}),
     )
 
 
@@ -474,6 +489,11 @@ def record_call_log(
     prompt_summary: str = "",
     error_message: str = "",
     usage: Any = None,
+    request_params: dict[str, Any] | None = None,
+    response_summary: dict[str, Any] | None = None,
+    conversation_id: str = "",
+    message_id: str = "",
+    is_public_model: bool = False,
 ) -> None:
     db.add(
         CallLog(
@@ -487,6 +507,11 @@ def record_call_log(
             prompt_summary=prompt_summary[:512],
             error_message=error_message[:512],
             raw_usage_json=json.dumps(usage, ensure_ascii=False) if usage is not None else "",
+            request_params_json=json.dumps(request_params or {}, ensure_ascii=False),
+            response_summary_json=json.dumps(response_summary or {}, ensure_ascii=False),
+            conversation_id=conversation_id,
+            message_id=message_id,
+            is_public_model=is_public_model,
         )
     )
     db.commit()

@@ -1,4 +1,18 @@
-import type { CatalogModelDefinition, Capability, ConversationDefinition, ServerModelDefinition, UploadedAsset, UserProfile } from "./types";
+import type {
+  AdminAuditLog,
+  AdminCreationRecord,
+  AdminOverview,
+  AdminOverviewModelRow,
+  AdminOverviewUserRow,
+  AdminUserDefinition,
+  CatalogModelDefinition,
+  Capability,
+  ConversationDefinition,
+  PromptTemplateDefinition,
+  ServerModelDefinition,
+  UploadedAsset,
+  UserProfile,
+} from "./types";
 import { isProductionRuntime } from "./env";
 
 const CSRF_SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -176,6 +190,111 @@ export async function updateMyProfile(body: { nickname?: string; phone?: string;
 export async function fetchServerModels(): Promise<ServerModelDefinition[]> {
   const payload = await getApi<{ models: ServerModelDefinition[] }>("/api/models");
   return payload.models;
+}
+
+export async function fetchAdminOverview(): Promise<AdminOverview> {
+  return getApi<AdminOverview>("/api/admin/overview");
+}
+
+export async function fetchAdminOverviewUsers(): Promise<AdminOverviewUserRow[]> {
+  const payload = await getApi<{ users: AdminOverviewUserRow[] }>("/api/admin/overview/users");
+  return payload.users;
+}
+
+export async function fetchAdminOverviewModels(): Promise<AdminOverviewModelRow[]> {
+  const payload = await getApi<{ models: AdminOverviewModelRow[] }>("/api/admin/overview/models");
+  return payload.models;
+}
+
+export async function fetchAdminModels(query: { capability?: string; search?: string; publicState?: string } = {}): Promise<ServerModelDefinition[]> {
+  const params = new URLSearchParams();
+  if (query.capability) params.set("capability", query.capability);
+  if (query.search) params.set("search", query.search);
+  if (query.publicState) params.set("publicState", query.publicState);
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  const payload = await getApi<{ models: ServerModelDefinition[] }>(`/api/admin/models${suffix}`);
+  return payload.models;
+}
+
+export async function updateAdminModel(modelId: string, body: Record<string, unknown>): Promise<ServerModelDefinition> {
+  const payload = await putApi<{ model: ServerModelDefinition }>(`/api/admin/models/${modelId}`, body);
+  return payload.model;
+}
+
+export async function publishAdminModel(modelId: string): Promise<ServerModelDefinition> {
+  const payload = await postApi<{ model: ServerModelDefinition }>(`/api/admin/models/${modelId}/publish`, {});
+  return payload.model;
+}
+
+export async function unpublishAdminModel(modelId: string): Promise<ServerModelDefinition> {
+  const payload = await postApi<{ model: ServerModelDefinition }>(`/api/admin/models/${modelId}/unpublish`, {});
+  return payload.model;
+}
+
+export async function fetchPromptTemplates(capability?: Capability | "all"): Promise<PromptTemplateDefinition[]> {
+  const suffix = capability ? `?capability=${encodeURIComponent(capability)}` : "";
+  const payload = await getApi<{ templates: PromptTemplateDefinition[] }>(`/api/admin/prompt-templates${suffix}`);
+  return payload.templates;
+}
+
+export async function savePromptTemplate(templateId: string, body: Record<string, unknown>): Promise<PromptTemplateDefinition> {
+  const payload = await putApi<{ template: PromptTemplateDefinition }>(`/api/admin/prompt-templates/${templateId}`, body);
+  return payload.template;
+}
+
+export async function testPromptTemplate(body: Record<string, unknown>): Promise<{ prompt: string }> {
+  return postApi<{ prompt: string }>("/api/admin/prompt-templates/test", body);
+}
+
+export async function fetchAdminUsers(search = ""): Promise<AdminUserDefinition[]> {
+  const suffix = search.trim() ? `?search=${encodeURIComponent(search.trim())}` : "";
+  const payload = await getApi<{ users: AdminUserDefinition[] }>(`/api/admin/users${suffix}`);
+  return payload.users;
+}
+
+export async function updateAdminUser(userId: string, body: Record<string, unknown>): Promise<AdminUserDefinition> {
+  const payload = await putApi<{ user: AdminUserDefinition }>(`/api/admin/users/${userId}`, body);
+  return payload.user;
+}
+
+export async function enableAdminUser(userId: string): Promise<AdminUserDefinition> {
+  const payload = await postApi<{ user: AdminUserDefinition }>(`/api/admin/users/${userId}/enable`, {});
+  return payload.user;
+}
+
+export async function disableAdminUser(userId: string): Promise<AdminUserDefinition> {
+  const payload = await postApi<{ user: AdminUserDefinition }>(`/api/admin/users/${userId}/disable`, {});
+  return payload.user;
+}
+
+export async function deleteAdminUser(userId: string): Promise<AdminUserDefinition> {
+  const payload = await postApi<{ user: AdminUserDefinition }>(`/api/admin/users/${userId}/delete`, {});
+  return payload.user;
+}
+
+export async function restoreAdminUser(userId: string): Promise<AdminUserDefinition> {
+  const payload = await postApi<{ user: AdminUserDefinition }>(`/api/admin/users/${userId}/restore`, {});
+  return payload.user;
+}
+
+export async function fetchAdminRecords(capability: Capability, query: { userId?: string; modelGroupId?: string; status?: string } = {}): Promise<AdminCreationRecord[]> {
+  const endpoint = capability === "text" ? "text" : capability === "image" ? "images" : "videos";
+  const params = new URLSearchParams();
+  if (query.userId) params.set("userId", query.userId);
+  if (query.modelGroupId) params.set("modelGroupId", query.modelGroupId);
+  if (query.status) params.set("status", query.status);
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  const payload = await getApi<{ records: AdminCreationRecord[] }>(`/api/admin/records/${endpoint}${suffix}`);
+  return payload.records;
+}
+
+export async function fetchAdminAuditLogs(query: { action?: string; adminUserId?: string } = {}): Promise<AdminAuditLog[]> {
+  const params = new URLSearchParams();
+  if (query.action) params.set("action", query.action);
+  if (query.adminUserId) params.set("adminUserId", query.adminUserId);
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  const payload = await getApi<{ logs: AdminAuditLog[] }>(`/api/admin/audit-logs${suffix}`);
+  return payload.logs;
 }
 
 export async function fetchCatalogModels(capability?: Capability): Promise<CatalogModelDefinition[]> {

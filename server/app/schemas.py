@@ -203,6 +203,111 @@ class ModelOut(BaseModel):
     catalogModelId: str | None = None
     catalog: CatalogModelOut | None = None
     subModels: list[SubModelOut] = Field(default_factory=list)
+    publicDisplayName: str = ""
+    publicDescription: str = ""
+    inputHint: str = ""
+    iconUrl: str = ""
+    publicTags: list[str] = Field(default_factory=list)
+    promptOptimizeEnabled: bool = True
+    defaultParameters: dict[str, Any] = Field(default_factory=dict)
+
+
+class AdminModelUpdate(BaseModel):
+    publicDisplayName: str | None = None
+    publicDescription: str | None = None
+    inputHint: str | None = None
+    iconUrl: str | None = None
+    publicTags: list[str] | None = None
+    promptOptimizeEnabled: bool | None = None
+    defaultParameters: dict[str, Any] | None = None
+    isPublic: bool | None = None
+
+
+class PromptTemplateOut(BaseModel):
+    id: str
+    capability: str
+    modelGroupId: str
+    templateType: str
+    name: str
+    content: str
+    enabled: bool
+    updatedBy: str
+    createdAt: datetime
+    updatedAt: datetime
+
+
+class PromptTemplateUpdate(BaseModel):
+    capability: str | None = None
+    modelGroupId: str | None = None
+    templateType: str | None = None
+    name: str | None = None
+    content: str | None = None
+    enabled: bool | None = None
+
+
+class AdminUserOut(BaseModel):
+    id: str
+    externalUserId: str
+    email: str
+    phone: str
+    nickname: str
+    avatarUrl: str
+    status: str
+    isAdmin: bool
+    createdAt: datetime
+    updatedAt: datetime
+
+
+class AdminUserUpdate(BaseModel):
+    email: str | None = None
+    phone: str | None = None
+    nickname: str | None = None
+    avatarUrl: str | None = None
+    status: str | None = None
+
+
+class AdminOverviewOut(BaseModel):
+    totalCalls: int
+    successCalls: int
+    failedCalls: int
+    failureRate: float
+    averageDurationMs: int
+    publicModelCalls: int
+    privateModelCalls: int
+
+
+class AdminCreationAssetOut(BaseModel):
+    type: str
+    url: str
+    thumbnailUrl: str = ""
+
+
+class AdminCreationRecordOut(BaseModel):
+    id: str
+    user: AdminUserOut | None = None
+    modelName: str
+    capability: str
+    status: str
+    prompt: str
+    response: str
+    createdAt: datetime
+    durationMs: int = 0
+    taskId: str = ""
+    assets: list[AdminCreationAssetOut] = Field(default_factory=list)
+    requestParams: dict[str, Any] = Field(default_factory=dict)
+    responseSummary: dict[str, Any] = Field(default_factory=dict)
+    errorMessage: str = ""
+
+
+class AdminAuditLogOut(BaseModel):
+    id: str
+    adminUserId: str | None = None
+    action: str
+    targetType: str
+    targetId: str
+    status: str
+    summary: dict[str, Any] = Field(default_factory=dict)
+    createdAt: datetime
 
 
 class KkyiCatalogSyncRequest(BaseModel):

@@ -3865,7 +3865,7 @@ async function batchDelete() {
     <aside v-if="view !== 'admin'" class="sidebar">
       <div class="sidebar-logo">
         <div class="logo-mark">
-          <img src="/brand/cylon-studio-logo.png" alt="创意工坊" />
+          <img src="/brand/cylon-studio-mark.png" alt="创意工坊" />
         </div>
         <div>
           <strong>创意工坊</strong>
@@ -3963,8 +3963,14 @@ async function batchDelete() {
               :class="['history-item', conversationState.current?.id === conversation.id ? 'history-item-active' : '']"
               @click="openConversation(conversation.id)"
             >
+              <span :class="['history-kind', `history-kind-${conversation.capability}`]">
+                {{ CAPABILITY_LABELS[conversation.capability] }}
+              </span>
               <strong>{{ conversation.title }}</strong>
-              <span>{{ CAPABILITY_LABELS[conversation.capability] }} · {{ formatConversationTime(conversation.updatedAt) }}</span>
+              <span class="history-meta">
+                <span>{{ formatConversationTime(conversation.updatedAt) }}</span>
+                <span>{{ conversation.status || "active" }}</span>
+              </span>
             </button>
             <p v-if="!visibleConversations.length" class="muted">当前类型还没有历史记录。</p>
           </aside>
@@ -4590,7 +4596,7 @@ async function batchDelete() {
           <aside class="admin-sidebar">
             <div class="admin-sidebar-brand">
               <div class="admin-brand-mark">
-                <img src="/brand/cylon-studio-logo.png" alt="创意工坊" />
+                <img src="/brand/cylon-studio-mark.png" alt="创意工坊" />
               </div>
               <div>
                 <strong>创意工坊</strong>
@@ -5301,7 +5307,15 @@ async function batchDelete() {
                 </div>
 
                 <div :class="['admin-record-list', adminState.activeTab === 'image-records' && adminState.recordWaterfall ? 'admin-record-waterfall' : '']">
-                  <article v-for="record in adminRecordList(adminState.activeTab)" :key="record.id" class="admin-record-card">
+                  <article
+                    v-for="record in adminRecordList(adminState.activeTab)"
+                    :key="record.id"
+                    :class="[
+                      'admin-record-card',
+                      `admin-record-card-${record.capability}`,
+                      record.status === 'error' ? 'admin-record-card-error' : '',
+                    ]"
+                  >
                     <div class="admin-record-head">
                       <div>
                         <strong>{{ record.modelName || "未知模型" }}</strong>

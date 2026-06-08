@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import timedelta
 from typing import Any
 
 from fastapi import HTTPException
@@ -371,6 +372,67 @@ def _clean_history_value(value: Any) -> Any:
     return value
 
 
+def _model_group_match(model_group_id: str | None) -> Any:
+    if model_group_id:
+        return ConversationMessage.model_group_id == model_group_id
+    return ConversationMessage.model_group_id.is_(None)
+
+
+def _previous_user_message_for_record(db: Session, message: ConversationMessage, capability: str) -> ConversationMessage | None:
+    same_conversation = (
+        db.query(ConversationMessage)
+        .filter(
+            ConversationMessage.conversation_id == message.conversation_id,
+            ConversationMessage.role == "user",
+            ConversationMessage.created_at <= message.created_at,
+        )
+        .order_by(ConversationMessage.created_at.desc())
+        .first()
+    )
+    if same_conversation:
+        return same_conversation
+    return (
+        db.query(ConversationMessage)
+        .filter(
+            ConversationMessage.user_id == message.user_id,
+            ConversationMessage.role == "user",
+            ConversationMessage.capability == capability,
+            _model_group_match(message.model_group_id),
+            ConversationMessage.created_at <= message.created_at,
+        )
+        .order_by(ConversationMessage.created_at.desc())
+        .first()
+    )
+
+
+def _has_following_assistant_record(db: Session, message: ConversationMessage, capability: str) -> bool:
+    same_conversation = (
+        db.query(ConversationMessage.id)
+        .filter(
+            ConversationMessage.conversation_id == message.conversation_id,
+            ConversationMessage.role == "assistant",
+            ConversationMessage.capability == capability,
+            ConversationMessage.created_at >= message.created_at,
+        )
+        .first()
+    )
+    if same_conversation:
+        return True
+    return (
+        db.query(ConversationMessage.id)
+        .filter(
+            ConversationMessage.user_id == message.user_id,
+            ConversationMessage.role == "assistant",
+            ConversationMessage.capability == capability,
+            _model_group_match(message.model_group_id),
+            ConversationMessage.created_at >= message.created_at,
+            ConversationMessage.created_at <= message.created_at + timedelta(minutes=30),
+        )
+        .first()
+        is not None
+    )
+
+
 def list_admin_creation_records(
     db: Session,
     *,
@@ -405,37 +467,15 @@ def list_admin_creation_records(
         query = query.filter(ConversationMessage.status == status)
     max_limit = min(max(limit, 1), 200)
     messages = query.order_by(ConversationMessage.created_at.desc()).limit(max_limit).all()
-    conversation_ids = {message.conversation_id for message in messages}
-    assistant_conversation_ids: set[str] = set()
-    if conversation_ids:
-        assistant_conversation_ids = {
-            row[0]
-            for row in db.query(ConversationMessage.conversation_id)
-            .filter(
-                ConversationMessage.conversation_id.in_(conversation_ids),
-                ConversationMessage.capability == capability,
-                ConversationMessage.role == "assistant",
-            )
-            .all()
-        }
     records: list[dict[str, Any]] = []
     for message in messages:
-        if message.role != "assistant" and message.conversation_id in assistant_conversation_ids:
+        if message.role != "assistant" and _has_following_assistant_record(db, message, capability):
             continue
         user = db.get(User, message.user_id)
         model = db.get(ModelGroup, message.model_group_id) if message.model_group_id else None
         prompt = message.content if message.role == "user" else ""
         if message.role == "assistant":
-            previous_prompt = (
-                db.query(ConversationMessage)
-                .filter(
-                    ConversationMessage.conversation_id == message.conversation_id,
-                    ConversationMessage.role == "user",
-                    ConversationMessage.created_at <= message.created_at,
-                )
-                .order_by(ConversationMessage.created_at.desc())
-                .first()
-            )
+            previous_prompt = _previous_user_message_for_record(db, message, capability)
             prompt = previous_prompt.content if previous_prompt else ""
         records.append(
             {

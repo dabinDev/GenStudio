@@ -363,6 +363,56 @@ def test_admin_creation_records_filter_by_user_search() -> None:
     assert records[0]["user"]["email"] == "artist@example.com"
 
 
+def test_admin_creation_records_pair_adjacent_user_prompt_across_conversations() -> None:
+    from app.admin_service import list_admin_creation_records
+
+    db = make_db()
+    admin = make_user(db, "cage_ben@sina.com", external_id="admin")
+    model = make_model(db, admin, name="GPT 5.5", capability="text")
+    request_conversation = Conversation(
+        user_id=admin.id,
+        title="请求",
+        capability="text",
+        model_group_id=model.id,
+        status="active",
+    )
+    response_conversation = Conversation(
+        user_id=admin.id,
+        title="响应",
+        capability="text",
+        model_group_id=model.id,
+        status="active",
+    )
+    db.add_all([request_conversation, response_conversation])
+    db.flush()
+    user_message = ConversationMessage(
+        conversation_id=request_conversation.id,
+        user_id=admin.id,
+        model_group_id=model.id,
+        role="user",
+        capability="text",
+        content="12123123",
+        status="success",
+    )
+    assistant_message = ConversationMessage(
+        conversation_id=response_conversation.id,
+        user_id=admin.id,
+        model_group_id=model.id,
+        role="assistant",
+        capability="text",
+        content="这是回答",
+        status="success",
+    )
+    db.add_all([user_message, assistant_message])
+    db.commit()
+
+    records = list_admin_creation_records(db, capability="text")
+
+    assert len(records) == 1
+    assert records[0]["prompt"] == "12123123"
+    assert records[0]["response"] == "这是回答"
+
+
 def test_prompt_template_uses_model_specific_before_default() -> None:
     from app.admin_service import get_prompt_template_for_scope, upsert_prompt_template
     from app.schemas import PromptTemplateUpdate

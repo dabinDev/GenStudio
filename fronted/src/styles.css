@@ -5488,9 +5488,6 @@ a {
 }
 
 .shell-admin .admin-toolbar {
-  position: sticky;
-  top: 82px;
-  z-index: 8;
   gap: 9px;
   margin-bottom: 12px;
   padding: 10px;
@@ -6748,7 +6745,9 @@ a {
 }
 
 .shell-admin .admin-toolbar {
-  top: 86px;
+  position: static !important;
+  top: auto !important;
+  z-index: auto !important;
   gap: 10px;
   margin-bottom: 14px;
   padding: 11px;

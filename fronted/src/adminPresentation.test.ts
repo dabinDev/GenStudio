@@ -41,4 +41,8 @@ describe("admin presentation metadata", () => {
     expect(adminStyles).toContain(".shell-admin .admin-failed-model");
     expect(adminStyles).toContain("color: var(--admin-text)");
   });
+
+  it("keeps admin search toolbars in normal document flow", () => {
+    expect(adminStyles).not.toMatch(/\.shell-admin\s+\.admin-toolbar\s*\{[^}]*position:\s*sticky/s);
+  });
 });

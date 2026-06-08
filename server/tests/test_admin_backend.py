@@ -368,19 +368,20 @@ def test_admin_creation_records_pair_adjacent_user_prompt_across_conversations()
 
     db = make_db()
     admin = make_user(db, "cage_ben@sina.com", external_id="admin")
-    model = make_model(db, admin, name="GPT 5.5", capability="text")
+    request_model = make_model(db, admin, name="GPT 5.5 request", capability="text")
+    response_model = make_model(db, admin, name="GPT 5.5 response", capability="text")
     request_conversation = Conversation(
         user_id=admin.id,
         title="请求",
         capability="text",
-        model_group_id=model.id,
+        model_group_id=request_model.id,
         status="active",
     )
     response_conversation = Conversation(
         user_id=admin.id,
         title="响应",
         capability="text",
-        model_group_id=model.id,
+        model_group_id=response_model.id,
         status="active",
     )
     db.add_all([request_conversation, response_conversation])
@@ -388,7 +389,7 @@ def test_admin_creation_records_pair_adjacent_user_prompt_across_conversations()
     user_message = ConversationMessage(
         conversation_id=request_conversation.id,
         user_id=admin.id,
-        model_group_id=model.id,
+        model_group_id=request_model.id,
         role="user",
         capability="text",
         content="12123123",
@@ -397,7 +398,7 @@ def test_admin_creation_records_pair_adjacent_user_prompt_across_conversations()
     assistant_message = ConversationMessage(
         conversation_id=response_conversation.id,
         user_id=admin.id,
-        model_group_id=model.id,
+        model_group_id=response_model.id,
         role="assistant",
         capability="text",
         content="这是回答",

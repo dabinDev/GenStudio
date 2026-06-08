@@ -372,12 +372,6 @@ def _clean_history_value(value: Any) -> Any:
     return value
 
 
-def _model_group_match(model_group_id: str | None) -> Any:
-    if model_group_id:
-        return ConversationMessage.model_group_id == model_group_id
-    return ConversationMessage.model_group_id.is_(None)
-
-
 def _previous_user_message_for_record(db: Session, message: ConversationMessage, capability: str) -> ConversationMessage | None:
     same_conversation = (
         db.query(ConversationMessage)
@@ -397,7 +391,7 @@ def _previous_user_message_for_record(db: Session, message: ConversationMessage,
             ConversationMessage.user_id == message.user_id,
             ConversationMessage.role == "user",
             ConversationMessage.capability == capability,
-            _model_group_match(message.model_group_id),
+            ConversationMessage.created_at >= message.created_at - timedelta(minutes=30),
             ConversationMessage.created_at <= message.created_at,
         )
         .order_by(ConversationMessage.created_at.desc())
@@ -424,7 +418,6 @@ def _has_following_assistant_record(db: Session, message: ConversationMessage, c
             ConversationMessage.user_id == message.user_id,
             ConversationMessage.role == "assistant",
             ConversationMessage.capability == capability,
-            _model_group_match(message.model_group_id),
             ConversationMessage.created_at >= message.created_at,
             ConversationMessage.created_at <= message.created_at + timedelta(minutes=30),
         )

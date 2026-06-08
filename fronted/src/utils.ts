@@ -175,7 +175,9 @@ export function modelCatalogInputHint(model: ModelDefinition | null | undefined,
 function isBrokenDisplayText(value: string): boolean {
   const text = value.trim();
   if (!text) return false;
-  if (/^\?{8,}$/.test(text.replace(/\s+/g, ""))) return true;
+  const compact = text.replace(/\s+/g, "");
+  const questionMarks = compact.match(/\?/g)?.length || 0;
+  if (compact.length >= 12 && questionMarks / compact.length > 0.45) return true;
   const mojibakeChars = text.match(/[锟�鐢瑙鍥閸缂]/g)?.length || 0;
   return text.length >= 12 && mojibakeChars / text.length > 0.28;
 }
@@ -833,7 +835,7 @@ export function isGeneratedModelDisplayName(value: string): boolean {
 }
 
 export function modelDisplayNameForModel(model: ModelDefinition, setting?: ModelSetting): string {
-  if (model.name && !isGeneratedModelDisplayName(model.name)) return model.name;
+  if (model.name && !isGeneratedModelDisplayName(model.name) && !isBrokenDisplayText(model.name)) return model.name;
   return modelDisplayNameFromPrimary(model.capability, resolveModelName(model, setting));
 }
 

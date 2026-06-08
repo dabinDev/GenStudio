@@ -522,6 +522,29 @@ describe("model selection helpers", () => {
     expect(modelCatalogInputHint(catalogModel, fallback)).toBe(fallback);
   });
 
+  it("falls back when catalog input hints are mostly question marks with preserved english words", () => {
+    const fallback = "Fallback prompt";
+    const catalogModel: ModelDefinition = {
+      ...textModel,
+      catalog: {
+        id: "mixed-broken-hint",
+        displayName: "Mixed Broken Hint",
+        modelName: "mixed-broken-hint",
+        modelType: 1,
+        capability: "text",
+        icon: "",
+        description: "",
+        inputHint: "??????????????????????????????????Agent????????????????????????????????????????????????",
+        successRate: "",
+        source: "kkyi",
+        channelGroups: [],
+        parameters: [],
+      },
+    };
+
+    expect(modelCatalogInputHint(catalogModel, fallback)).toBe(fallback);
+  });
+
   it("uses the selected sub-model catalog icon when available", () => {
     const iconModel: ModelDefinition = {
       ...textModel,
@@ -1251,6 +1274,15 @@ describe("conversation helpers", () => {
     expect(modelDisplayNameForModel({ ...genericVideoModel, name: "我的视频号脚本模型" }, setting({}))).toBe(
       "我的视频号脚本模型",
     );
+  });
+
+  it("falls back from broken model display names to the primary model name", () => {
+    expect(
+      modelDisplayNameForModel(
+        { ...textModel, name: "????????????????Agent????????????????" },
+        setting({ modelNameOverride: "gemini-3.1-pro-preview" }),
+      ),
+    ).toBe("gemini-3.1-pro-preview \u6587\u6848");
   });
 
   it("formats test results without empty status or duration placeholders", () => {

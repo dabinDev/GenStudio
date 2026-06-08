@@ -222,3 +222,160 @@ def test_admin_model_list_filters_by_capability_public_state_and_search() -> Non
 
     rows = list_admin_models(db, capability="image", search="Beta", public_state="public")
     assert [item.name for item in rows] == ["Image Beta"]
+
+
+def test_prompt_template_uses_model_specific_before_default() -> None:
+    from app.admin_service import get_prompt_template_for_scope, upsert_prompt_template
+    from app.schemas import PromptTemplateUpdate
+
+    db = make_db()
+    admin = make_user(db, "cage_ben@sina.com")
+    model = make_model(db, admin)
+
+    upsert_prompt_template(
+        db,
+        admin,
+        PromptTemplateUpdate(
+            capability="text",
+            modelGroupId="",
+            templateType="prompt_optimize",
+            name="Text default",
+            content="default {{prompt}}",
+            enabled=True,
+        ),
+    )
+    model_template = upsert_prompt_template(
+        db,
+        admin,
+        PromptTemplateUpdate(
+            capability="text",
+            modelGroupId=model.id,
+            templateType="prompt_optimize",
+            name="Model text",
+            content="model {{prompt}}",
+            enabled=True,
+        ),
+    )
+
+    resolved = get_prompt_template_for_scope(db, "text", model.id)
+    assert resolved.id == model_template.id
+    assert resolved.content == "model {{prompt}}"
+
+
+def test_prompt_template_falls_back_to_capability_default() -> None:
+    from app.admin_service import get_prompt_template_for_scope, upsert_prompt_template
+    from app.schemas import PromptTemplateUpdate
+
+    db = make_db()
+    admin = make_user(db, "cage_ben@sina.com")
+    upsert_prompt_template(
+        db,
+        admin,
+        PromptTemplateUpdate(
+            capability="image",
+            modelGroupId="",
+            templateType="prompt_optimize",
+            name="Image default",
+            content="image {{prompt}}",
+            enabled=True,
+        ),
+    )
+
+    resolved = get_prompt_template_for_scope(db, "image", "missing-model")
+    assert resolved.content == "image {{prompt}}"
+
+
+def test_disabled_prompt_template_is_not_used() -> None:
+    from fastapi import HTTPException
+
+    from app.admin_service import get_prompt_template_for_scope, upsert_prompt_template
+    from app.schemas import PromptTemplateUpdate
+
+    db = make_db()
+    admin = make_user(db, "cage_ben@sina.com")
+    upsert_prompt_template(
+        db,
+        admin,
+        PromptTemplateUpdate(
+            capability="video",
+            modelGroupId="",
+            templateType="prompt_optimize",
+            name="Video default",
+            content="video {{prompt}}",
+            enabled=False,
+        ),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        get_prompt_template_for_scope(db, "video", "")
+    assert exc.value.status_code == 404
+
+
+def test_admin_user_lifecycle_status_changes() -> None:
+    from app.admin_service import (
+        admin_delete_user,
+        admin_disable_user,
+        admin_enable_user,
+        admin_restore_user,
+        list_admin_users,
+    )
+
+    db = make_db()
+    admin = make_user(db, "cage_ben@sina.com", external_id="admin")
+    user = make_user(db, "user@example.com", external_id="user")
+
+    assert list_admin_users(db, search="user@example.com")[0].id == user.id
+    assert admin_disable_user(db, admin, user.id).status == "disabled"
+    assert admin_enable_user(db, admin, user.id).status == "active"
+    assert admin_delete_user(db, admin, user.id).status == "deleted"
+    assert admin_restore_user(db, admin, user.id).status == "active"
+
+
+def test_admin_cannot_disable_self() -> None:
+    from fastapi import HTTPException
+
+    from app.admin_service import admin_disable_user
+
+    db = make_db()
+    admin = make_user(db, "cage_ben@sina.com", external_id="admin")
+
+    with pytest.raises(HTTPException) as exc:
+        admin_disable_user(db, admin, admin.id)
+    assert exc.value.status_code == 400
+
+
+def test_admin_model_routes_require_admin_and_return_audit_logs() -> None:
+    import app.main as main_module
+    from app.auth import get_current_user
+    from app.database import get_db
+    from app.main import app
+
+    db = make_db()
+    admin = make_user(db, "cage_ben@sina.com", external_id="admin-route")
+    normal = make_user(db, "normal@example.com", external_id="normal-route")
+    model = make_model(db, admin)
+
+    def override_db():
+        yield db
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[get_current_user] = lambda: normal
+    client = TestClient(app)
+    denied = client.get("/api/admin/models")
+    assert denied.status_code == 403
+
+    app.dependency_overrides[get_current_user] = lambda: admin
+    publish = client.post(f"/api/admin/models/{model.id}/publish")
+    assert publish.status_code == 200
+    assert publish.json()["model"]["isPublic"] is True
+
+    unpublish = client.post(f"/api/admin/models/{model.id}/unpublish")
+    assert unpublish.status_code == 200
+    assert unpublish.json()["model"]["isPublic"] is False
+
+    logs = client.get("/api/admin/audit-logs")
+    assert logs.status_code == 200
+    assert [item["action"] for item in logs.json()["logs"][:2]] == ["unpublish_model", "publish_model"]
+
+    app.dependency_overrides.clear()
+    main_module.rate_limiter.clear()

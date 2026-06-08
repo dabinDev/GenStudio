@@ -489,6 +489,11 @@ def record_call_log(
     prompt_summary: str = "",
     error_message: str = "",
     usage: Any = None,
+    request_params: dict[str, Any] | None = None,
+    response_summary: dict[str, Any] | None = None,
+    conversation_id: str = "",
+    message_id: str = "",
+    is_public_model: bool = False,
 ) -> None:
     db.add(
         CallLog(
@@ -502,6 +507,11 @@ def record_call_log(
             prompt_summary=prompt_summary[:512],
             error_message=error_message[:512],
             raw_usage_json=json.dumps(usage, ensure_ascii=False) if usage is not None else "",
+            request_params_json=json.dumps(request_params or {}, ensure_ascii=False),
+            response_summary_json=json.dumps(response_summary or {}, ensure_ascii=False),
+            conversation_id=conversation_id,
+            message_id=message_id,
+            is_public_model=is_public_model,
         )
     )
     db.commit()

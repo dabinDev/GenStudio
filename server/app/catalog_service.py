@@ -29,6 +29,34 @@ def text_value(value: Any) -> str:
     return value.strip() if isinstance(value, str) else "" if value is None else str(value)
 
 
+def is_broken_text(value: str) -> bool:
+    text = value.strip()
+    if not text:
+        return False
+    compact = "".join(text.split())
+    question_marks = compact.count("?")
+    if len(compact) >= 2 and question_marks / len(compact) > 0.65:
+        return True
+    return False
+
+
+def readable_text(value: Any, fallback: str = "") -> str:
+    text = text_value(value)
+    if "??" in text:
+        text = text.replace("???", "").replace("??", "").strip()
+    return fallback if is_broken_text(text) else text
+
+
+def clean_catalog_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return readable_text(value)
+    if isinstance(value, list):
+        return [clean_catalog_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: clean_catalog_value(item) for key, item in value.items()}
+    return value
+
+
 LOBE_ICON_BASE_URL = "https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons"
 LOBE_ICON_BY_BRAND = {
     "anthropic": "Claude-color.svg",
@@ -178,9 +206,9 @@ def list_catalog_models(db: Session, capability: str = "") -> list[CatalogModel]
 def serialize_catalog_option(option: CatalogModelParameterOption) -> CatalogParameterOptionOut:
     return CatalogParameterOptionOut(
         id=option.external_id or option.id,
-        optionName=option.option_name,
+        optionName=readable_text(option.option_name, option.option_value),
         optionValue=option.option_value,
-        description=option.description,
+        description=readable_text(option.description),
         maxCount=option.max_count,
         isDefault=option.is_default,
         sortOrder=option.sort_order,
@@ -191,13 +219,13 @@ def serialize_catalog_option(option: CatalogModelParameterOption) -> CatalogPara
 def serialize_catalog_parameter(parameter: CatalogModelParameter) -> CatalogParameterOut:
     return CatalogParameterOut(
         id=parameter.external_id or parameter.id,
-        displayName=parameter.display_name,
+        displayName=readable_text(parameter.display_name, parameter.param_key),
         paramKey=parameter.param_key,
-        description=parameter.description,
+        description=readable_text(parameter.description),
         widgetType=parameter.widget_type,
         isRequired=parameter.is_required,
         defaultValue=parameter.default_value,
-        functionTag=parameter.function_tag,
+        functionTag=readable_text(parameter.function_tag),
         maxCount=parameter.max_count,
         sortOrder=parameter.sort_order,
         options=[serialize_catalog_option(option) for option in parameter.options],
@@ -212,7 +240,7 @@ def serialize_catalog_channel_group(group: CatalogModelChannelGroup) -> CatalogC
     return CatalogChannelGroupOut(
         id=group.external_id or group.id,
         channelId=group.channel_id,
-        groupName=group.group_name,
+        groupName=readable_text(group.group_name, "默认分组"),
         billingType=group.billing_type,
         inputTokenPrice=group.input_token_price,
         outputTokenPrice=group.output_token_price,
@@ -222,7 +250,7 @@ def serialize_catalog_channel_group(group: CatalogModelChannelGroup) -> CatalogC
         totalSuccessCount=group.total_success_count,
         totalFailCount=group.total_fail_count,
         sortOrder=group.sort_order,
-        optionPrices=option_prices if isinstance(option_prices, list) else [],
+        optionPrices=clean_catalog_value(option_prices) if isinstance(option_prices, list) else [],
     )
 
 

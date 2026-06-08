@@ -22,7 +22,7 @@ os.environ["GENSTUDIO_SECRET_KEY"] = "test-secret"
 
 from app.auth import get_current_user, require_admin_user
 from app.database import Base
-from app.db_models import ApiKey, ModelGroup, User
+from app.db_models import ApiKey, CatalogModel, Conversation, ConversationMessage, ModelGroup, SubModel, User
 from app.schemas import AdminModelUpdate
 from app.security import encrypt_secret
 
@@ -228,6 +228,102 @@ def test_admin_model_list_filters_by_capability_public_state_and_search() -> Non
 
     rows = list_admin_models(db, capability="image", search="Beta", public_state="public")
     assert [item.name for item in rows] == ["Image Beta"]
+
+
+def test_admin_model_serialization_falls_back_from_broken_names_to_catalog() -> None:
+    from app.model_service import serialize_model
+
+    db = make_db()
+    admin = make_user(db, "cage_ben@sina.com")
+    key = make_api_key(db, admin)
+    catalog = CatalogModel(
+        external_id="10030",
+        display_name="GPT-5.5",
+        model_name="gpt-5.5",
+        model_type=1,
+        capability="text",
+        description="可读描述",
+        input_hint="请输入创作目标",
+    )
+    db.add(catalog)
+    db.flush()
+    model = ModelGroup(
+        user_id=admin.id,
+        api_key_id=key.id,
+        catalog_model_id=catalog.id,
+        name="??????",
+        vendor="???",
+        capability="text",
+        adapter="text-chat",
+        description="????????????",
+        input_hint="????????????",
+    )
+    db.add(model)
+    db.flush()
+    sub_model = SubModel(
+        model_group_id=model.id,
+        api_key_id=key.id,
+        catalog_model_id=catalog.id,
+        model_name="gpt-5.5",
+        display_name="???",
+        capability="text",
+        adapter="text-chat",
+        is_primary=True,
+    )
+    db.add(sub_model)
+    db.flush()
+    model.primary_sub_model_id = sub_model.id
+    db.commit()
+    db.refresh(model)
+
+    payload = serialize_model(model, admin, is_admin=True).model_dump()
+
+    assert payload["name"] == "GPT-5.5"
+    assert payload["vendor"] == "???"
+    assert payload["description"] == "可读描述"
+    assert payload["inputHint"] == "请输入创作目标"
+    assert payload["subModels"][0]["displayName"] == "GPT-5.5"
+
+
+def test_admin_creation_records_replace_broken_historical_text() -> None:
+    from app.admin_service import list_admin_creation_records
+
+    db = make_db()
+    admin = make_user(db, "cage_ben@sina.com")
+    model = make_model(db, admin, name="GPT Image 2", capability="image")
+    conversation = Conversation(
+        user_id=admin.id,
+        title="历史坏记录",
+        capability="image",
+        model_group_id=model.id,
+        status="active",
+    )
+    db.add(conversation)
+    db.flush()
+    message = ConversationMessage(
+        conversation_id=conversation.id,
+        user_id=admin.id,
+        model_group_id=model.id,
+        role="user",
+        capability="image",
+        content="????????????????????????????????",
+        status="success",
+        request_json='{"model":"gpt-image-2","prompt":"????????????????"}',
+        response_json='{"summary":"????????????????","decoded":"åå²åå®¹ç¼ç å¼å¸¸ï¼æ æ³è¿åã","error":{"message":"???????, ??????: ?13.662560, ???????: ?15.000000"}}',
+        error_message="???????, ??????: ?13.662560, ???????: ?15.000000",
+    )
+    db.add(message)
+    db.commit()
+
+    records = list_admin_creation_records(db, capability="image")
+
+    assert records[0]["prompt"] == "历史内容编码异常，无法还原。"
+    assert records[0]["requestParams"]["prompt"] == "历史内容编码异常，无法还原。"
+    assert records[0]["responseSummary"]["summary"] == "历史内容编码异常，无法还原。"
+    assert records[0]["responseSummary"]["decoded"] == "历史内容编码异常，无法还原。"
+    assert records[0]["responseSummary"]["error"]["message"] == "历史内容编码异常，无法还原。"
+    assert records[0]["errorMessage"] == "历史内容编码异常，无法还原。"
+    assert "??" not in str(records[0])
 
 
 def test_prompt_template_uses_model_specific_before_default() -> None:

@@ -1331,6 +1331,33 @@ describe("conversation helpers", () => {
     ).toBe("gpt-image-2");
   });
 
+  it("falls back from short broken database names to readable catalog names", () => {
+    expect(
+      modelDisplayNameForModel(
+        {
+          ...textModel,
+          name: "??????",
+          publicDisplayName: "???",
+          catalog: {
+            id: "10030",
+            displayName: "GPT-5.5",
+            modelName: "gpt-5.5",
+            modelType: 1,
+            capability: "text",
+            icon: "",
+            description: "",
+            inputHint: "",
+            successRate: "",
+            source: "kkyi",
+            channelGroups: [],
+            parameters: [],
+          },
+        },
+        setting({ modelNameOverride: "gpt-5.5" }),
+      ),
+    ).toBe("GPT-5.5");
+  });
+
   it("formats test results without empty status or duration placeholders", () => {
     expect(
       testResultSummary({

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from fastapi import HTTPException
@@ -329,6 +330,47 @@ def _load_json(value: str, fallback: Any) -> Any:
     return parsed if isinstance(parsed, type(fallback)) else fallback
 
 
+BROKEN_HISTORY_PLACEHOLDER = "历史内容编码异常，无法还原。"
+
+
+def _is_broken_history_text(value: str) -> bool:
+    text = value.strip()
+    if not text:
+        return False
+    compact = re.sub(r"\s+", "", text)
+    question_marks = compact.count("?")
+    if question_marks >= 4:
+        return True
+    if "??" in compact:
+        return True
+    if len(compact) >= 2 and question_marks / len(compact) > 0.2:
+        return True
+    mojibake_chars = len(re.findall(r"[锟�鐢瑙鍥閸缂闈瑕鐞绠妯鍚彴鎿浣濉殕荤]", text))
+    if len(text) >= 12 and mojibake_chars / len(text) > 0.28:
+        return True
+    latin_mojibake_chars = len(re.findall(r"[ÃÂåæçèéêïð¤¥¦§¨©ª«¬®¯°±²³´µ¶·¸¹º»¼½¾¿-]", text))
+    return len(text) >= 6 and latin_mojibake_chars / len(text) > 0.18
+
+
+def _restore_latin1_mojibake(value: str) -> str:
+    try:
+        restored = value.encode("latin1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return value
+    return restored if restored and not _is_broken_history_text(restored) else value
+
+
+def _clean_history_value(value: Any) -> Any:
+    if isinstance(value, str):
+        restored = _restore_latin1_mojibake(value)
+        return BROKEN_HISTORY_PLACEHOLDER if _is_broken_history_text(restored) else restored
+    if isinstance(value, list):
+        return [_clean_history_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _clean_history_value(item) for key, item in value.items()}
+    return value
+
+
 def list_admin_creation_records(
     db: Session,
     *,
@@ -361,8 +403,8 @@ def list_admin_creation_records(
                 "modelName": model.public_display_name or model.name if model else "",
                 "capability": message.capability,
                 "status": message.status,
-                "prompt": message.content if message.role == "user" else "",
-                "response": message.content if message.role == "assistant" else "",
+                "prompt": _clean_history_value(message.content) if message.role == "user" else "",
+                "response": _clean_history_value(message.content) if message.role == "assistant" else "",
                 "createdAt": message.created_at,
                 "durationMs": 0,
                 "taskId": _load_json(message.response_json, {}).get("taskId", ""),
@@ -370,9 +412,9 @@ def list_admin_creation_records(
                     {"type": asset.asset_type, "url": asset.url, "thumbnailUrl": asset.thumbnail_url}
                     for asset in message.assets
                 ],
-                "requestParams": _load_json(message.request_json, {}),
-                "responseSummary": _load_json(message.response_json, {}),
-                "errorMessage": message.error_message,
+                "requestParams": _clean_history_value(_load_json(message.request_json, {})),
+                "responseSummary": _clean_history_value(_load_json(message.response_json, {})),
+                "errorMessage": _clean_history_value(message.error_message),
             }
         )
     return records

@@ -43,11 +43,62 @@ def catalog_loader_options() -> tuple:
     )
 
 
+def is_broken_display_text(value: str) -> bool:
+    text = value.strip()
+    if not text:
+        return False
+    compact = re.sub(r"\s+", "", text)
+    question_marks = compact.count("?")
+    if len(compact) >= 2 and question_marks / len(compact) > 0.65:
+        return True
+    mojibake_chars = len(re.findall(r"[锟�鐢瑙鍥閸缂闈瑕鐞绠妯鍚彴鎿浣濉殕荤]", text))
+    return len(text) >= 12 and mojibake_chars / len(text) > 0.28
+
+
+def clean_display_text(value: str) -> str:
+    return re.sub(r"\s+\?{2,}$", "", value.strip()).strip()
+
+
+def readable_text(value: str | None) -> str:
+    text = clean_display_text(value or "")
+    return "" if is_broken_display_text(text) else text
+
+
+def readable_sub_model_display_name(sub_model: SubModel) -> str:
+    for candidate in (
+        sub_model.display_name,
+        sub_model.catalog_model.display_name if sub_model.catalog_model else "",
+        sub_model.model_name,
+    ):
+        text = readable_text(candidate)
+        if text:
+            return text
+    return sub_model.model_name
+
+
+def readable_model_group_name(model: ModelGroup, primary: SubModel | None = None) -> str:
+    selected = primary or next((item for item in model.sub_models if item.id == model.primary_sub_model_id), None)
+    if not selected:
+        selected = next((item for item in model.sub_models if item.is_primary), None)
+    for candidate in (
+        model.public_display_name,
+        model.name,
+        selected.catalog_model.display_name if selected and selected.catalog_model else "",
+        model.catalog_model.display_name if model.catalog_model else "",
+        selected.display_name if selected else "",
+        selected.model_name if selected else "",
+    ):
+        text = readable_text(candidate)
+        if text:
+            return text
+    return model.name
+
+
 def serialize_sub_model(sub_model: SubModel, primary_id: str = "") -> SubModelOut:
     return SubModelOut(
         id=sub_model.id,
         modelName=sub_model.model_name,
-        displayName=sub_model.display_name,
+        displayName=readable_sub_model_display_name(sub_model),
         capability=sub_model.capability,
         adapter=sub_model.adapter,
         isPrimary=sub_model.is_primary or sub_model.id == primary_id,
@@ -67,10 +118,11 @@ def can_edit_model(model: ModelGroup, user: User | None = None, *, is_admin: boo
 
 def safe_model_description(model: ModelGroup, *, editable: bool) -> str:
     if editable:
-        return model.description
+        description = readable_text(model.description)
+        return description or readable_text(model.catalog_model.description if model.catalog_model else "") or model.description
     if model.is_public:
         return "平台公共模型，可直接用于创作。"
-    return re.sub(r"https?://[^\s)）]+", "", model.description or "").strip()
+    return re.sub(r"https?://[^\s)）]+", "", readable_text(model.description) or "").strip()
 
 
 def parse_model_json(value: str, fallback: Any) -> Any:
@@ -86,10 +138,15 @@ def serialize_model(model: ModelGroup, user: User | None = None, *, is_admin: bo
     if not primary:
         primary = next((item for item in model.sub_models if item.is_primary), None)
     editable = can_edit_model(model, user, is_admin=is_admin)
+    input_hint = readable_text(model.input_hint)
+    if not input_hint and primary and primary.catalog_model:
+        input_hint = readable_text(primary.catalog_model.input_hint)
+    if not input_hint and model.catalog_model:
+        input_hint = readable_text(model.catalog_model.input_hint)
     return ModelOut(
         id=model.id,
-        name=model.name,
-        vendor=model.vendor,
+        name=readable_model_group_name(model, primary),
+        vendor=readable_text(model.vendor) or model.vendor,
         capability=model.capability,
         adapter=model.adapter,
         description=safe_model_description(model, editable=editable),
@@ -102,9 +159,9 @@ def serialize_model(model: ModelGroup, user: User | None = None, *, is_admin: bo
         catalogModelId=catalog_external_id(model.catalog_model),
         catalog=serialize_catalog_model(model.catalog_model) if model.catalog_model else None,
         subModels=[serialize_sub_model(item, model.primary_sub_model_id) for item in model.sub_models],
-        publicDisplayName=model.public_display_name,
-        publicDescription=model.public_description if editable else "",
-        inputHint=model.input_hint,
+        publicDisplayName=readable_text(model.public_display_name),
+        publicDescription=readable_text(model.public_description) if editable else "",
+        inputHint=input_hint,
         iconUrl=model.icon_url,
         publicTags=parse_model_json(model.public_tags_json, []),
         promptOptimizeEnabled=bool(model.prompt_optimize_enabled),

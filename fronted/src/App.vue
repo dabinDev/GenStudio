@@ -2975,8 +2975,8 @@ async function batchDelete() {
 </script>
 
 <template>
-  <div class="shell">
-    <aside class="sidebar">
+  <div :class="['shell', view === 'admin' ? 'shell-admin' : '']">
+    <aside v-if="view !== 'admin'" class="sidebar">
       <div class="sidebar-logo">
         <div class="logo-mark">
           <img src="/brand/cylon-studio-logo.png" alt="塞隆studio" />
@@ -3048,7 +3048,7 @@ async function batchDelete() {
     </aside>
 
     <main class="main">
-      <div class="workspace-topbar">
+      <div v-if="view !== 'admin'" class="workspace-topbar">
         <div class="workspace-topbar-actions">
           <button @click="startNewConversation()">+ 新建对话</button>
           <button class="button-secondary" @click="toggleHistoryDrawer">历史记录</button>
@@ -3689,12 +3689,22 @@ async function batchDelete() {
 
         <template v-else>
           <section class="admin-hero">
+            <div class="admin-brand-block">
+              <div class="admin-brand-mark">
+                <img src="/brand/cylon-studio-logo.png" alt="Cylon Studio" />
+              </div>
+              <div>
+                <span>塞隆studio</span>
+                <strong>Admin Ops</strong>
+              </div>
+            </div>
             <div>
               <p class="eyebrow">Admin Console</p>
               <h2>塞隆studio 管理后台</h2>
               <p class="muted">管理公用模型、提示语模板、用户状态、调用记录和后台操作审计。</p>
             </div>
             <div class="admin-hero-actions">
+              <button class="button-secondary" @click="navigate('images')">返回创作台</button>
               <span class="badge badge-success">主管理员</span>
               <button class="button-secondary" :disabled="adminState.loading" @click="loadAdminTab()">刷新当前页</button>
             </div>
@@ -3753,7 +3763,7 @@ async function batchDelete() {
                     <div class="admin-table">
                       <div class="admin-table-head"><span>模型</span><span>总调用</span><span>成功</span><span>失败</span><span>均耗时</span></div>
                       <div v-for="row in adminState.overviewModels" :key="row.model.id" class="admin-table-row">
-                        <span>{{ row.model.publicDisplayName || row.model.name }}</span>
+                        <span>{{ modelDisplayName(mapServerModel(row.model)) }}</span>
                         <strong>{{ row.totalCalls }}</strong>
                         <span>{{ row.successCalls }}</span>
                         <span>{{ row.failedCalls }}</span>

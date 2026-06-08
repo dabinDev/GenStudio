@@ -179,6 +179,7 @@ function isBrokenDisplayText(value: string): boolean {
   if (!text) return false;
   const compact = text.replace(/\s+/g, "");
   const questionMarks = compact.match(/\?/g)?.length || 0;
+  if (compact.length >= 2 && questionMarks / compact.length > 0.65) return true;
   if (compact.length >= 12 && questionMarks / compact.length > 0.45) return true;
   const mojibakeChars = text.match(/[锟�鐢瑙鍥閸缂]/g)?.length || 0;
   return text.length >= 12 && mojibakeChars / text.length > 0.28;
@@ -186,6 +187,14 @@ function isBrokenDisplayText(value: string): boolean {
 
 function cleanDisplayText(value: string): string {
   return value.trim().replace(/\s+\?{2,}$/g, "").trim();
+}
+
+function firstReadableDisplayText(...values: Array<string | null | undefined>): string {
+  for (const value of values) {
+    const text = cleanDisplayText(value || "");
+    if (text && !isBrokenDisplayText(text)) return text;
+  }
+  return "";
 }
 
 export function modelCatalogIconUrl(model: ModelDefinition | null | undefined): string {
@@ -843,10 +852,17 @@ export function isGeneratedModelDisplayName(value: string): boolean {
 }
 
 export function modelDisplayNameForModel(model: ModelDefinition, setting?: ModelSetting): string {
-  const publicName = cleanDisplayText(model.publicDisplayName || "");
-  if (publicName && !isBrokenDisplayText(publicName)) return publicName;
-  const cleanName = cleanDisplayText(model.name || "");
-  if (cleanName && !isGeneratedModelDisplayName(cleanName) && !isBrokenDisplayText(cleanName)) return cleanName;
+  const publicName = firstReadableDisplayText(model.publicDisplayName);
+  if (publicName) return publicName;
+  const cleanName = firstReadableDisplayText(model.name);
+  if (cleanName && !isGeneratedModelDisplayName(cleanName)) return cleanName;
+  const primary = getPrimarySubModel(model);
+  const catalogName = firstReadableDisplayText(
+    primary?.catalog?.displayName,
+    model.catalog?.displayName,
+    primary?.displayName,
+  );
+  if (catalogName) return catalogName;
   return modelDisplayNameFromPrimary(model.capability, resolveModelName(model, setting));
 }
 

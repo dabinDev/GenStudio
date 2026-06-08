@@ -203,6 +203,13 @@ class ModelOut(BaseModel):
     catalogModelId: str | None = None
     catalog: CatalogModelOut | None = None
     subModels: list[SubModelOut] = Field(default_factory=list)
+    publicDisplayName: str = ""
+    publicDescription: str = ""
+    inputHint: str = ""
+    iconUrl: str = ""
+    publicTags: list[str] = Field(default_factory=list)
+    promptOptimizeEnabled: bool = True
+    defaultParameters: dict[str, Any] = Field(default_factory=dict)
 
 
 class AdminModelUpdate(BaseModel):

@@ -27,10 +27,17 @@ from app.auth import (
     issue_csrf_token,
     is_admin_user,
     register_local_user,
+    require_admin_user,
     require_csrf,
     serialize_user,
     update_user_profile,
     upsert_user,
+)
+from app.admin_service import (
+    list_admin_models,
+    publish_model,
+    unpublish_model,
+    update_admin_model,
 )
 from app.config import Settings, get_settings
 from app.conversation_service import (
@@ -99,6 +106,7 @@ from app.proxy_utils import (
 )
 from app.rate_limit import InMemoryRateLimiter, check_rate_limit
 from app.schemas import (
+    AdminModelUpdate,
     ConversationCreate,
     DevLoginRequest,
     LoginRequest,
@@ -118,7 +126,7 @@ GENERATED_ASSET_DIR.mkdir(parents=True, exist_ok=True)
 LOCAL_UPLOAD_DIR = Path(__file__).resolve().parents[2] / "uploaded_assets"
 LOCAL_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 MAX_INLINE_REFERENCE_LENGTH = 10 * 1024 * 1024
-FRONTEND_ROUTES = {"auth", "auth-error", "text", "images", "videos", "settings", "profile"}
+FRONTEND_ROUTES = {"auth", "auth-error", "text", "images", "videos", "settings", "profile", "admin"}
 rate_limiter = InMemoryRateLimiter()
 
 
@@ -1177,6 +1185,56 @@ async def sync_model_list(
         raise upstream_error(raw, "获取模型列表失败。", response.status_code)
     result = sync_models_from_raw(db, model, raw, duration_ms, user=current_user, is_admin=is_admin)
     return result.model_dump()
+
+
+@app.get("/api/admin/models")
+async def admin_models(
+    capability: str = "all",
+    search: str = "",
+    publicState: str = "all",
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+) -> dict[str, Any]:
+    return {
+        "models": [
+            serialize_model(item, admin, is_admin=True).model_dump()
+            for item in list_admin_models(db, capability=capability, search=search, public_state=publicState)
+        ]
+    }
+
+
+@app.put("/api/admin/models/{model_id}")
+async def admin_update_model(
+    model_id: str,
+    payload: AdminModelUpdate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    model = update_admin_model(db, admin, model_id, payload)
+    return {"model": serialize_model(model, admin, is_admin=True).model_dump()}
+
+
+@app.post("/api/admin/models/{model_id}/publish")
+async def admin_publish_model(
+    model_id: str,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    model = publish_model(db, admin, model_id)
+    return {"model": serialize_model(model, admin, is_admin=True).model_dump()}
+
+
+@app.post("/api/admin/models/{model_id}/unpublish")
+async def admin_unpublish_model(
+    model_id: str,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    model = unpublish_model(db, admin, model_id)
+    return {"model": serialize_model(model, admin, is_admin=True).model_dump()}
 
 
 @app.get("/api/calls")

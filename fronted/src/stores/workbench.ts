@@ -84,6 +84,13 @@ export function useWorkbenchStore() {
       catalogModelId: item.catalogModelId,
       catalog: item.catalog,
       subModels: item.subModels,
+      publicDisplayName: item.publicDisplayName,
+      publicDescription: item.publicDescription,
+      inputHint: item.inputHint,
+      iconUrl: item.iconUrl,
+      publicTags: item.publicTags,
+      promptOptimizeEnabled: item.promptOptimizeEnabled,
+      defaultParameters: item.defaultParameters,
     }));
     items.forEach((item) => {
       state.modelSettings[item.id] = {

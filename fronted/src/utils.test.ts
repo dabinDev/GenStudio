@@ -548,6 +548,34 @@ describe("model selection helpers", () => {
     expect(modelCatalogInputHint(catalogModel, fallback)).toBe(fallback);
   });
 
+  it("prefers admin public metadata over catalog display fallbacks", () => {
+    const publicModel: ModelDefinition = {
+      ...textModel,
+      name: "gpt-5.5 ??",
+      publicDisplayName: "GPT 5.5 公用大模型",
+      inputHint: "输入你的创作目标，我会帮你补全提示词。",
+      iconUrl: "https://example.com/custom.svg",
+      catalog: {
+        id: "public-catalog",
+        displayName: "Broken",
+        modelName: "gpt-5.5",
+        modelType: 1,
+        capability: "text",
+        icon: "https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/OpenAI.svg",
+        description: "",
+        inputHint: "??????????????????????????????????Agent????????????????????????????????????????????????",
+        successRate: "",
+        source: "kkyi",
+        channelGroups: [],
+        parameters: [],
+      },
+    };
+
+    expect(modelDisplayNameForModel(publicModel, setting({}))).toBe("GPT 5.5 公用大模型");
+    expect(modelCatalogInputHint(publicModel, "Fallback prompt")).toBe("输入你的创作目标，我会帮你补全提示词。");
+    expect(modelCatalogIconUrl(publicModel)).toBe("https://example.com/custom.svg");
+  });
+
   it("uses the selected sub-model catalog icon when available", () => {
     const iconModel: ModelDefinition = {
       ...textModel,

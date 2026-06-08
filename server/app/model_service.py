@@ -16,6 +16,9 @@ from app.schemas import ApiKeyOut, CallLogOut, ModelCreate, ModelOut, ModelUpdat
 from app.security import decrypt_secret, encrypt_secret
 
 
+MODEL_UNAVAILABLE_MESSAGE = "模型不存在或未开通，请检查模型配置。"
+
+
 def serialize_api_key(api_key: ApiKey) -> ApiKeyOut:
     return ApiKeyOut(
         id=api_key.id,
@@ -487,7 +490,8 @@ def get_sub_model_for_user(db: Session, user: User | None, sub_model_id: str) ->
         .one_or_none()
     )
     if not sub_model:
-        raise HTTPException(status_code=404 if user else 401, detail={"message": "请先登录。"})
+        message = MODEL_UNAVAILABLE_MESSAGE if user else "请先登录。"
+        raise HTTPException(status_code=404 if user else 401, detail={"message": message})
     api_key = sub_model.api_key
     return sub_model.model_group, sub_model, api_key, decrypt_secret(api_key.api_key_ciphertext)
 

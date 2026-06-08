@@ -720,6 +720,25 @@ def test_image_proxy_maps_upstream_login_message_to_key_error(monkeypatch) -> No
     assert detail["assistantMessage"]["errorMessage"] == "模型密钥不可用，请检查配置后再试。"
 
 
+def test_image_proxy_returns_model_unavailable_for_logged_in_inaccessible_sub_model() -> None:
+    owner = TestClient(app)
+    login(owner, "alice")
+    sub_model_id = create_model(owner, "image", "image-openai", "gpt-image-2")
+
+    other = TestClient(app)
+    login(other, "bob")
+    response = other.post(
+        "/api/proxy/image",
+        headers=csrf_headers(other),
+        json={"subModelId": sub_model_id, "requestBody": {"prompt": "测试不可访问模型"}},
+    )
+
+    assert response.status_code == 404
+    detail = response.json()["detail"]
+    assert detail["message"] == "模型不存在或未开通，请检查模型配置。"
+    assert "raw" not in detail
+
+
 def test_image_proxy_records_async_task_as_processing_message(monkeypatch) -> None:
     async def fake_forward_json(method, url, api_key, body=None):
         assert method == "POST"

@@ -5883,26 +5883,65 @@ async function batchDelete() {
             <div class="media-preview-button-row">
               <span class="sr-only">{{ mediaPreviewActionLabels(mediaPreviewState.asset.assetType).join("、") }}</span>
               <div v-if="mediaPreviewState.asset.assetType === 'image'" class="media-zoom-controls">
-                <button class="button-secondary" @click="zoomMediaPreview(-0.25)">−</button>
-                <button class="button-secondary" @click="resetMediaPreviewTransform">{{ Math.round(mediaPreviewState.scale * 100) }}%</button>
-                <button class="button-secondary" @click="zoomMediaPreview(0.25)">+</button>
+                <button class="button-secondary media-icon-button" type="button" title="缩小" aria-label="缩小" @click="zoomMediaPreview(-0.25)">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M5 12h14" />
+                  </svg>
+                </button>
+                <button class="button-secondary media-scale-button" type="button" title="重置缩放" @click="resetMediaPreviewTransform">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M4.5 12a7.5 7.5 0 0 1 12.8-5.3L20 9.4" />
+                    <path d="M20 4.5v4.9h-4.9" />
+                    <path d="M19.5 12a7.5 7.5 0 0 1-12.8 5.3L4 14.6" />
+                    <path d="M4 19.5v-4.9h4.9" />
+                  </svg>
+                  <span>{{ Math.round(mediaPreviewState.scale * 100) }}%</span>
+                </button>
+                <button class="button-secondary media-icon-button" type="button" title="放大" aria-label="放大" @click="zoomMediaPreview(0.25)">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 5v14" />
+                    <path d="M5 12h14" />
+                  </svg>
+                </button>
               </div>
-              <a class="button-secondary" :href="mediaPreviewState.asset.url" download target="_blank" rel="noreferrer">保存</a>
+              <a class="button-secondary media-action-button" :href="mediaPreviewState.asset.url" download target="_blank" rel="noreferrer">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 4v10" />
+                  <path d="m8 10 4 4 4-4" />
+                  <path d="M5 19h14" />
+                </svg>
+                <span>保存</span>
+              </a>
               <button
                 v-if="mediaPreviewState.asset.assetType === 'image'"
-                class="button-secondary"
+                class="button-secondary media-action-button"
                 @click="useGeneratedAsset(mediaPreviewState.asset); closeMediaPreview()"
               >
-                引用编辑
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M8 12h8" />
+                  <path d="M12 8v8" />
+                  <path d="M4 7.5A3.5 3.5 0 0 1 7.5 4h9A3.5 3.5 0 0 1 20 7.5v9a3.5 3.5 0 0 1-3.5 3.5h-9A3.5 3.5 0 0 1 4 16.5z" />
+                </svg>
+                <span>引用编辑</span>
               </button>
               <button
                 v-if="mediaPreviewState.asset.assetType === 'image'"
-                class="button-secondary"
+                class="button-secondary media-action-button"
                 @click="editSelectedAsset(mediaPreviewState.asset)"
               >
-                选取编辑
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M5 19 16.5 7.5" />
+                  <path d="m14.5 5.5 4 4" />
+                  <path d="M4 20h5" />
+                </svg>
+                <span>选取编辑</span>
               </button>
-              <button class="button-link" @click="closeMediaPreview">关闭</button>
+              <button class="button-link media-icon-button media-close-button" type="button" title="关闭" aria-label="关闭" @click="closeMediaPreview">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M6 6l12 12" />
+                  <path d="M18 6 6 18" />
+                </svg>
+              </button>
             </div>
           </div>
         </section>

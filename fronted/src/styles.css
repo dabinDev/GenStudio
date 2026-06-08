@@ -825,6 +825,59 @@ a {
   gap: 8px;
 }
 
+.media-preview-button-row svg,
+.media-preview-button-row img {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  aspect-ratio: 1 / 1;
+}
+
+.media-preview-button-row svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.media-action-button,
+.media-icon-button,
+.media-scale-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.media-action-button,
+.media-scale-button {
+  gap: 7px;
+}
+
+.media-icon-button {
+  width: 38px;
+  min-width: 38px;
+  height: 38px;
+  min-height: 38px;
+  padding: 0;
+  border-radius: 8px;
+}
+
+.media-scale-button {
+  min-width: 78px;
+  min-height: 38px;
+  padding: 0 10px;
+}
+
+.media-close-button {
+  color: #d7e9f4;
+  border-color: rgba(148, 188, 214, 0.2);
+  background: rgba(13, 26, 43, 0.72);
+}
+
 .media-zoom-controls {
   display: inline-flex;
   gap: 4px;
@@ -836,7 +889,6 @@ a {
 
 .media-zoom-controls .button-secondary {
   min-width: 38px;
-  padding: 0 9px;
 }
 
 .sr-only {
@@ -3881,6 +3933,14 @@ a {
 
   .media-preview-button-row > * {
     flex: 1 1 120px;
+  }
+
+  .media-preview-button-row > .media-icon-button {
+    flex: 0 0 38px;
+  }
+
+  .media-preview-button-row > .media-zoom-controls {
+    flex: 0 1 auto;
   }
 }
 

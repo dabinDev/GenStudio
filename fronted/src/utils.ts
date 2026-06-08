@@ -182,6 +182,10 @@ function isBrokenDisplayText(value: string): boolean {
   return text.length >= 12 && mojibakeChars / text.length > 0.28;
 }
 
+function cleanDisplayText(value: string): string {
+  return value.trim().replace(/\s+\?{2,}$/g, "").trim();
+}
+
 export function modelCatalogIconUrl(model: ModelDefinition | null | undefined): string {
   if (!model) return "";
   const inferred = inferModelIconUrl(model);
@@ -835,7 +839,8 @@ export function isGeneratedModelDisplayName(value: string): boolean {
 }
 
 export function modelDisplayNameForModel(model: ModelDefinition, setting?: ModelSetting): string {
-  if (model.name && !isGeneratedModelDisplayName(model.name) && !isBrokenDisplayText(model.name)) return model.name;
+  const cleanName = cleanDisplayText(model.name || "");
+  if (cleanName && !isGeneratedModelDisplayName(cleanName) && !isBrokenDisplayText(cleanName)) return cleanName;
   return modelDisplayNameFromPrimary(model.capability, resolveModelName(model, setting));
 }
 

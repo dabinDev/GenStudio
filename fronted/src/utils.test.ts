@@ -1285,6 +1285,21 @@ describe("conversation helpers", () => {
     ).toBe("gemini-3.1-pro-preview \u6587\u6848");
   });
 
+  it("removes broken question mark suffixes from otherwise readable model names", () => {
+    expect(
+      modelDisplayNameForModel(
+        { ...textModel, name: "gpt-5.5 ??" },
+        setting({ modelNameOverride: "gpt-5.5" }),
+      ),
+    ).toBe("gpt-5.5");
+    expect(
+      modelDisplayNameForModel(
+        { ...textModel, capability: "image", name: "gpt-image-2 ??" },
+        setting({ modelNameOverride: "gpt-image-2" }),
+      ),
+    ).toBe("gpt-image-2");
+  });
+
   it("formats test results without empty status or duration placeholders", () => {
     expect(
       testResultSummary({

@@ -3881,12 +3881,6 @@ a {
   transform: none;
 }
 
-.shell-admin button:not(.button-secondary):not(.button-danger):not(:disabled) {
-  color: #ffffff;
-  border-color: #2563eb;
-  background: #2563eb;
-}
-
 .shell-admin .admin-tabs button.admin-tab:not(:disabled),
 .shell-admin .settings-filter-tabs button.settings-filter-tab:not(:disabled) {
   color: #334155 !important;
@@ -6290,12 +6284,6 @@ a {
   transform: none;
 }
 
-.shell-admin button:not(.button-secondary):not(.button-danger):not(:disabled) {
-  color: #ffffff;
-  border-color: #0f766e;
-  background: linear-gradient(135deg, #0f766e, #2563eb);
-}
-
 .shell-admin .button-secondary {
   color: #233044;
   border-color: var(--admin-line);
@@ -6508,9 +6496,9 @@ a {
 
 .admin-sidebar-footer button {
   width: 100%;
-  color: #dbeafe;
-  border-color: rgba(148, 163, 184, 0.28);
-  background: rgba(255, 255, 255, 0.08);
+  color: #dbeafe !important;
+  border-color: rgba(148, 163, 184, 0.28) !important;
+  background: rgba(255, 255, 255, 0.08) !important;
 }
 
 .admin-console-main {
@@ -6896,6 +6884,32 @@ a {
   background: var(--admin-surface-soft);
 }
 
+.shell-admin .admin-failed-model {
+  color: var(--admin-text) !important;
+  border: 1px solid #cdd8e5 !important;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%) !important;
+  box-shadow: 0 1px 0 rgba(16, 24, 40, 0.02);
+  text-align: left;
+}
+
+.shell-admin .admin-failed-model:hover:not(:disabled) {
+  border-color: rgba(15, 118, 110, 0.36) !important;
+  background: #f4fffc !important;
+  box-shadow: 0 8px 18px rgba(16, 24, 40, 0.08);
+}
+
+.shell-admin .admin-failed-model strong {
+  color: #0f172a;
+}
+
+.shell-admin .admin-failed-model span {
+  color: #334155;
+}
+
+.shell-admin .admin-failed-model small {
+  color: #64748b;
+}
+
 .admin-row-editor {
   border-left: 4px solid var(--admin-brand);
   background: #fbfdff;
@@ -6946,11 +6960,14 @@ a {
 }
 
 .admin-segmented button {
-  color: var(--admin-muted);
+  color: var(--admin-muted) !important;
+  border-color: transparent !important;
+  background: transparent !important;
 }
 
 .admin-segmented button.active {
-  color: var(--admin-brand);
+  color: #ffffff !important;
+  background: linear-gradient(135deg, var(--admin-brand), var(--admin-brand-2)) !important;
 }
 
 .admin-trend-chart {

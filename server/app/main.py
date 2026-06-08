@@ -157,6 +157,7 @@ GENERATION_QUOTA_MESSAGE = "模型额度不足，请检查密钥余额或更换�
 GENERATION_AUTH_MESSAGE = "模型密钥不可用，请检查配置后再试。"
 GENERATION_PARAMETER_MESSAGE = "当前模型不支持所选参数，请调整尺寸、比例、分辨率或时长后再试。"
 GENERATION_MODEL_MESSAGE = "模型不存在或未开通，请检查模型配置。"
+GENERATION_IMAGE_MODEL_UNSUPPORTED_MESSAGE = "当前模型不支持图片生成，请更换模型或检查模型配置。"
 NO_IMAGE_RETURNED_MESSAGE = "模型没有返回可展示的图片，请稍后重试或更换模型。"
 
 
@@ -227,10 +228,35 @@ def generation_public_error_message(raw: Any, status_code: int = 500) -> str:
         return GENERATION_RATE_LIMIT_MESSAGE
     if any(token in text for token in ("quota", "billing", "balance", "credit", "insufficient", "余额", "额度")):
         return GENERATION_QUOTA_MESSAGE
-    if status_code in {401, 403} or any(token in text for token in ("invalid api key", "incorrect api key", "unauthorized", "forbidden", "permission denied", "无权限")):
+    if status_code in {401, 403} or any(
+        token in text
+        for token in (
+            "invalid api key",
+            "incorrect api key",
+            "unauthorized",
+            "forbidden",
+            "permission denied",
+            "login required",
+            "not logged in",
+            "请先登录",
+            "未登录",
+            "无权限",
+        )
+    ):
         return GENERATION_AUTH_MESSAGE
     if any(token in text for token in ("model not found", "model does not exist", "unknown model", "模型不存在")):
         return GENERATION_MODEL_MESSAGE
+    if any(
+        token in text
+        for token in (
+            "not supported model for image generation",
+            "only imagen models are supported",
+            "model does not support image generation",
+            "model not support image",
+            "不支持图片生成",
+        )
+    ):
+        return GENERATION_IMAGE_MODEL_UNSUPPORTED_MESSAGE
     if any(
         token in text
         for token in (

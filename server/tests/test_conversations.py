@@ -674,6 +674,52 @@ def test_image_proxy_returns_parameter_specific_user_message(monkeypatch) -> Non
     assert response.json()["detail"]["message"] == "当前模型不支持所选参数，请调整尺寸、比例、分辨率或时长后再试。"
 
 
+def test_image_proxy_maps_unsupported_image_model_message(monkeypatch) -> None:
+    raw = {"error": {"message": "not supported model for image generation, only imagen models are supported"}}
+
+    async def fake_forward_json(method, url, api_key, body=None):
+        return httpx.Response(500, json=raw), raw
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+    sub_model_id = create_model(client, "image", "image-openai", "gemini-3.1-flash-image-preview")
+
+    response = client.post(
+        "/api/proxy/image",
+        headers=csrf_headers(client),
+        json={"subModelId": sub_model_id, "requestBody": {"prompt": "模型不支持图片生成"}},
+    )
+
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert detail["message"] == "当前模型不支持图片生成，请更换模型或检查模型配置。"
+    assert detail["assistantMessage"]["errorMessage"] == "当前模型不支持图片生成，请更换模型或检查模型配置。"
+
+
+def test_image_proxy_maps_upstream_login_message_to_key_error(monkeypatch) -> None:
+    raw = {"message": "请先登录。"}
+
+    async def fake_forward_json(method, url, api_key, body=None):
+        return httpx.Response(404, json=raw), raw
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+    sub_model_id = create_model(client, "image", "image-openai", "gpt-image-2")
+
+    response = client.post(
+        "/api/proxy/image",
+        headers=csrf_headers(client),
+        json={"subModelId": sub_model_id, "requestBody": {"prompt": "上游要求登录"}},
+    )
+
+    assert response.status_code == 404
+    detail = response.json()["detail"]
+    assert detail["message"] == "模型密钥不可用，请检查配置后再试。"
+    assert detail["assistantMessage"]["errorMessage"] == "模型密钥不可用，请检查配置后再试。"
+
+
 def test_image_proxy_records_async_task_as_processing_message(monkeypatch) -> None:
     async def fake_forward_json(method, url, api_key, body=None):
         assert method == "POST"

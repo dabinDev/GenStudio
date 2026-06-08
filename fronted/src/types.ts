@@ -246,6 +246,7 @@ export interface AdminCreationRecord {
   user: AdminUserDefinition | null;
   modelName: string;
   capability: Capability;
+  role?: string;
   status: string;
   prompt: string;
   response: string;

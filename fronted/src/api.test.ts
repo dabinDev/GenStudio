@@ -5,6 +5,7 @@ import {
   fetchCsrfToken,
   fetchAdminOverviewModels,
   fetchAdminOverviewUsers,
+  fetchAdminRecords,
   loginWithPassword,
   postApi,
   publishAdminModel,
@@ -206,5 +207,23 @@ describe("auth api helpers", () => {
     await expect(fetchAdminOverviewModels()).resolves.toEqual([]);
 
     expect(requests).toEqual(["/api/admin/overview/users", "/api/admin/overview/models"]);
+  });
+
+  it("passes fuzzy user search when loading admin creation records", async () => {
+    const requests: string[] = [];
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      requests.push(String(url));
+      return new Response(JSON.stringify({ records: [] }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      fetchAdminRecords("image", {
+        userSearch: "cage",
+        status: "success",
+      }),
+    ).resolves.toEqual([]);
+
+    expect(requests).toEqual(["/api/admin/records/images?userSearch=cage&status=success"]);
   });
 });

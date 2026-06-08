@@ -4768,13 +4768,13 @@ a {
 
 .admin-record-list {
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .admin-record-card {
   display: grid;
-  gap: 10px;
-  padding: 12px;
+  gap: 12px;
+  padding: 14px;
   border: 1px solid #d7dde6;
   border-radius: 8px;
   background: #ffffff;
@@ -4785,6 +4785,122 @@ a {
   margin-top: 3px;
   color: #64748b;
   font-size: 12px;
+}
+
+.admin-record-toolbar {
+  display: grid !important;
+  grid-template-columns: auto minmax(260px, 1fr) 140px auto auto;
+  align-items: center;
+}
+
+.admin-record-toolbar .settings-filter-tabs {
+  display: inline-grid;
+  grid-template-columns: repeat(3, minmax(92px, auto));
+  width: max-content;
+}
+
+.admin-record-toolbar .settings-filter-tab {
+  display: grid;
+  gap: 1px;
+  min-height: 42px;
+  text-align: left;
+}
+
+.admin-record-toolbar .settings-filter-tab strong {
+  font-size: 13px;
+}
+
+.admin-record-toolbar .settings-filter-tab span {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.admin-record-user-search {
+  min-width: 260px;
+}
+
+.admin-filter-more {
+  position: relative;
+}
+
+.admin-filter-more summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 10px;
+  color: #334155;
+  border: 1px solid #d7dde6;
+  border-radius: 6px;
+  background: #ffffff;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.admin-filter-more[open] {
+  z-index: 5;
+}
+
+.admin-filter-more[open] .admin-search {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 320px;
+  padding: 10px;
+  border: 1px solid #d7dde6;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.12);
+}
+
+.admin-record-qa,
+.admin-record-media-layout,
+.admin-record-json-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.admin-record-qa section,
+.admin-record-request,
+.admin-record-result {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+  min-height: 132px;
+  padding: 12px;
+  border: 1px solid #edf1f5;
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.admin-record-qa span,
+.admin-record-request span,
+.admin-record-result span,
+.admin-record-json span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.admin-record-qa p,
+.admin-record-request p,
+.admin-record-result p {
+  max-height: 260px;
+  overflow: auto;
+  margin: 0;
+  color: #17202a;
+  line-height: 1.62;
+  white-space: pre-wrap;
+}
+
+.admin-record-request small {
+  overflow: hidden;
+  color: #64748b;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .admin-record-detail {
@@ -4813,16 +4929,15 @@ a {
 }
 
 .admin-record-assets {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
   gap: 8px;
 }
 
 .admin-record-assets a {
   display: grid;
   place-items: center;
-  width: 104px;
-  min-height: 72px;
+  min-height: 118px;
   overflow: hidden;
   color: #17202a;
   border: 1px solid #d7dde6;
@@ -4831,10 +4946,35 @@ a {
   font-size: 12px;
 }
 
-.admin-record-assets img {
+.admin-record-assets img,
+.admin-record-assets video {
   width: 100%;
-  height: 72px;
+  height: 118px;
   object-fit: cover;
+}
+
+.admin-record-json {
+  border: 1px solid #edf1f5;
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.admin-record-json summary {
+  padding: 9px 11px;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.admin-record-json-grid {
+  padding: 0 10px 10px;
+}
+
+.admin-record-json-grid > div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
 }
 
 .shell-admin .admin-empty,
@@ -4867,6 +5007,14 @@ a {
   .admin-dual-grid,
   .admin-template-layout {
     grid-template-columns: 1fr;
+  }
+
+  .admin-record-toolbar {
+    grid-template-columns: minmax(240px, 1fr) 160px auto auto;
+  }
+
+  .admin-record-toolbar .settings-filter-tabs {
+    grid-column: 1 / -1;
   }
 }
 
@@ -4906,6 +5054,21 @@ a {
     flex-direction: column;
   }
 
+  .admin-record-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-record-toolbar .settings-filter-tabs {
+    width: 100%;
+  }
+
+  .admin-record-toolbar .settings-filter-tabs,
+  .admin-record-qa,
+  .admin-record-media-layout,
+  .admin-record-json-grid {
+    grid-template-columns: 1fr;
+  }
+
   .admin-content {
     overflow: visible;
   }
@@ -4915,6 +5078,9 @@ a {
   .shell-admin .admin-metrics,
   .shell-admin .admin-tabs,
   .admin-donut-layout,
+  .admin-record-qa,
+  .admin-record-media-layout,
+  .admin-record-json-grid,
   .admin-model-form,
   .admin-user-fields,
   .admin-record-detail {

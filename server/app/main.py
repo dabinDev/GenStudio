@@ -1419,6 +1419,7 @@ async def admin_restore_user_route(
 @app.get("/api/admin/records/text")
 async def admin_text_records(
     userId: str = "",
+    userSearch: str = "",
     modelGroupId: str = "",
     status: str = "",
     db: Session = Depends(get_db),
@@ -1426,7 +1427,7 @@ async def admin_text_records(
 ) -> dict[str, Any]:
     return {
         "records": list_admin_creation_records(
-            db, capability="text", user_id=userId, model_group_id=modelGroupId, status=status
+            db, capability="text", user_id=userId, user_search=userSearch, model_group_id=modelGroupId, status=status
         )
     }
 
@@ -1434,6 +1435,7 @@ async def admin_text_records(
 @app.get("/api/admin/records/images")
 async def admin_image_records(
     userId: str = "",
+    userSearch: str = "",
     modelGroupId: str = "",
     status: str = "",
     db: Session = Depends(get_db),
@@ -1441,7 +1443,7 @@ async def admin_image_records(
 ) -> dict[str, Any]:
     return {
         "records": list_admin_creation_records(
-            db, capability="image", user_id=userId, model_group_id=modelGroupId, status=status
+            db, capability="image", user_id=userId, user_search=userSearch, model_group_id=modelGroupId, status=status
         )
     }
 
@@ -1449,6 +1451,7 @@ async def admin_image_records(
 @app.get("/api/admin/records/videos")
 async def admin_video_records(
     userId: str = "",
+    userSearch: str = "",
     modelGroupId: str = "",
     status: str = "",
     db: Session = Depends(get_db),
@@ -1456,7 +1459,7 @@ async def admin_video_records(
 ) -> dict[str, Any]:
     return {
         "records": list_admin_creation_records(
-            db, capability="video", user_id=userId, model_group_id=modelGroupId, status=status
+            db, capability="video", user_id=userId, user_search=userSearch, model_group_id=modelGroupId, status=status
         )
     }
 

@@ -350,6 +350,12 @@ const adminCapabilityTabs: Array<{ value: Capability | "all"; label: string }> =
   { value: "video", label: "视频创作" },
 ];
 
+const adminRecordCapabilityTabs: Array<{ value: Capability; label: string; hint: string }> = [
+  { value: "text", label: "文案", hint: "提问 / 回答" },
+  { value: "image", label: "图片/图文", hint: "提示词 / 图片结果" },
+  { value: "video", label: "视频", hint: "提示词 / 视频结果" },
+];
+
 const adminNavGroups: Array<{ title: string; tabs: AdminTab[] }> = [
   { title: "运营", tabs: ["overview", "audit"] },
   { title: "模型", tabs: ["models", "prompts"] },
@@ -368,7 +374,7 @@ const adminState = reactive({
   modelSearch: "",
   userSearch: "",
   recordStatus: "",
-  recordUserId: "",
+  recordUserSearch: "",
   recordModelGroupId: "",
   auditAction: "",
   auditAdminUserId: "",
@@ -1348,6 +1354,16 @@ function capabilityForAdminRecordTab(tab: AdminTab): Capability {
   return "text";
 }
 
+function adminRecordTabForCapability(capability: Capability): AdminTab {
+  if (capability === "image") return "image-records";
+  if (capability === "video") return "video-records";
+  return "text-records";
+}
+
+function switchAdminRecordCapability(capability: Capability) {
+  switchAdminTab(adminRecordTabForCapability(capability));
+}
+
 function adminRecordTitle(tab: AdminTab): string {
   if (tab === "image-records") return "生图记录";
   if (tab === "video-records") return "视频记录";
@@ -1373,6 +1389,34 @@ function adminStatusBadge(status: string): string {
 function adminUserLabel(user: AdminUserDefinition | null | undefined): string {
   if (!user) return "未知用户";
   return user.nickname || user.email || user.id;
+}
+
+function adminRecordPrompt(record: AdminCreationRecord): string {
+  const requestPrompt =
+    typeof record.requestParams?.prompt === "string"
+      ? record.requestParams.prompt
+      : typeof record.requestParams?.content === "string"
+        ? record.requestParams.content
+        : "";
+  return record.prompt || requestPrompt || "-";
+}
+
+function adminRecordResponse(record: AdminCreationRecord): string {
+  if (record.response) return record.response;
+  if (record.errorMessage) return record.errorMessage;
+  const assetCount = record.assets?.length || 0;
+  if (assetCount) return `已返回 ${assetCount} 个${record.capability === "video" ? "视频" : "图片"}结果`;
+  if (record.taskId) return `任务 ${record.taskId}`;
+  return record.status === "processing" ? "结果生成中" : "-";
+}
+
+function adminRecordMediaAssets(record: AdminCreationRecord): Array<{ type: string; url: string; thumbnailUrl?: string }> {
+  return (record.assets || []).filter((asset) => asset.url);
+}
+
+function adminRecordJsonInitiallyOpen(record: AdminCreationRecord): boolean {
+  void record;
+  return false;
 }
 
 function editAdminModel(model: ModelDefinition) {
@@ -1636,7 +1680,7 @@ async function loadAdminRecords(capability: Capability) {
   adminState.error = "";
   try {
     const records = await fetchAdminRecords(capability, {
-      userId: adminState.recordUserId,
+      userSearch: adminState.recordUserSearch,
       modelGroupId: adminState.recordModelGroupId,
       status: adminState.recordStatus,
     });
@@ -4222,20 +4266,44 @@ async function batchDelete() {
                 <div class="admin-section-head">
                   <div>
                     <h3>{{ adminRecordTitle(adminState.activeTab) }}</h3>
-                    <p class="muted">按用户、模型和调用状态查看提示词、响应、请求参数、资产和失败原因。</p>
+                    <p class="muted">按类型、用户和状态查看创作请求，正文优先展示提问、回答和媒体结果。</p>
                   </div>
                   <button class="button-secondary" @click="loadAdminRecords(capabilityForAdminRecordTab(adminState.activeTab))">刷新记录</button>
                 </div>
 
-                <div class="admin-toolbar">
+                <div class="admin-toolbar admin-record-toolbar">
+                  <div class="settings-filter-tabs" role="tablist" aria-label="调用记录类型">
+                    <button
+                      v-for="tab in adminRecordCapabilityTabs"
+                      :key="tab.value"
+                      :class="['settings-filter-tab', capabilityForAdminRecordTab(adminState.activeTab) === tab.value ? 'settings-filter-tab-active' : '']"
+                      @click="switchAdminRecordCapability(tab.value)"
+                    >
+                      <strong>{{ tab.label }}</strong>
+                      <span>{{ tab.hint }}</span>
+                    </button>
+                  </div>
+                  <label class="settings-search-box admin-search admin-record-user-search">
+                    <span>用户</span>
+                    <input
+                      v-model="adminState.recordUserSearch"
+                      placeholder="邮箱、昵称、手机号或用户 ID"
+                      @keyup.enter="loadAdminRecords(capabilityForAdminRecordTab(adminState.activeTab))"
+                    />
+                  </label>
                   <select v-model="adminState.recordStatus" @change="loadAdminRecords(capabilityForAdminRecordTab(adminState.activeTab))">
                     <option value="">全部状态</option>
                     <option value="success">success</option>
                     <option value="error">error</option>
                     <option value="processing">processing</option>
                   </select>
-                  <label class="settings-search-box admin-search"><span>用户 ID</span><input v-model="adminState.recordUserId" placeholder="可选" @keyup.enter="loadAdminRecords(capabilityForAdminRecordTab(adminState.activeTab))" /></label>
-                  <label class="settings-search-box admin-search"><span>模型 ID</span><input v-model="adminState.recordModelGroupId" placeholder="可选" @keyup.enter="loadAdminRecords(capabilityForAdminRecordTab(adminState.activeTab))" /></label>
+                  <details class="admin-filter-more">
+                    <summary>高级筛选</summary>
+                    <label class="settings-search-box admin-search">
+                      <span>模型 ID</span>
+                      <input v-model="adminState.recordModelGroupId" placeholder="可选" @keyup.enter="loadAdminRecords(capabilityForAdminRecordTab(adminState.activeTab))" />
+                    </label>
+                  </details>
                   <button class="button-secondary" @click="loadAdminRecords(capabilityForAdminRecordTab(adminState.activeTab))">筛选</button>
                 </div>
 
@@ -4244,23 +4312,48 @@ async function batchDelete() {
                     <div class="admin-record-head">
                       <div>
                         <strong>{{ record.modelName || "未知模型" }}</strong>
-                        <span>{{ adminUserLabel(record.user) }} / {{ formatConversationTime(record.createdAt) }}</span>
+                        <span>{{ adminUserLabel(record.user) }} / {{ CAPABILITY_LABELS[record.capability] }} / {{ formatConversationTime(record.createdAt) }}</span>
                       </div>
                       <span :class="['badge', adminStatusBadge(record.status)]">{{ adminStatusLabel(record.status) }}</span>
                     </div>
-                    <div class="admin-record-detail">
-                      <div><span>提示词</span><p>{{ record.prompt || "-" }}</p></div>
-                      <div><span>响应</span><p>{{ record.response || record.errorMessage || "-" }}</p></div>
-                      <div v-if="record.taskId"><span>任务 ID</span><p>{{ record.taskId }}</p></div>
-                      <div><span>请求参数</span><pre>{{ compactJson(record.requestParams || {}) }}</pre></div>
-                      <div><span>响应摘要</span><pre>{{ compactJson(record.responseSummary || {}) }}</pre></div>
+
+                    <div v-if="record.capability === 'text'" class="admin-record-qa">
+                      <section>
+                        <span>提问</span>
+                        <p>{{ adminRecordPrompt(record) }}</p>
+                      </section>
+                      <section>
+                        <span>回答</span>
+                        <p>{{ adminRecordResponse(record) }}</p>
+                      </section>
                     </div>
-                    <div v-if="record.assets?.length" class="admin-record-assets">
-                      <a v-for="asset in record.assets" :key="asset.url" :href="asset.url" target="_blank" rel="noreferrer">
+
+                    <div v-else class="admin-record-media-layout">
+                      <section class="admin-record-request">
+                        <span>请求</span>
+                        <p>{{ adminRecordPrompt(record) }}</p>
+                        <small v-if="record.taskId">任务 ID: {{ record.taskId }}</small>
+                      </section>
+                      <section class="admin-record-result">
+                        <span>响应结果</span>
+                        <div v-if="adminRecordMediaAssets(record).length" class="admin-record-assets">
+                          <a v-for="asset in adminRecordMediaAssets(record)" :key="asset.url" :href="asset.url" target="_blank" rel="noreferrer">
                         <img v-if="asset.type === 'image'" :src="asset.thumbnailUrl || asset.url" alt="record asset" />
-                        <span v-else>打开视频</span>
-                      </a>
+                            <video v-else-if="asset.type === 'video'" :src="asset.url" :poster="asset.thumbnailUrl" muted playsinline />
+                            <span v-else>打开资源</span>
+                          </a>
+                        </div>
+                        <p v-else>{{ adminRecordResponse(record) }}</p>
+                      </section>
                     </div>
+
+                    <details class="admin-record-json" :open="adminRecordJsonInitiallyOpen(record)">
+                      <summary>调试 JSON</summary>
+                      <div class="admin-record-json-grid">
+                        <div><span>请求参数</span><pre>{{ compactJson(record.requestParams || {}) }}</pre></div>
+                        <div><span>响应摘要</span><pre>{{ compactJson(record.responseSummary || {}) }}</pre></div>
+                      </div>
+                    </details>
                   </article>
                   <p v-if="!adminRecordList(adminState.activeTab).length" class="admin-empty">暂无记录</p>
                 </div>

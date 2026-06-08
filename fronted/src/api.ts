@@ -277,10 +277,11 @@ export async function restoreAdminUser(userId: string): Promise<AdminUserDefinit
   return payload.user;
 }
 
-export async function fetchAdminRecords(capability: Capability, query: { userId?: string; modelGroupId?: string; status?: string } = {}): Promise<AdminCreationRecord[]> {
+export async function fetchAdminRecords(capability: Capability, query: { userId?: string; userSearch?: string; modelGroupId?: string; status?: string } = {}): Promise<AdminCreationRecord[]> {
   const endpoint = capability === "text" ? "text" : capability === "image" ? "images" : "videos";
   const params = new URLSearchParams();
   if (query.userId) params.set("userId", query.userId);
+  if (query.userSearch) params.set("userSearch", query.userSearch);
   if (query.modelGroupId) params.set("modelGroupId", query.modelGroupId);
   if (query.status) params.set("status", query.status);
   const suffix = params.toString() ? `?${params.toString()}` : "";

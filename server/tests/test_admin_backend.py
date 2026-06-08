@@ -326,6 +326,43 @@ def test_admin_creation_records_replace_broken_historical_text() -> None:
     assert "??" not in str(records[0])
 
 
+def test_admin_creation_records_filter_by_user_search() -> None:
+    from app.admin_service import list_admin_creation_records
+
+    db = make_db()
+    admin = make_user(db, "cage_ben@sina.com", external_id="admin")
+    other = make_user(db, "artist@example.com", external_id="artist")
+    model = make_model(db, admin, name="GPT 5.5", capability="text")
+    for user, content in [(admin, "管理员请求"), (other, "画师请求")]:
+        conversation = Conversation(
+            user_id=user.id,
+            title=content,
+            capability="text",
+            model_group_id=model.id,
+            status="active",
+        )
+        db.add(conversation)
+        db.flush()
+        db.add(
+            ConversationMessage(
+                conversation_id=conversation.id,
+                user_id=user.id,
+                model_group_id=model.id,
+                role="user",
+                capability="text",
+                content=content,
+                status="success",
+            )
+        )
+    db.commit()
+
+    records = list_admin_creation_records(db, capability="text", user_search="artist")
+
+    assert len(records) == 1
+    assert records[0]["prompt"] == "画师请求"
+    assert records[0]["user"]["email"] == "artist@example.com"
+
+
 def test_prompt_template_uses_model_specific_before_default() -> None:
     from app.admin_service import get_prompt_template_for_scope, upsert_prompt_template
     from app.schemas import PromptTemplateUpdate

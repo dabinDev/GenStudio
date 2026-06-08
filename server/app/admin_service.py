@@ -376,6 +376,7 @@ def list_admin_creation_records(
     *,
     capability: str,
     user_id: str = "",
+    user_search: str = "",
     model_group_id: str = "",
     status: str = "",
     limit: int = 100,
@@ -387,23 +388,64 @@ def list_admin_creation_records(
     )
     if user_id:
         query = query.filter(ConversationMessage.user_id == user_id)
+    clean_user_search = user_search.strip()
+    if clean_user_search:
+        like = f"%{clean_user_search}%"
+        query = query.join(User, User.id == ConversationMessage.user_id).filter(
+            or_(
+                User.id.like(like),
+                User.email.like(like),
+                User.nickname.like(like),
+                User.phone.like(like),
+            )
+        )
     if model_group_id:
         query = query.filter(ConversationMessage.model_group_id == model_group_id)
     if status:
         query = query.filter(ConversationMessage.status == status)
-    messages = query.order_by(ConversationMessage.created_at.desc()).limit(min(max(limit, 1), 200)).all()
+    max_limit = min(max(limit, 1), 200)
+    messages = query.order_by(ConversationMessage.created_at.desc()).limit(max_limit).all()
+    conversation_ids = {message.conversation_id for message in messages}
+    assistant_conversation_ids: set[str] = set()
+    if conversation_ids:
+        assistant_conversation_ids = {
+            row[0]
+            for row in db.query(ConversationMessage.conversation_id)
+            .filter(
+                ConversationMessage.conversation_id.in_(conversation_ids),
+                ConversationMessage.capability == capability,
+                ConversationMessage.role == "assistant",
+            )
+            .all()
+        }
     records: list[dict[str, Any]] = []
     for message in messages:
+        if message.role != "assistant" and message.conversation_id in assistant_conversation_ids:
+            continue
         user = db.get(User, message.user_id)
         model = db.get(ModelGroup, message.model_group_id) if message.model_group_id else None
+        prompt = message.content if message.role == "user" else ""
+        if message.role == "assistant":
+            previous_prompt = (
+                db.query(ConversationMessage)
+                .filter(
+                    ConversationMessage.conversation_id == message.conversation_id,
+                    ConversationMessage.role == "user",
+                    ConversationMessage.created_at <= message.created_at,
+                )
+                .order_by(ConversationMessage.created_at.desc())
+                .first()
+            )
+            prompt = previous_prompt.content if previous_prompt else ""
         records.append(
             {
                 "id": message.id,
                 "user": serialize_admin_user(user) if user else None,
                 "modelName": model.public_display_name or model.name if model else "",
                 "capability": message.capability,
+                "role": message.role,
                 "status": message.status,
-                "prompt": _clean_history_value(message.content) if message.role == "user" else "",
+                "prompt": _clean_history_value(prompt),
                 "response": _clean_history_value(message.content) if message.role == "assistant" else "",
                 "createdAt": message.created_at,
                 "durationMs": 0,
@@ -417,6 +459,8 @@ def list_admin_creation_records(
                 "errorMessage": _clean_history_value(message.error_message),
             }
         )
+        if len(records) >= max_limit:
+            break
     return records
 
 

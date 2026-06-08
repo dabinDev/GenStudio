@@ -3,8 +3,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ApiRequestError,
   fetchCsrfToken,
+  fetchAdminOverviewModels,
+  fetchAdminOverviewUsers,
   loginWithPassword,
   postApi,
+  publishAdminModel,
   setCsrfToken,
   shouldFallbackToLocalReference,
   uploadAsset,
@@ -147,5 +150,61 @@ describe("auth api helpers", () => {
         headers: expect.objectContaining({ "X-CSRF-Token": "csrf-new" }),
       }),
     );
+  });
+
+  it("publishes admin models through the admin api with csrf", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({ url: String(url), init });
+      if (String(url) === "/api/auth/csrf") {
+        return new Response(JSON.stringify({ csrfToken: "csrf-admin" }), { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({
+          model: {
+            id: "mdl_1",
+            name: "GPT",
+            vendor: "OpenAI",
+            capability: "text",
+            adapter: "text-chat",
+            description: "",
+            apiKeyId: "key_1",
+            baseUrl: "",
+            primarySubModelId: "",
+            primaryModelName: "gpt-5.5",
+            isPublic: true,
+            canEdit: true,
+            subModels: [],
+          },
+        }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchCsrfToken();
+    await publishAdminModel("mdl_1");
+
+    const last = requests.at(-1);
+    expect(last?.url).toBe("/api/admin/models/mdl_1/publish");
+    expect(last?.init?.method).toBe("POST");
+    expect(last?.init?.headers).toEqual(expect.objectContaining({ "X-CSRF-Token": "csrf-admin" }));
+  });
+
+  it("loads admin overview drilldown tables from admin endpoints", async () => {
+    const requests: string[] = [];
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      requests.push(String(url));
+      if (String(url).endsWith("/users")) {
+        return new Response(JSON.stringify({ users: [] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ models: [] }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchAdminOverviewUsers()).resolves.toEqual([]);
+    await expect(fetchAdminOverviewModels()).resolves.toEqual([]);
+
+    expect(requests).toEqual(["/api/admin/overview/users", "/api/admin/overview/models"]);
   });
 });

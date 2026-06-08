@@ -25,6 +25,13 @@ export interface ModelDefinition {
   subModels?: SubModelDefinition[];
   catalogModelId?: string | null;
   catalog?: CatalogModelDefinition | null;
+  publicDisplayName?: string;
+  publicDescription?: string;
+  inputHint?: string;
+  iconUrl?: string;
+  publicTags?: string[];
+  promptOptimizeEnabled?: boolean;
+  defaultParameters?: Record<string, unknown>;
 }
 
 export interface ModelSetting {
@@ -42,6 +49,51 @@ export interface UserProfile {
   nickname: string;
   avatarUrl: string;
   isAdmin?: boolean;
+}
+
+export interface AdminOverview {
+  totalCalls: number;
+  successCalls: number;
+  failedCalls: number;
+  failureRate: number;
+  averageDurationMs: number;
+  publicModelCalls: number;
+  privateModelCalls: number;
+}
+
+export interface AdminOverviewUserRow {
+  user: AdminUserDefinition;
+  totalCalls: number;
+  publicModelCalls: number;
+  privateModelCalls: number;
+  failedCalls: number;
+}
+
+export interface AdminOverviewModelRow {
+  model: ServerModelDefinition;
+  totalCalls: number;
+  successCalls: number;
+  failedCalls: number;
+  averageDurationMs: number;
+}
+
+export interface AdminUserDefinition extends UserProfile {
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PromptTemplateDefinition {
+  id: string;
+  capability: Capability;
+  modelGroupId: string;
+  templateType: string;
+  name: string;
+  content: string;
+  enabled: boolean;
+  updatedBy: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface SubModelDefinition {
@@ -72,6 +124,13 @@ export interface ServerModelDefinition {
   catalogModelId?: string | null;
   catalog?: CatalogModelDefinition | null;
   subModels: SubModelDefinition[];
+  publicDisplayName?: string;
+  publicDescription?: string;
+  inputHint?: string;
+  iconUrl?: string;
+  publicTags?: string[];
+  promptOptimizeEnabled?: boolean;
+  defaultParameters?: Record<string, unknown>;
 }
 
 export interface CatalogParameterOptionDefinition {
@@ -180,6 +239,34 @@ export interface ConversationDefinition {
   createdAt: string;
   updatedAt: string;
   messages: ConversationMessage[];
+}
+
+export interface AdminCreationRecord {
+  id: string;
+  user: AdminUserDefinition | null;
+  modelName: string;
+  capability: Capability;
+  status: string;
+  prompt: string;
+  response: string;
+  createdAt: string;
+  durationMs?: number;
+  taskId?: string;
+  assets?: Array<{ type: string; url: string; thumbnailUrl?: string }>;
+  requestParams?: Record<string, unknown>;
+  responseSummary?: Record<string, unknown>;
+  errorMessage?: string;
+}
+
+export interface AdminAuditLog {
+  id: string;
+  adminUserId: string | null;
+  action: string;
+  targetType: string;
+  targetId: string;
+  status: string;
+  summary: Record<string, unknown>;
+  createdAt: string;
 }
 
 export interface HistoryEntry {

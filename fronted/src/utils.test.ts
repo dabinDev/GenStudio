@@ -125,14 +125,17 @@ describe("model selection helpers", () => {
     expect(capabilityFilterForView("profile")).toBe("all");
   });
 
-  it("treats settings, profile, and history as private login-gated actions", () => {
+  it("treats settings, profile, admin, and history as private login-gated actions", () => {
     expect(isPrivateView("settings")).toBe(true);
     expect(isPrivateView("profile")).toBe(true);
+    expect(isPrivateView("admin")).toBe(true);
     expect(isPrivateView("images")).toBe(false);
     expect(loginRedirectForView("settings")).toBe("/auth?redirect=%2Fsettings");
     expect(loginRedirectForView("profile")).toBe("/auth?redirect=%2Fprofile");
+    expect(loginRedirectForView("admin")).toBe("/auth?redirect=%2Fadmin");
     expect(resolveAuthRedirect("#/auth?redirect=%2Fsettings")).toBe("settings");
     expect(resolveAuthRedirect("#/auth?redirect=%2Fprofile")).toBe("profile");
+    expect(resolveAuthRedirect("#/auth?redirect=%2Fadmin")).toBe("admin");
     expect(resolveAuthRedirect("#/auth?redirect=https%3A%2F%2Fevil.example")).toBe("images");
   });
 

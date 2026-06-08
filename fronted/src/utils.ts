@@ -53,7 +53,7 @@ export function capabilityFilterForView(viewName: string): Capability | "all" {
 }
 
 export function isPrivateView(viewName: string): boolean {
-  return viewName === "settings" || viewName === "profile";
+  return viewName === "settings" || viewName === "profile" || viewName === "admin";
 }
 
 export function loginRedirectForView(viewName: string): string {
@@ -66,7 +66,7 @@ export function resolveAuthRedirect(hash: string, fallback = "images"): string {
   const redirect = new URLSearchParams(query).get("redirect") || "";
   if (!redirect.startsWith("/") || redirect.startsWith("//")) return fallback;
   const route = redirect.replace(/^\/+/, "").split("?", 1)[0];
-  return ["text", "images", "videos", "settings", "profile"].includes(route) ? route : fallback;
+  return ["text", "images", "videos", "settings", "profile", "admin"].includes(route) ? route : fallback;
 }
 
 export function canEditModel(model: Pick<ModelDefinition, "serverManaged" | "isPublic" | "canEdit">): boolean {

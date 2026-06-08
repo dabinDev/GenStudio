@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 
 import pytest
 from fastapi import Depends, FastAPI
@@ -12,6 +13,11 @@ from sqlalchemy.pool import StaticPool
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+db_path = os.path.join(tempfile.gettempdir(), "genstudio-admin-backend-test.sqlite3")
+if os.path.exists(db_path):
+    os.remove(db_path)
+
+os.environ["DATABASE_URL"] = f"sqlite:///{db_path}"
 os.environ["GENSTUDIO_SECRET_KEY"] = "test-secret"
 
 from app.auth import get_current_user, require_admin_user

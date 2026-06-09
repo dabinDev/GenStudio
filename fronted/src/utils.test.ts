@@ -15,9 +15,14 @@ import {
   getMissingModelMessage,
   imageGenerationSummary,
   canEditModel,
+  deleteConfirmationSummary,
   isPrivateView,
   loginRedirectForView,
   mediaPreviewActionLabels,
+  nextMediaPreviewTransform,
+  normalizeThemeMode,
+  toggleThemeMode,
+  unavailableTestedModels,
   filterSettingsModels,
   capabilityFilterForView,
   pickPrimaryModel,
@@ -83,6 +88,69 @@ describe("reference upload helpers", () => {
     ];
 
     expect(filterReferenceImageFiles(files).map((file) => file.name)).toEqual(["scene.png", "car.JPG", "texture.webp"]);
+  });
+});
+
+describe("media preview helpers", () => {
+  it("keeps images fully visible at the minimum zoom and resets pan at fit scale", () => {
+    expect(nextMediaPreviewTransform({ scale: 1, offsetX: 140, offsetY: -90 }, -0.75)).toEqual({
+      scale: 0.5,
+      offsetX: 0,
+      offsetY: 0,
+    });
+    expect(nextMediaPreviewTransform({ scale: 1.25, offsetX: 140, offsetY: -90 }, -0.25)).toEqual({
+      scale: 1,
+      offsetX: 0,
+      offsetY: 0,
+    });
+  });
+
+  it("preserves pan while zooming in and caps maximum zoom", () => {
+    expect(nextMediaPreviewTransform({ scale: 5.9, offsetX: 120, offsetY: -80 }, 0.5)).toEqual({
+      scale: 6,
+      offsetX: 120,
+      offsetY: -80,
+    });
+  });
+});
+
+describe("theme helpers", () => {
+  it("normalizes unknown theme values to dark mode", () => {
+    expect(normalizeThemeMode("light")).toBe("light");
+    expect(normalizeThemeMode("dark")).toBe("dark");
+    expect(normalizeThemeMode("system")).toBe("dark");
+    expect(normalizeThemeMode(null)).toBe("dark");
+  });
+
+  it("toggles between day and night modes", () => {
+    expect(toggleThemeMode("dark")).toBe("light");
+    expect(toggleThemeMode("light")).toBe("dark");
+  });
+});
+
+describe("settings batch delete helpers", () => {
+  it("finds only editable tested models with failed connection state", () => {
+    const publicModel = { ...textModel, id: "public", serverManaged: true, isPublic: true, canEdit: false };
+    const healthyModel = { ...textModel, id: "healthy", serverManaged: true, canEdit: true };
+    const failedModel = { ...textModel, id: "failed", serverManaged: true, canEdit: true };
+    const untestedModel = { ...textModel, id: "untested", serverManaged: true, canEdit: true };
+
+    expect(
+      unavailableTestedModels(
+        [publicModel, healthyModel, failedModel, untestedModel],
+        {
+          public: { loading: false, error: "公共模型不能删除", result: null },
+          healthy: { loading: false, error: "", result: { status: 200 } },
+          failed: { loading: false, error: "连接失败", result: null },
+        },
+        canEditModel,
+      ).map((model) => model.id),
+    ).toEqual(["failed"]);
+  });
+
+  it("builds a clear confirmation message for batch model deletion", () => {
+    expect(deleteConfirmationSummary("移除不可用", 3, 2)).toContain("确认移除不可用 3 个模型吗？");
+    expect(deleteConfirmationSummary("移除不可用", 3, 2)).toContain("已跳过 2 个不可删除模型");
   });
 });
 

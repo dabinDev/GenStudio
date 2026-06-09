@@ -264,8 +264,23 @@ def create_model_group(db: Session, user: User, payload: ModelCreate, *, is_admi
     return get_model_group(db, user, model.id, is_admin=is_admin)
 
 
-def get_model_group(db: Session, user: User, model_id: str, *, is_admin: bool = False, require_edit: bool = False) -> ModelGroup:
-    return get_model_group_for_user_id(db, user.id, model_id, is_admin=is_admin, require_edit=require_edit)
+def get_model_group(
+    db: Session,
+    user: User,
+    model_id: str,
+    *,
+    is_admin: bool = False,
+    require_edit: bool = False,
+    forbidden_message: str = "公共模型只有管理员可以编辑。",
+) -> ModelGroup:
+    return get_model_group_for_user_id(
+        db,
+        user.id,
+        model_id,
+        is_admin=is_admin,
+        require_edit=require_edit,
+        forbidden_message=forbidden_message,
+    )
 
 
 def get_model_group_for_user_id(
@@ -275,6 +290,7 @@ def get_model_group_for_user_id(
     *,
     is_admin: bool = False,
     require_edit: bool = False,
+    forbidden_message: str = "公共模型只有管理员可以编辑。",
 ) -> ModelGroup:
     model = (
         db.query(ModelGroup)
@@ -285,7 +301,7 @@ def get_model_group_for_user_id(
     if not model:
         raise HTTPException(status_code=404, detail={"message": "模型不存在。"})
     if require_edit and not (is_admin or (model.user_id == user_id and not model.is_public)):
-        raise HTTPException(status_code=403, detail={"message": "公共模型只有管理员可以编辑。"})
+        raise HTTPException(status_code=403, detail={"message": forbidden_message})
     if backfill_catalog_links(db, [model]):
         db.commit()
         db.expire_all()
@@ -422,7 +438,14 @@ def update_model_group(db: Session, user: User, model_id: str, payload: ModelUpd
 
 
 def delete_model_group(db: Session, user: User, model_id: str, *, is_admin: bool = False) -> None:
-    model = get_model_group(db, user, model_id, is_admin=is_admin, require_edit=True)
+    model = get_model_group(
+        db,
+        user,
+        model_id,
+        is_admin=is_admin,
+        require_edit=True,
+        forbidden_message="公共模型只有管理员可以删除。",
+    )
     api_key = model.api_key
     db.delete(model)
     if api_key and len(api_key.model_groups) <= 1:

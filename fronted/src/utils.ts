@@ -25,6 +25,16 @@ export function filterReferenceImageFiles(files: ArrayLike<File>): File[] {
   });
 }
 
+export type ThemeMode = "dark" | "light";
+
+export function normalizeThemeMode(value: unknown): ThemeMode {
+  return value === "light" ? "light" : "dark";
+}
+
+export function toggleThemeMode(value: ThemeMode): ThemeMode {
+  return value === "light" ? "dark" : "light";
+}
+
 export function safeJsonParse<T>(value: string | null, fallback: T): T {
   if (!value) return fallback;
   try {
@@ -89,6 +99,28 @@ export function canEditModel(model: Pick<ModelDefinition, "serverManaged" | "isP
 export function publicShareTargetModels(models: ModelDefinition[], selectedIds: string[]): ModelDefinition[] {
   const selected = new Set(selectedIds);
   return models.filter((model) => selected.has(model.id) && model.serverManaged && model.canEdit === true && !model.isPublic);
+}
+
+export function unavailableTestedModels<TModel extends ModelDefinition>(
+  models: TModel[],
+  testState: Record<string, { loading?: boolean; error?: string; result?: unknown } | undefined>,
+  canEdit: (model: TModel) => boolean,
+): TModel[] {
+  return models.filter((model) => {
+    const state = testState[model.id];
+    return canEdit(model) && Boolean(state?.error) && !state?.loading && !state?.result;
+  });
+}
+
+export function deleteConfirmationSummary(actionLabel: string, deleteCount: number, skippedCount = 0): string {
+  const lines = [
+    `确认${actionLabel} ${deleteCount} 个模型吗？`,
+    "删除后该模型配置、密钥关联和可用子模型会从当前账号移除。",
+  ];
+  if (skippedCount > 0) {
+    lines.push(`已跳过 ${skippedCount} 个不可删除模型。`);
+  }
+  return lines.join("\n");
 }
 
 export function modelConnectionLabel(
@@ -811,6 +843,17 @@ export function mediaPreviewActionLabels(assetType: string): string[] {
     return ["保存", "引用编辑", "选取编辑", "关闭"];
   }
   return ["保存", "关闭"];
+}
+
+export function nextMediaPreviewTransform(
+  current: { scale: number; offsetX: number; offsetY: number },
+  delta: number,
+): { scale: number; offsetX: number; offsetY: number } {
+  const scale = Math.min(6, Math.max(0.5, Number((current.scale + delta).toFixed(2))));
+  if (scale <= 1) {
+    return { scale, offsetX: 0, offsetY: 0 };
+  }
+  return { scale, offsetX: current.offsetX, offsetY: current.offsetY };
 }
 
 export function imageGenerationSummary(input: {

@@ -379,7 +379,35 @@ def test_non_admin_cannot_edit_delete_or_switch_public_model() -> None:
 
     assert updated.status_code == 403
     assert deleted.status_code == 403
+    assert deleted.json()["detail"]["message"] == "公共模型只有管理员可以删除。"
     assert primary.status_code == 403
+
+
+def test_admin_can_delete_public_model() -> None:
+    admin = TestClient(app)
+    admin.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": "admin-delete-public", "email": "cage_ben@sina.com", "nickname": "Admin"},
+    )
+    created = admin.post(
+        "/api/models",
+        headers=csrf_headers(admin),
+        json={
+            "name": "Public Model To Delete",
+            "vendor": "OpenAI",
+            "capability": "text",
+            "adapter": "text-chat",
+            "baseUrl": "https://token.example.com",
+            "apiKey": "sk-test",
+            "primaryModelName": "gpt-5.5",
+            "isPublic": True,
+        },
+    ).json()["model"]
+
+    deleted = admin.delete(f"/api/models/{created['id']}", headers=csrf_headers(admin))
+
+    assert deleted.status_code == 200
+    assert admin.get("/api/models").json()["models"] == []
 
 
 def test_admin_can_publish_private_model_for_other_users_to_use(monkeypatch) -> None:

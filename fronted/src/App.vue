@@ -81,6 +81,7 @@ import {
   conversationAssetsFromImageQueryResult,
   conversationAssetFromVideoQueryResult,
   createLocalId,
+  deleteConfirmationSummary,
   filterReferenceImageFiles,
   findPromptBeforeMessage,
   generatedAssetReferenceFileName,
@@ -101,6 +102,8 @@ import {
   modelDisplayNameForModel,
   modelDisplayNameFromPrimary,
   modelParameterSourceLabel,
+  nextMediaPreviewTransform,
+  normalizeThemeMode,
   filterModelOptions,
   filterSettingsModels,
   pickPrimaryModel,
@@ -116,8 +119,10 @@ import {
   shortText,
   supportsCatalogParameter,
   testResultSummary,
+  toggleThemeMode,
   updateLocalConversationMessage,
   updateLocalConversationTaskMessage,
+  unavailableTestedModels,
   visibleConversationMessages,
   videoDurationOptionItems,
   videoGenerationSummary,
@@ -237,10 +242,12 @@ const UNIFIED_ADAPTERS: Adapter[] = [
   "video-unified-generic",
 ];
 const TASK_POLL_INTERVAL_MS = 5000;
+const THEME_STORAGE_KEY = "genstudio-theme";
 
 const store = useWorkbenchStore();
 const auth = useAuthStore();
 const view = ref<ViewName>(getViewFromHash());
+const themeMode = ref(normalizeThemeMode(localStorage.getItem(THEME_STORAGE_KEY)));
 const sidebarFilter = ref<SidebarFilter>(capabilityFilterForView(view.value));
 const showDevAuth = shouldShowDevAuth();
 const devAuthCode = ref("dev:alice");
@@ -631,6 +638,10 @@ const selectedEditableSettingsModels = computed(() =>
   selectedVisibleSettingsModels.value.filter((model) => canEditModel(model)),
 );
 
+const unavailableEditableSettingsModels = computed(() =>
+  unavailableTestedModels(filteredSettingsModels.value, settingsState.testState, canEditModel),
+);
+
 const configuredCount = computed(() =>
   store.models.value.filter((model) => {
     const setting = getSetting(model.id);
@@ -766,6 +777,17 @@ const userAccountLabel = computed(() => {
   return auth.state.user.email || auth.state.user.phone || "已登录";
 });
 
+const themeToggleLabel = computed(() => (themeMode.value === "light" ? "夜间模式" : "白天模式"));
+const themeToggleTitle = computed(() => (themeMode.value === "light" ? "切换到夜间模式" : "切换到白天模式"));
+
+function setThemeMode(nextTheme: "dark" | "light") {
+  themeMode.value = normalizeThemeMode(nextTheme);
+}
+
+function toggleTheme() {
+  setThemeMode(toggleThemeMode(themeMode.value));
+}
+
 onMounted(async () => {
   await initializeSession();
   syncProfileForm();
@@ -778,8 +800,19 @@ onUnmounted(() => {
   stopTextPolling();
   stopImagePolling();
   stopVideoPolling();
+  document.documentElement.classList.remove("media-preview-open");
   window.removeEventListener("hashchange", handleHashChange);
 });
+
+watch(
+  themeMode,
+  (nextTheme) => {
+    const normalized = normalizeThemeMode(nextTheme);
+    document.documentElement.dataset.theme = normalized;
+    localStorage.setItem(THEME_STORAGE_KEY, normalized);
+  },
+  { immediate: true },
+);
 
 watch(
   () => store.models.value.map((model) => model.id).join(","),
@@ -1708,6 +1741,7 @@ function resetMediaPreviewTransform() {
 function openMediaPreview(asset: ConversationAsset) {
   mediaPreviewState.asset = asset;
   resetMediaPreviewTransform();
+  document.documentElement.classList.add("media-preview-open");
 }
 
 function openUploadedMediaPreview(asset: UploadedAsset, role = "reference", label = "参考图") {
@@ -1717,6 +1751,7 @@ function openUploadedMediaPreview(asset: UploadedAsset, role = "reference", labe
 function closeMediaPreview() {
   mediaPreviewState.asset = null;
   resetMediaPreviewTransform();
+  document.documentElement.classList.remove("media-preview-open");
 }
 
 function mediaPreviewTransform(): string {
@@ -1724,12 +1759,10 @@ function mediaPreviewTransform(): string {
 }
 
 function zoomMediaPreview(delta: number) {
-  const nextScale = Math.min(6, Math.max(0.4, Number((mediaPreviewState.scale + delta).toFixed(2))));
-  mediaPreviewState.scale = nextScale;
-  if (nextScale <= 1) {
-    mediaPreviewState.offsetX = 0;
-    mediaPreviewState.offsetY = 0;
-  }
+  const next = nextMediaPreviewTransform(mediaPreviewState, delta);
+  mediaPreviewState.scale = next.scale;
+  mediaPreviewState.offsetX = next.offsetX;
+  mediaPreviewState.offsetY = next.offsetY;
 }
 
 function handleMediaPreviewWheel(event: WheelEvent) {
@@ -1739,7 +1772,7 @@ function handleMediaPreviewWheel(event: WheelEvent) {
 }
 
 function startMediaPreviewPan(event: PointerEvent) {
-  if (mediaPreviewState.asset?.assetType !== "image" || mediaPreviewState.scale <= 1) return;
+  if (mediaPreviewState.asset?.assetType !== "image") return;
   mediaPreviewState.dragging = true;
   mediaPreviewState.dragStartX = event.clientX;
   mediaPreviewState.dragStartY = event.clientY;
@@ -3996,12 +4029,16 @@ async function batchPublishPublic() {
   showToast(successCount ? `已设置 ${successCount} 个公用模型` : "没有模型被设置为公用", successCount ? "success" : "error");
 }
 
-async function removeModelFromWorkbench(modelId: string) {
+async function removeModelFromWorkbench(modelId: string, options: { skipConfirm?: boolean } = {}) {
   const model = store.models.value.find((item) => item.id === modelId);
   if (model && !canEditModel(model)) {
     settingsState.testState[modelId] = { ...createIdleState<TestRequestResult>(), error: "公共模型只有管理员可以删除。" };
     showToast(settingsState.testState[modelId].error, "error");
     return;
+  }
+  if (!options.skipConfirm && model) {
+    const confirmed = window.confirm(deleteConfirmationSummary("删除", 1));
+    if (!confirmed) return;
   }
   if (model?.serverManaged) {
     settingsState.testState[modelId] = { ...createIdleState<TestRequestResult>(), loading: true };
@@ -4024,19 +4061,42 @@ async function removeModelFromWorkbench(modelId: string) {
   delete settingsState.testState[modelId];
 }
 
+async function removeModelsWithConfirmation(models: ModelDefinition[], actionLabel: string, skippedCount = 0) {
+  const ids = models.map((model) => model.id);
+  if (!ids.length) {
+    showToast("没有可删除的模型。", "info");
+    return;
+  }
+  if (!window.confirm(deleteConfirmationSummary(actionLabel, ids.length, skippedCount))) return;
+  await Promise.allSettled(ids.map((modelId) => removeModelFromWorkbench(modelId, { skipConfirm: true })));
+  settingsState.selectedIds = settingsState.selectedIds.filter((selectedId) => !ids.includes(selectedId));
+}
+
 async function batchDelete() {
   const editableModels = selectedVisibleSettingsModels.value.filter((model) => canEditModel(model));
-  const ids = editableModels.map((model) => model.id);
-  if (ids.length !== selectedVisibleSettingsModels.value.length) {
+  const skippedCount = selectedVisibleSettingsModels.value.length - editableModels.length;
+  if (skippedCount > 0) {
     showToast("公共模型已跳过，只有管理员可以删除。", "info");
   }
-  await Promise.allSettled(ids.map((modelId) => removeModelFromWorkbench(modelId)));
-  settingsState.selectedIds = settingsState.selectedIds.filter((selectedId) => !ids.includes(selectedId));
+  await removeModelsWithConfirmation(editableModels, "批量删除", skippedCount);
+}
+
+async function removeUnavailableModels() {
+  const targets = unavailableEditableSettingsModels.value;
+  const unavailableCount = filteredSettingsModels.value.filter((model) => {
+    const state = settingsState.testState[model.id];
+    return Boolean(state?.error) && !state?.loading && !state?.result;
+  }).length;
+  const skippedCount = unavailableCount - targets.length;
+  if (skippedCount > 0) {
+    showToast("不可删除的公共模型已跳过。", "info");
+  }
+  await removeModelsWithConfirmation(targets, "移除不可用", skippedCount);
 }
 </script>
 
 <template>
-  <div :class="['shell', view === 'admin' ? 'shell-admin' : '']">
+  <div :class="['shell', view === 'admin' ? 'shell-admin' : '']" :data-theme="themeMode">
     <aside v-if="view !== 'admin'" class="sidebar">
       <div class="sidebar-logo">
         <div class="logo-mark">
@@ -4117,6 +4177,10 @@ async function batchDelete() {
         </div>
         <div class="workspace-topbar-actions">
           <span class="topbar-model-label">{{ currentModelLabel }}</span>
+          <button :class="['theme-toggle-button', themeMode === 'light' ? 'theme-toggle-light' : 'theme-toggle-dark']" :title="themeToggleTitle" @click="toggleTheme">
+            <span class="theme-toggle-track"><i></i></span>
+            <span>{{ themeToggleLabel }}</span>
+          </button>
           <button v-if="auth.state.user?.isAdmin" class="topbar-icon-button" @click="navigate('admin')">后台</button>
           <button class="topbar-icon-button" @click="navigate('settings')">设置</button>
           <button class="topbar-icon-button" @click="navigate('profile')">个人</button>
@@ -4841,6 +4905,10 @@ async function batchDelete() {
               <div class="admin-topbar-actions">
                 <span class="admin-env-pill"><i></i> studio.cylonai.cn</span>
                 <span class="admin-user-pill">{{ auth.state.user?.email || "admin" }}<small>管理员</small></span>
+                <button :class="['theme-toggle-button', themeMode === 'light' ? 'theme-toggle-light' : 'theme-toggle-dark']" :title="themeToggleTitle" @click="toggleTheme">
+                  <span class="theme-toggle-track"><i></i></span>
+                  <span>{{ themeToggleLabel }}</span>
+                </button>
                 <button class="button-secondary" :disabled="adminState.loading" @click="loadAdminTab()">刷新当前页</button>
               </div>
             </header>
@@ -5702,6 +5770,9 @@ async function batchDelete() {
                 设为公用模型 {{ publicShareTargets.length ? publicShareTargets.length : "" }}
               </button>
               <button class="button-secondary" :disabled="!selectedVisibleSettingsModels.length" @click="batchTest">批量测试</button>
+              <button class="button-danger" :disabled="!unavailableEditableSettingsModels.length" @click="removeUnavailableModels">
+                移除不可用 {{ unavailableEditableSettingsModels.length ? unavailableEditableSettingsModels.length : "" }}
+              </button>
               <button class="button-danger" :disabled="!selectedEditableSettingsModels.length" @click="batchDelete">批量删除</button>
               <button @click="openCreateDialog">+ 添加模型</button>
             </div>
@@ -6059,41 +6130,16 @@ async function batchDelete() {
         </div>
       </section>
 
-      <div v-if="mediaPreviewState.asset" class="media-preview-backdrop" @click.self="closeMediaPreview">
-        <section class="media-preview-panel" aria-label="媒体预览">
-          <div
-            :class="['media-preview-stage', mediaPreviewState.asset.assetType === 'image' ? 'media-preview-stage-image' : '', mediaPreviewState.dragging ? 'media-preview-stage-dragging' : '']"
-            @wheel.prevent="handleMediaPreviewWheel"
-            @pointerdown="startMediaPreviewPan"
-            @pointermove="moveMediaPreviewPan"
-            @pointerup="stopMediaPreviewPan"
-            @pointercancel="stopMediaPreviewPan"
-            @dblclick="resetMediaPreviewTransform"
-          >
-            <img
-              v-if="mediaPreviewState.asset.assetType === 'image'"
-              :src="mediaPreviewState.asset.url"
-              alt="生成图片预览"
-              :style="{ transform: mediaPreviewTransform() }"
-              draggable="false"
-            />
-            <video
-              v-else-if="mediaPreviewState.asset.assetType === 'video'"
-              :src="mediaPreviewState.asset.url"
-              :poster="mediaPreviewState.asset.thumbnailUrl || undefined"
-              controls
-              autoplay
-              playsinline
-            />
-          </div>
+      <div v-if="mediaPreviewState.asset" class="media-preview-backdrop" role="dialog" aria-modal="true" aria-label="媒体预览" @click.self="closeMediaPreview">
+        <section class="media-preview-panel">
           <div class="media-preview-actions">
-            <div>
+            <div class="media-preview-title">
               <strong>{{ generatedAssetReferenceFileName(mediaPreviewState.asset) }}</strong>
               <span>{{ assetDisplayLabel(mediaPreviewState.asset) }}</span>
             </div>
             <div class="media-preview-button-row">
               <span class="sr-only">{{ mediaPreviewActionLabels(mediaPreviewState.asset.assetType).join("、") }}</span>
-              <div v-if="mediaPreviewState.asset.assetType === 'image'" class="media-zoom-controls">
+              <div v-if="mediaPreviewState.asset.assetType === 'image'" class="media-zoom-controls" aria-label="图片缩放">
                 <button class="button-secondary media-icon-button" type="button" title="缩小" aria-label="缩小" @click="zoomMediaPreview(-0.25)">
                   <svg viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M5 12h14" />
@@ -6154,6 +6200,31 @@ async function batchDelete() {
                 </svg>
               </button>
             </div>
+          </div>
+          <div
+            :class="['media-preview-stage', mediaPreviewState.asset.assetType === 'image' ? 'media-preview-stage-image' : '', mediaPreviewState.dragging ? 'media-preview-stage-dragging' : '']"
+            @wheel.prevent="handleMediaPreviewWheel"
+            @pointerdown="startMediaPreviewPan"
+            @pointermove="moveMediaPreviewPan"
+            @pointerup="stopMediaPreviewPan"
+            @pointercancel="stopMediaPreviewPan"
+            @dblclick="resetMediaPreviewTransform"
+          >
+            <img
+              v-if="mediaPreviewState.asset.assetType === 'image'"
+              :src="mediaPreviewState.asset.url"
+              alt="生成图片预览"
+              :style="{ transform: mediaPreviewTransform() }"
+              draggable="false"
+            />
+            <video
+              v-else-if="mediaPreviewState.asset.assetType === 'video'"
+              :src="mediaPreviewState.asset.url"
+              :poster="mediaPreviewState.asset.thumbnailUrl || undefined"
+              controls
+              autoplay
+              playsinline
+            />
           </div>
         </section>
       </div>

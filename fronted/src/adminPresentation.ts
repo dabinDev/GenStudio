@@ -15,17 +15,17 @@ export interface AdminTabDefinition {
   label: string;
   hint: string;
   icon: string;
-  tone: "blue" | "green" | "amber" | "red" | "violet" | "cyan" | "slate";
+  tone: "blue" | "green" | "amber" | "red" | "cyan" | "slate";
 }
 
 export const adminTabs: AdminTabDefinition[] = [
   { value: "overview", label: "运营面板", hint: "调用、失败率、公私模型分布", icon: "chart", tone: "blue" },
   { value: "models", label: "公用模型配置", hint: "发布、取消公用、图标、提示语", icon: "model", tone: "green" },
-  { value: "prompts", label: "提示语模板", hint: "AI 文案优化模板", icon: "spark", tone: "violet" },
+  { value: "prompts", label: "提示语模板", hint: "AI 文案优化模板", icon: "spark", tone: "cyan" },
   { value: "users", label: "用户管理", hint: "启用、禁用、删除、恢复", icon: "user", tone: "cyan" },
   { value: "text-records", label: "文案记录", hint: "提示词与响应追踪", icon: "text", tone: "slate" },
   { value: "image-records", label: "生图记录", hint: "图片结果与参数", icon: "image", tone: "amber" },
-  { value: "video-records", label: "视频记录", hint: "任务、视频、失败原因", icon: "video", tone: "red" },
+  { value: "video-records", label: "视频记录", hint: "任务、视频、失败原因", icon: "video", tone: "blue" },
   { value: "audit", label: "操作记录", hint: "管理员变更审计", icon: "audit", tone: "slate" },
 ];
 

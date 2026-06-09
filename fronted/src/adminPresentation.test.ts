@@ -25,6 +25,24 @@ describe("admin presentation metadata", () => {
     }
   });
 
+  it("keeps admin labels and suggestions readable Chinese without mojibake", () => {
+    const suspectPattern = /[�]|(?:鍒|绠|鐢|鎿|璋|妯|瑙|浣|闈|杩|瀹|宸|褰|澧|嗘|傛)/;
+    for (const tab of adminTabs) {
+      expect(tab.label).not.toMatch(suspectPattern);
+      expect(tab.hint).not.toMatch(suspectPattern);
+    }
+    for (const group of adminNavGroups) {
+      expect(group.title).not.toMatch(suspectPattern);
+    }
+    for (const suggestions of Object.values(ADMIN_PAGE_SUGGESTIONS)) {
+      expect(suggestions).toHaveLength(3);
+      for (const suggestion of suggestions) {
+        expect(suggestion).not.toMatch(suspectPattern);
+        expect(suggestion.length).toBeGreaterThan(8);
+      }
+    }
+  });
+
   it("maps record tabs to the correct creative capability", () => {
     expect(ADMIN_RECORD_CAPABILITY_BY_TAB["text-records"]).toBe("text");
     expect(ADMIN_RECORD_CAPABILITY_BY_TAB["image-records"]).toBe("image");
@@ -44,5 +62,11 @@ describe("admin presentation metadata", () => {
 
   it("keeps admin search toolbars in normal document flow", () => {
     expect(adminStyles).not.toMatch(/\.shell-admin\s+\.admin-toolbar\s*\{[^}]*position:\s*sticky/s);
+  });
+
+  it("does not use purple as the final video/admin progress accent", () => {
+    const finalLayer = adminStyles.split("Creative Workshop visual system v4").pop() || "";
+    expect(finalLayer).not.toMatch(/#(?:7c3aed|8b5cf6|b78cff|a7a5ff)/i);
+    expect(finalLayer).not.toMatch(/--studio-violet/);
   });
 });

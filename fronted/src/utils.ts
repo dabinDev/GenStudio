@@ -28,7 +28,7 @@ export function filterReferenceImageFiles(files: ArrayLike<File>): File[] {
 export type ThemeMode = "dark" | "light";
 
 export function normalizeThemeMode(value: unknown): ThemeMode {
-  return value === "light" ? "light" : "dark";
+  return value === "dark" ? "dark" : "light";
 }
 
 export function toggleThemeMode(value: ThemeMode): ThemeMode {

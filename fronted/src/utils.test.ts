@@ -115,11 +115,11 @@ describe("media preview helpers", () => {
 });
 
 describe("theme helpers", () => {
-  it("normalizes unknown theme values to dark mode", () => {
+  it("normalizes unknown theme values to light mode by default", () => {
     expect(normalizeThemeMode("light")).toBe("light");
     expect(normalizeThemeMode("dark")).toBe("dark");
-    expect(normalizeThemeMode("system")).toBe("dark");
-    expect(normalizeThemeMode(null)).toBe("dark");
+    expect(normalizeThemeMode("system")).toBe("light");
+    expect(normalizeThemeMode(null)).toBe("light");
   });
 
   it("toggles between day and night modes", () => {

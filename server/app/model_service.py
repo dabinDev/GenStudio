@@ -13,7 +13,7 @@ from app.catalog_service import find_catalog_model_by_name, get_catalog_model_by
 from app.db_models import ApiKey, CallLog, CatalogModel, CatalogModelParameter, ModelGroup, SubModel, User
 from app.proxy_utils import filter_model_ids_for_capability, parse_model_ids
 from app.schemas import ApiKeyOut, CallLogOut, ModelCreate, ModelOut, ModelUpdate, SubModelOut, SyncModelsResult
-from app.security import decrypt_secret, encrypt_secret
+from app.security import SecretDecryptionError, decrypt_secret, encrypt_secret
 
 
 MODEL_UNAVAILABLE_MESSAGE = "模型不存在或未开通，请检查模型配置。"
@@ -516,7 +516,14 @@ def get_sub_model_for_user(db: Session, user: User | None, sub_model_id: str) ->
         message = MODEL_UNAVAILABLE_MESSAGE if user else "请先登录。"
         raise HTTPException(status_code=404 if user else 401, detail={"message": message})
     api_key = sub_model.api_key
-    return sub_model.model_group, sub_model, api_key, decrypt_secret(api_key.api_key_ciphertext)
+    try:
+        decrypted_api_key = decrypt_secret(api_key.api_key_ciphertext)
+    except SecretDecryptionError:
+        raise HTTPException(
+            status_code=503,
+            detail={"message": "模型密钥无法解密，请管理员重新保存或重新配置该模型。"},
+        ) from None
+    return sub_model.model_group, sub_model, api_key, decrypted_api_key
 
 
 def find_prompt_optimizer_sub_model(

@@ -111,6 +111,37 @@ The app includes an in-process limiter for login, registration, model list/test,
 
 The current backend persists submitted video task messages in conversations and stores failed query records with retry enabled. For high traffic production, move video creation/query to a queue and worker model so jobs survive deploys and client disconnects.
 
+## Production Snapshot
+
+2026-06-10, Asia/Shanghai: production at `https://studio.cylonai.cn` was replaced with the cleaned local `genstudio` database at the user's request, without retaining a temporary backup artifact. Local and production creative history was cleared while account and model configuration was retained.
+
+Cleared record tables:
+
+- `conversations`
+- `conversation_messages`
+- `generated_assets`
+- `call_logs`
+- `admin_operation_logs`
+
+Verified production counts after import:
+
+- `users`: 2
+- `models`: 2
+- `sub_models`: 15
+- `conversations`: 0
+- `conversation_messages`: 0
+- `generated_assets`: 0
+- `call_logs`: 0
+- `admin_operation_logs`: 0
+- `/opt/genstudio/generated_assets`: 0 files
+
+Deployment verification:
+
+- `genstudio-api` rebuilt and restarted on the Guangzhou host.
+- Nginx was reloaded.
+- `https://studio.cylonai.cn/api/health` returned `{"status":"ok","database":"ok","storage":"not_configured"}`.
+- Local verification before deployment: frontend tests passed, backend tests passed, and the frontend production build succeeded.
+
 ## Rollback
 
 Keep the previous backend image and frontend `dist` artifact. Roll back application code first. Roll back database only from a tested backup when a migration itself is the fault; otherwise prefer a forward fix.

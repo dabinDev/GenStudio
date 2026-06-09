@@ -548,6 +548,7 @@ const mediaPreviewState = reactive({
 
 const composerUiState = reactive({
   popover: null as ComposerPopover,
+  collapsed: false,
 });
 
 const modelSelectState = reactive({
@@ -772,6 +773,27 @@ const videoControlSummary = computed(() =>
   }),
 );
 
+const composerSummary = computed(() => {
+  const prompt =
+    view.value === "text" ? textState.prompt : view.value === "images" ? imageState.prompt : view.value === "videos" ? videoState.prompt : "";
+  const promptSummary = shortText(prompt.trim() || "点击展开输入提示词", 96);
+  const refs =
+    view.value === "images"
+      ? imageState.references.length
+      : view.value === "videos"
+        ? videoState.unifiedImages.length +
+          videoState.seedanceReferences.length +
+          (videoState.seedanceFirst ? 1 : 0) +
+          (videoState.seedanceLast ? 1 : 0)
+        : 0;
+  const controls = view.value === "images" ? imageControlSummary.value : view.value === "videos" ? videoControlSummary.value : "文案创作";
+  return {
+    prompt: promptSummary,
+    refs,
+    controls,
+  };
+});
+
 const userAccountLabel = computed(() => {
   if (!auth.state.user) return auth.state.loading ? "登录状态读取中" : "可使用官网授权或本地账号登录";
   return auth.state.user.email || auth.state.user.phone || "已登录";
@@ -983,7 +1005,11 @@ function capabilityToView(capability: Capability): ViewName {
 
 function startNewConversation(nextView: ViewName = view.value) {
   stopActiveRequest();
+  stopTextPolling();
+  stopImagePolling();
+  stopVideoPolling();
   closeComposerPopover();
+  composerUiState.collapsed = false;
   conversationState.current = null;
   conversationState.streamingMessageId = "";
   conversationState.streamingContent = "";
@@ -1002,6 +1028,11 @@ function toggleComposerPopover(popover: Exclude<ComposerPopover, null>) {
 
 function closeComposerPopover() {
   composerUiState.popover = null;
+}
+
+function toggleComposerCollapsed() {
+  composerUiState.collapsed = !composerUiState.collapsed;
+  closeComposerPopover();
 }
 
 function modelSelectKey(kind: "row" | "draft", id = ""): string {
@@ -1174,6 +1205,7 @@ async function toggleHistoryDrawer() {
   if (!requireLoginForAction(currentReturnView())) return;
   if (!conversationState.listOpen) {
     await refreshConversations();
+    composerUiState.collapsed = true;
   }
   conversationState.listOpen = !conversationState.listOpen;
 }
@@ -4187,7 +4219,10 @@ async function removeUnavailableModels() {
         </div>
       </div>
 
-      <section v-if="view !== 'auth' && view !== 'auth-error' && view !== 'settings' && view !== 'profile' && view !== 'admin'" class="studio-panel">
+      <section
+        v-if="view !== 'auth' && view !== 'auth-error' && view !== 'settings' && view !== 'profile' && view !== 'admin'"
+        :class="['studio-panel', composerUiState.collapsed ? 'studio-panel-composer-collapsed' : 'studio-panel-composer-expanded']"
+      >
         <div class="studio-canvas">
           <aside v-if="conversationState.listOpen" class="history-drawer">
             <div class="history-drawer-head">
@@ -4296,7 +4331,32 @@ async function removeUnavailableModels() {
           </div>
         </div>
 
-        <div class="composer-card">
+        <div :class="['composer-card', composerUiState.collapsed ? 'composer-card-collapsed' : 'composer-card-expanded']">
+          <div class="composer-handle-row">
+            <button
+              class="composer-collapse-toggle"
+              type="button"
+              :aria-expanded="!composerUiState.collapsed"
+              @click="toggleComposerCollapsed"
+            >
+              <span class="composer-collapse-icon">{{ composerUiState.collapsed ? "⌃" : "⌄" }}</span>
+              <span>{{ composerUiState.collapsed ? "展开输入" : "收起输入" }}</span>
+            </button>
+          </div>
+
+          <button
+            v-if="composerUiState.collapsed"
+            class="composer-compact-bar"
+            type="button"
+            @click="toggleComposerCollapsed"
+          >
+            <span class="composer-compact-kind">{{ activeCapability ? CAPABILITY_LABELS[activeCapability] : "创作" }}</span>
+            <strong>{{ composerSummary.prompt }}</strong>
+            <span class="composer-compact-meta">{{ composerSummary.controls }}</span>
+            <span v-if="composerSummary.refs" class="composer-compact-meta">{{ composerSummary.refs }} 张参考图</span>
+          </button>
+
+          <template v-else>
           <div class="composer-topline">
             <button class="gameplay-btn">玩法说明</button>
             <div class="composer-status-stack">
@@ -4355,8 +4415,8 @@ async function removeUnavailableModels() {
               <strong>松开添加参考图</strong>
               <span>PNG / JPG / WebP</span>
             </div>
-            <div class="composer-attach-row">
-              <label class="button-secondary composer-attach-button">
+            <div class="composer-attach-row media-composer-grid">
+              <label class="button-secondary composer-attach-button media-composer-upload">
                 {{ imageState.uploading ? "上传中" : "+ 参考图" }}
                 <input hidden type="file" accept="image/png,image/jpeg,image/jpg,image/webp" multiple @change="handleImageUpload" />
               </label>
@@ -4474,8 +4534,10 @@ async function removeUnavailableModels() {
                   </section>
                 </div>
               </div>
-              <button class="composer-submit-button" :disabled="imageState.loading" @click="handleImageSubmit">生成</button>
-              <button class="button-secondary" :disabled="imageState.loading || !imageTaskIdFromConversation()" @click="() => handleImageQuery()">查询</button>
+              <div class="composer-action-group">
+                <button class="composer-submit-button" :disabled="imageState.loading" @click="handleImageSubmit">生成</button>
+                <button class="button-secondary composer-query-button" :disabled="imageState.loading || !imageTaskIdFromConversation()" @click="() => handleImageQuery()">查询</button>
+              </div>
             </div>
             <div v-if="imageState.error" class="inline-message inline-danger">{{ imageState.error }}</div>
           </div>
@@ -4492,20 +4554,20 @@ async function removeUnavailableModels() {
               <strong>{{ videoDropHint }}</strong>
               <span>PNG / JPG / WebP</span>
             </div>
-            <div class="composer-attach-row composer-video-attach-row">
-              <button v-if="supportsUnifiedAdapter(activeModel?.adapter) && videoState.mode === 'text'" class="button-secondary composer-attach-button" disabled>无需素材</button>
-              <label v-else-if="supportsUnifiedAdapter(activeModel?.adapter)" class="button-secondary composer-attach-button">
+            <div class="composer-attach-row composer-video-attach-row media-composer-grid">
+              <button v-if="supportsUnifiedAdapter(activeModel?.adapter) && videoState.mode === 'text'" class="button-secondary composer-attach-button media-composer-upload" disabled>无需素材</button>
+              <label v-else-if="supportsUnifiedAdapter(activeModel?.adapter)" class="button-secondary composer-attach-button media-composer-upload">
                 {{ videoState.uploading ? "上传中" : "+ 参考图" }}
                 <input hidden type="file" accept="image/png,image/jpeg,image/jpg,image/webp" :multiple="unifiedVideoAllowsMultiple" @change="(event) => uploadVideoFiles(event, 'unified')" />
               </label>
-              <label v-if="activeModel?.adapter === 'video-seedance' && videoState.mode === 'reference'" class="button-secondary composer-attach-button">
+              <label v-if="activeModel?.adapter === 'video-seedance' && videoState.mode === 'reference'" class="button-secondary composer-attach-button media-composer-upload">
                 + 参考图
                 <input hidden type="file" multiple accept="image/png,image/jpeg,image/jpg,image/webp" @change="(event) => uploadVideoFiles(event, 'seedanceRef')" />
               </label>
-              <label v-if="activeModel?.adapter === 'video-seedance' && videoState.mode === 'first-frame'" class="button-secondary composer-attach-button">
+              <label v-if="activeModel?.adapter === 'video-seedance' && videoState.mode === 'first-frame'" class="button-secondary composer-attach-button media-composer-upload">
                 首帧<input hidden type="file" accept="image/png,image/jpeg,image/jpg,image/webp" @change="(event) => uploadVideoFiles(event, 'first')" />
               </label>
-              <div v-if="activeModel?.adapter === 'video-seedance' && videoState.mode === 'start-end'" class="composer-frame-actions">
+              <div v-if="activeModel?.adapter === 'video-seedance' && videoState.mode === 'start-end'" class="composer-frame-actions media-composer-upload">
                 <label class="button-secondary composer-attach-button">首帧<input hidden type="file" accept="image/png,image/jpeg,image/jpg,image/webp" @change="(event) => uploadVideoFiles(event, 'first')" /></label>
                 <label class="button-secondary composer-attach-button">尾帧<input hidden type="file" accept="image/png,image/jpeg,image/jpg,image/webp" @change="(event) => uploadVideoFiles(event, 'last')" /></label>
               </div>
@@ -4644,19 +4706,20 @@ async function removeUnavailableModels() {
                   </section>
                 </div>
               </div>
-              <div class="composer-video-actions">
+              <div class="composer-video-actions composer-action-group">
                 <button class="composer-submit-button" :disabled="videoState.loading" @click="handleVideoCreate">创建</button>
-                <button class="button-secondary" :disabled="videoState.querying || !videoState.createResult?.taskId" @click="() => handleVideoQuery()">查询</button>
+                <button class="button-secondary composer-query-button" :disabled="videoState.querying || !videoState.createResult?.taskId" @click="() => handleVideoQuery()">查询</button>
               </div>
             </div>
             <div v-if="videoState.error" class="inline-message inline-danger">{{ videoState.error }}</div>
           </div>
+          </template>
         </div>
       </section>
 
       <section v-else-if="view === 'auth'" class="auth-page">
         <section class="auth-panel">
-          <div class="auth-copy">
+          <div class="auth-copy auth-value-panel">
             <p class="eyebrow">Account</p>
             <h2>登录 创意工坊</h2>
             <p class="muted">账号、密钥、模型、子模型和创作记录都会按用户隔离保存。官网创意工坊跳转过来的 code 登录仍然保留。</p>
@@ -4739,7 +4802,7 @@ async function removeUnavailableModels() {
 
       <section v-else-if="view === 'auth-error'" class="auth-page">
         <section class="auth-panel auth-error-panel">
-          <div class="auth-copy">
+          <div class="auth-copy auth-value-panel">
             <div>
               <p class="eyebrow">SSO</p>
               <h2>Authorization failed</h2>
@@ -4985,7 +5048,7 @@ async function removeUnavailableModels() {
                   </article>
                 </div>
 
-                <div class="admin-ops-grid">
+                <div class="admin-ops-grid admin-console-dashboard">
                   <section class="admin-subpanel admin-chart-card admin-wide-panel">
                     <div class="admin-subpanel-head">
                       <h4>调用趋势</h4>
@@ -5166,7 +5229,7 @@ async function removeUnavailableModels() {
                   <article><span>提示优化</span><strong>{{ formatAdminNumber(adminState.models.filter((model) => model.promptOptimizeEnabled !== false).length) }}</strong><small>AI 图标可用</small></article>
                 </div>
 
-                <div class="admin-toolbar">
+                <div class="admin-toolbar admin-command-panel">
                   <div class="settings-filter-tabs" role="tablist" aria-label="后台模型分组">
                     <button
                       v-for="tab in adminCapabilityTabs"
@@ -5189,7 +5252,7 @@ async function removeUnavailableModels() {
                   <button class="button-secondary" @click="loadAdminModels">筛选</button>
                 </div>
 
-                <div class="admin-bulk-bar">
+                <div class="admin-bulk-bar admin-command-panel admin-command-panel-secondary">
                   <label class="admin-check">
                     <input :checked="adminAllVisibleModelsSelected" type="checkbox" @change="toggleAdminSelectAllModels" />
                     选择当前列表
@@ -5201,7 +5264,7 @@ async function removeUnavailableModels() {
                   <button class="button-secondary" :disabled="!adminSelectedModels.length || adminState.saving === 'bulk-prompt'" @click="bulkSetAdminPromptOptimize(false)">批量禁用 AI 文案</button>
                 </div>
 
-                <div class="admin-data-table admin-model-table">
+                <div class="admin-data-table admin-model-table admin-list-shell">
                   <div class="admin-data-row admin-data-head">
                     <span>选择</span><span>模型</span><span>能力</span><span>公开状态</span><span>主模型</span><span>提示优化</span><span>操作</span>
                   </div>
@@ -5391,7 +5454,7 @@ async function removeUnavailableModels() {
                   <article><span>禁用/删除</span><strong>{{ formatAdminNumber(adminState.users.filter((user) => user.status !== "active").length) }}</strong><small>需复核账号</small></article>
                 </div>
 
-                <div class="admin-toolbar">
+                <div class="admin-toolbar admin-command-panel">
                   <label class="settings-search-box admin-search"><span>搜索</span><input v-model="adminState.userSearch" placeholder="邮箱、昵称、手机号、ID" @keyup.enter="loadAdminUsers" /></label>
                   <select v-model="adminState.userRoleFilter">
                     <option value="all">全部角色</option>
@@ -5403,7 +5466,7 @@ async function removeUnavailableModels() {
                 </div>
 
                 <div class="admin-users-layout">
-                  <div class="admin-data-table admin-user-table">
+                  <div class="admin-data-table admin-user-table admin-list-shell">
                     <div class="admin-data-row admin-data-head"><span>用户</span><span>联系方式</span><span>状态</span><span>最近活跃</span><span>操作</span></div>
                     <article v-for="user in adminFilteredUsers" :key="user.id" class="admin-data-row admin-user-row">
                     <div class="admin-user-cell">
@@ -5486,7 +5549,7 @@ async function removeUnavailableModels() {
                   <article><span>处理中</span><strong>{{ formatAdminNumber(adminRecordList(adminState.activeTab).filter((record) => record.status === "processing").length) }}</strong><small>长任务追踪</small></article>
                 </div>
 
-                <div class="admin-toolbar admin-record-toolbar">
+                <div class="admin-toolbar admin-record-toolbar admin-command-panel">
                   <div class="settings-filter-tabs" role="tablist" aria-label="调用记录类型">
                     <button
                       v-for="tab in adminRecordCapabilityTabs"
@@ -5571,7 +5634,7 @@ async function removeUnavailableModels() {
                   </button>
                 </div>
 
-                <div :class="['admin-record-list', adminState.activeTab === 'image-records' && adminState.recordWaterfall ? 'admin-record-waterfall' : '']">
+                <div :class="['admin-record-list', 'admin-list-shell', adminState.activeTab === 'image-records' && adminState.recordWaterfall ? 'admin-record-waterfall' : '']">
                   <article
                     v-for="record in adminRecordList(adminState.activeTab)"
                     :key="record.id"
@@ -5595,19 +5658,19 @@ async function removeUnavailableModels() {
                     <div v-if="record.capability === 'text'" class="admin-record-qa">
                       <section>
                         <span>提问</span>
-                        <p>{{ adminRecordPrompt(record) }}</p>
+                        <p class="admin-record-preview-clamp">{{ adminRecordPrompt(record) }}</p>
                       </section>
                       <section>
                         <span>回答</span>
                         <div v-if="adminRecordIsMarkdownCapable(record)" class="markdown-preview admin-markdown-preview" v-html="adminRecordMarkdownHtml(record)"></div>
-                        <p v-else>{{ adminRecordResponse(record) }}</p>
+                        <p v-else class="admin-record-preview-clamp">{{ adminRecordResponse(record) }}</p>
                       </section>
                     </div>
 
                     <div v-else class="admin-record-media-layout">
                       <section class="admin-record-request">
                         <span>请求</span>
-                        <p>{{ adminRecordPrompt(record) }}</p>
+                        <p class="admin-record-preview-clamp">{{ adminRecordPrompt(record) }}</p>
                         <small v-if="record.taskId">任务 ID: {{ record.taskId }}</small>
                         <small>参数：{{ adminRecordParam(record, ['size']) }} / {{ adminRecordParam(record, ['aspect_ratio', 'ratio']) }} / 参考图 {{ adminRecordReferenceCount(record) }}</small>
                       </section>
@@ -5621,7 +5684,7 @@ async function removeUnavailableModels() {
                             <span class="admin-record-asset-fallback">资源加载失败<br />打开详情查看原链接</span>
                           </a>
                         </div>
-                        <p v-else>{{ adminRecordResponse(record) }}</p>
+                        <p v-else class="admin-record-preview-clamp">{{ adminRecordResponse(record) }}</p>
                       </section>
                     </div>
 
@@ -5702,7 +5765,7 @@ async function removeUnavailableModels() {
                   <article><span>高风险操作</span><strong>{{ formatAdminNumber(adminState.auditLogs.filter((log) => log.riskLevel === "high").length) }}</strong><small>删除、禁用、取消公用等</small></article>
                 </div>
 
-                <div class="admin-toolbar">
+                <div class="admin-toolbar admin-command-panel">
                   <label class="settings-search-box admin-search"><span>动作</span><input v-model="adminState.auditAction" placeholder="publish_model" @keyup.enter="loadAdminAuditLogs" /></label>
                   <label class="settings-search-box admin-search"><span>管理员 ID</span><input v-model="adminState.auditAdminUserId" placeholder="可选" @keyup.enter="loadAdminAuditLogs" /></label>
                   <select v-model="adminState.auditTargetType" @change="loadAdminAuditLogs">
@@ -5722,7 +5785,7 @@ async function removeUnavailableModels() {
                   <button class="button-secondary" @click="exportAdminAuditLogs">导出审计</button>
                 </div>
 
-                <div class="admin-data-table admin-audit-table">
+                <div class="admin-data-table admin-audit-table admin-list-shell">
                   <div class="admin-data-row admin-data-head"><span>时间</span><span>动作</span><span>目标</span><span>风险</span><span>状态</span><span>摘要</span></div>
                   <div v-for="log in adminState.auditLogs" :key="log.id" class="admin-data-row">
                     <span>{{ formatConversationTime(log.createdAt) }}</span>

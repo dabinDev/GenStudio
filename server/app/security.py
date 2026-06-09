@@ -6,12 +6,17 @@ import hmac
 import secrets
 
 from cryptography.fernet import Fernet
+from cryptography.fernet import InvalidToken
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError, VerificationError
 
 from app.config import get_settings
 
 _password_hasher = PasswordHasher()
+
+
+class SecretDecryptionError(Exception):
+    """Raised when an encrypted secret cannot be decrypted with the configured key."""
 
 
 def create_session_token() -> str:
@@ -49,4 +54,7 @@ def encrypt_secret(value: str) -> str:
 
 
 def decrypt_secret(value: str) -> str:
-    return _fernet().decrypt(value.encode("utf-8")).decode("utf-8")
+    try:
+        return _fernet().decrypt(value.encode("utf-8")).decode("utf-8")
+    except InvalidToken as exc:
+        raise SecretDecryptionError("secret cannot be decrypted") from exc

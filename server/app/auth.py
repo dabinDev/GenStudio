@@ -5,6 +5,7 @@ from typing import Any
 
 import httpx
 from fastapi import Depends, HTTPException, Request, Response, status
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -62,14 +63,38 @@ def upsert_user(
     nickname: str = "",
     avatar_url: str = "",
 ) -> User:
-    user = db.query(User).filter(User.external_user_id == external_user_id).one_or_none()
+    clean_external_user_id = (external_user_id or "").strip()
+    clean_email = (email or "").strip().lower()
+    clean_phone = (phone or "").strip()
+    clean_nickname = (nickname or "").strip()
+    clean_avatar_url = (avatar_url or "").strip()
+
+    user = db.query(User).filter(User.external_user_id == clean_external_user_id).one_or_none()
+    if not user and clean_email:
+        user = (
+            db.query(User)
+            .filter(func.lower(func.trim(User.email)) == clean_email)
+            .order_by(User.created_at.asc())
+            .first()
+        )
+    if not user and clean_phone:
+        user = (
+            db.query(User)
+            .filter(func.trim(User.phone) == clean_phone)
+            .order_by(User.created_at.asc())
+            .first()
+        )
     if not user:
-        user = User(external_user_id=external_user_id)
+        user = User(external_user_id=clean_external_user_id)
         db.add(user)
-    user.email = email or user.email
-    user.phone = phone or user.phone
-    user.nickname = nickname or user.nickname or external_user_id
-    user.avatar_url = avatar_url or user.avatar_url
+    elif clean_external_user_id and user.external_user_id != clean_external_user_id:
+        owner = db.query(User).filter(User.external_user_id == clean_external_user_id).one_or_none()
+        if not owner or owner.id == user.id:
+            user.external_user_id = clean_external_user_id
+    user.email = clean_email or user.email
+    user.phone = clean_phone or user.phone
+    user.nickname = clean_nickname or user.nickname or clean_external_user_id
+    user.avatar_url = clean_avatar_url or user.avatar_url
     user.status = "active"
     return user
 

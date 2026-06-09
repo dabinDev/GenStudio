@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+from datetime import timedelta
 
 from fastapi.testclient import TestClient
 import httpx
@@ -20,9 +21,24 @@ os.environ["GENSTUDIO_SECRET_KEY"] = "test-secret"
 
 from app.database import Base, SessionLocal, engine  # noqa: E402
 from app.config import Settings  # noqa: E402
+from app.db_models import (  # noqa: E402
+    AdminOperationLog,
+    ApiKey,
+    CallLog,
+    Conversation,
+    ConversationMessage,
+    GeneratedAsset,
+    ModelGroup,
+    PromptTemplate,
+    SessionRecord,
+    User,
+    UserCredential,
+    utcnow,
+)
 import app.main as main_module  # noqa: E402
 from app.main import app  # noqa: E402
 from app.proxy_utils import build_test_body, filter_model_ids_for_capability  # noqa: E402
+from app.user_maintenance import merge_duplicate_users_by_identity  # noqa: E402
 
 
 def setup_function() -> None:
@@ -50,6 +66,153 @@ def test_dev_login_creates_session_and_me_returns_user() -> None:
     me = client.get("/api/auth/me")
     assert me.status_code == 200
     assert me.json()["user"]["email"] == "u@example.com"
+
+
+def test_dev_login_reuses_existing_email_user_when_external_id_changes() -> None:
+    client = TestClient(app)
+
+    first = client.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": "provider-user-old", "email": "Same.User@Example.com", "nickname": "First Name"},
+    )
+    second = client.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": "provider-user-new", "email": "same.user@example.com", "nickname": "Second Name"},
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json()["user"]["id"] == first.json()["user"]["id"]
+    assert second.json()["user"]["externalUserId"] == "provider-user-new"
+    assert second.json()["user"]["email"] == "same.user@example.com"
+    with SessionLocal() as db:
+        user_count = db.execute(text("select count(*) from users where lower(email) = 'same.user@example.com'")).scalar_one()
+    assert user_count == 1
+
+
+def test_dev_login_reuses_existing_phone_user_when_external_id_changes_without_email() -> None:
+    client = TestClient(app)
+
+    first = client.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": "phone-user-old", "email": "", "phone": " 18800001111 ", "nickname": "Phone User"},
+    )
+    second = client.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": "phone-user-new", "email": "", "phone": "18800001111", "nickname": "Phone User"},
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json()["user"]["id"] == first.json()["user"]["id"]
+    assert second.json()["user"]["externalUserId"] == "phone-user-new"
+    with SessionLocal() as db:
+        user_count = db.execute(text("select count(*) from users where phone = '18800001111'")).scalar_one()
+    assert user_count == 1
+
+
+def test_dev_login_reuses_local_account_with_same_email() -> None:
+    client = TestClient(app)
+    registered = client.post(
+        "/api/auth/register",
+        json={"email": "linked@example.com", "password": "StrongPass123!", "nickname": "Linked Local"},
+    )
+    linked = client.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": "official-linked", "email": "LINKED@example.com", "nickname": "Linked Official"},
+    )
+
+    assert registered.status_code == 200
+    assert linked.status_code == 200
+    assert linked.json()["user"]["id"] == registered.json()["user"]["id"]
+    assert linked.json()["user"]["externalUserId"] == "official-linked"
+    with SessionLocal() as db:
+        user_count = db.execute(text("select count(*) from users where email = 'linked@example.com'")).scalar_one()
+        credential_count = db.execute(text("select count(*) from user_credentials where identifier = 'linked@example.com'")).scalar_one()
+    assert user_count == 1
+    assert credential_count == 1
+
+
+def test_merge_duplicate_users_by_identity_reassigns_related_records() -> None:
+    with SessionLocal() as db:
+        target = User(external_user_id="local-primary", email="DUP@example.com", nickname="Primary", status="active")
+        duplicate = User(external_user_id="oauth-duplicate", email="dup@example.com", nickname="Duplicate", status="active")
+        db.add_all([target, duplicate])
+        db.flush()
+        credential = UserCredential(
+            user_id=target.id,
+            provider="local",
+            identifier="dup@example.com",
+            email="dup@example.com",
+            password_hash="hash",
+        )
+        session = SessionRecord(
+            user_id=duplicate.id,
+            token_hash="token-hash",
+            expires_at=utcnow() + timedelta(days=1),
+        )
+        api_key = ApiKey(
+            user_id=duplicate.id,
+            name="Key",
+            base_url="https://token.example.com",
+            api_key_ciphertext="cipher",
+        )
+        db.add_all([credential, session, api_key])
+        db.flush()
+        model = ModelGroup(
+            user_id=duplicate.id,
+            api_key_id=api_key.id,
+            name="Model",
+            capability="text",
+            adapter="text-chat",
+        )
+        conversation = Conversation(user_id=duplicate.id, title="Hello", capability="text")
+        call_log = CallLog(
+            user_id=duplicate.id,
+            capability="text",
+            endpoint="/api/proxy/text",
+            status="success",
+        )
+        admin_log = AdminOperationLog(admin_user_id=duplicate.id, action="update_user", target_type="user")
+        template = PromptTemplate(capability="text", updated_by=duplicate.id)
+        db.add_all([model, conversation, call_log, admin_log, template])
+        db.flush()
+        message = ConversationMessage(
+            conversation_id=conversation.id,
+            user_id=duplicate.id,
+            role="assistant",
+            capability="text",
+            content="ok",
+        )
+        db.add(message)
+        db.flush()
+        asset = GeneratedAsset(
+            user_id=duplicate.id,
+            conversation_id=conversation.id,
+            message_id=message.id,
+            capability="image",
+            asset_type="image",
+            url="/api/assets/uploads/test.png",
+        )
+        db.add(asset)
+        db.commit()
+
+        summary = merge_duplicate_users_by_identity(db, apply=True)
+        db.commit()
+        db.expire_all()
+
+        assert summary["mergedUsers"] == 1
+        assert db.get(User, duplicate.id) is None
+        assert db.get(User, target.id).email == "dup@example.com"
+        assert db.get(SessionRecord, session.id).user_id == target.id
+        assert db.get(ApiKey, api_key.id).user_id == target.id
+        assert db.get(ModelGroup, model.id).user_id == target.id
+        assert db.get(Conversation, conversation.id).user_id == target.id
+        assert db.get(ConversationMessage, message.id).user_id == target.id
+        assert db.get(GeneratedAsset, asset.id).user_id == target.id
+        assert db.get(CallLog, call_log.id).user_id == target.id
+        assert db.get(AdminOperationLog, admin_log.id).admin_user_id == target.id
+        assert db.get(PromptTemplate, template.id).updated_by == target.id
 
 
 def test_register_creates_local_user_and_stores_argon_password_hash() -> None:
@@ -486,12 +649,34 @@ def test_auth_me_marks_default_admin_email() -> None:
 def test_auth_me_marks_configured_admin_identifier(monkeypatch) -> None:
     from app.auth import is_admin_user
     from app.config import Settings
-    from app.db_models import User
 
     settings = Settings(admin_emails=[], admin_identifiers=["cylonai"])
     user = User(external_user_id="local-cylonai", email="", phone="", nickname="cylonai", status="active")
 
     assert is_admin_user(user, settings) is True
+
+
+def test_env_file_loader_sets_missing_values_without_overriding(tmp_path, monkeypatch) -> None:
+    import app.config as config_module
+
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "GENSTUDIO_SECRET_KEY=from-env-file",
+                "GENSTUDIO_FRONTEND_URL=http://from-env-file.local",
+                "EXISTING_VALUE=from-env-file",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("GENSTUDIO_SECRET_KEY", raising=False)
+    monkeypatch.setenv("EXISTING_VALUE", "already-set")
+
+    config_module._load_env_file(env_file)
+
+    assert os.environ["GENSTUDIO_SECRET_KEY"] == "from-env-file"
+    assert os.environ["EXISTING_VALUE"] == "already-set"
 
 
 def test_sub_model_proxy_requires_login() -> None:
@@ -500,6 +685,45 @@ def test_sub_model_proxy_requires_login() -> None:
     response = client.post("/api/proxy/text", json={"subModelId": "sub_missing", "requestBody": {}})
 
     assert response.status_code == 401
+
+
+def test_sub_model_proxy_returns_clear_error_when_api_key_cannot_decrypt() -> None:
+    client = TestClient(app)
+    client.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": "broken-key-admin", "email": "cage_ben@sina.com", "nickname": "Admin"},
+    )
+    created = client.post(
+        "/api/models",
+        headers=csrf_headers(client),
+        json={
+            "name": "Broken Key Text",
+            "vendor": "Test",
+            "capability": "text",
+            "adapter": "text-chat",
+            "baseUrl": "https://token.example.com",
+            "apiKey": "sk-test",
+            "primaryModelName": "gpt-5.5",
+        },
+    )
+    assert created.status_code == 200
+    sub_model_id = created.json()["model"]["primarySubModelId"]
+
+    with SessionLocal() as db:
+        db.execute(text("update api_keys set api_key_ciphertext = 'not-a-valid-fernet-token'"))
+        db.commit()
+
+    response = client.post(
+        "/api/proxy/text",
+        headers=csrf_headers(client),
+        json={
+            "subModelId": sub_model_id,
+            "requestBody": {"messages": [{"role": "user", "content": "hello"}]},
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["message"] == "模型密钥无法解密，请管理员重新保存或重新配置该模型。"
 
 
 def test_proxy_test_surfaces_upstream_error_message(monkeypatch) -> None:

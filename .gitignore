@@ -17,6 +17,9 @@ output
 generated_assets
 uploaded_assets
 server/uvicorn.*.log
+server/uvicorn*.log
+fronted/vite*.log
+tmp/
 test-results
 playwright-report
 server/.venv

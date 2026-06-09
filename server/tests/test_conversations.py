@@ -1308,6 +1308,43 @@ def test_image_proxy_uses_edit_endpoint_for_reference_images(monkeypatch) -> Non
     assert response.json()["images"][0]["src"] == "https://cdn.example.com/edited.png"
 
 
+def test_image_proxy_treats_image_openai_images_field_as_edit_references(monkeypatch) -> None:
+    upload_name = "reference-images-field.jpg"
+    (main_module.LOCAL_UPLOAD_DIR / upload_name).write_bytes(b"fake-jpeg")
+
+    async def fail_json_forward(method, url, api_key, body=None):
+        raise AssertionError("image-openai reference uploads should use image edits")
+
+    async def fake_forward_image_edit(url, api_key, *, data=None, files=None):
+        assert url == "https://token.example.com/v1/images/edits"
+        assert data["prompt"] == "restore same person"
+        assert data["model"] == "gpt-image-2"
+        assert files == [("image", ("reference-images-field.jpg", b"fake-jpeg", "image/jpeg"))]
+        return httpx.Response(200, json={"data": [{"url": "https://cdn.example.com/edited.png"}]}), {
+            "data": [{"url": "https://cdn.example.com/edited.png"}]
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fail_json_forward)
+    monkeypatch.setattr(main_module, "forward_multipart", fake_forward_image_edit)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/proxy/image",
+        json={
+            "config": {"baseUrl": "https://token.example.com", "apiKey": "sk-test"},
+            "adapter": "image-openai",
+            "model": "gpt-image-2",
+            "requestBody": {
+                "prompt": "restore same person",
+                "images": [f"/api/assets/uploads/{upload_name}"],
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["images"][0]["src"] == "https://cdn.example.com/edited.png"
+
+
 def test_image_proxy_falls_back_to_generation_when_edit_endpoint_returns_html_parse_error(monkeypatch) -> None:
     upload_name = "reference-fallback.jpg"
     (main_module.LOCAL_UPLOAD_DIR / upload_name).write_bytes(b"fake-jpeg")

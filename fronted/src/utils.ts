@@ -13,6 +13,18 @@ export function createLocalId(prefix: string): string {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
+const REFERENCE_IMAGE_EXTENSIONS = /\.(png|jpe?g|webp)$/i;
+const REFERENCE_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp"]);
+
+export function filterReferenceImageFiles(files: ArrayLike<File>): File[] {
+  return Array.from(files).filter((file) => {
+    const contentType = (file.type || "").toLowerCase();
+    if (REFERENCE_IMAGE_TYPES.has(contentType)) return true;
+    if (!contentType && REFERENCE_IMAGE_EXTENSIONS.test(file.name)) return true;
+    return false;
+  });
+}
+
 export function safeJsonParse<T>(value: string | null, fallback: T): T {
   if (!value) return fallback;
   try {
@@ -426,7 +438,8 @@ export function buildImageGenerationRequestBody(
     response_format: "url",
   };
   if (supportsCatalogParameter(model, "image", "images") && input.references.length) {
-    body[catalogRequestKey(model, ["image", "images"], "image")] = input.references;
+    const referenceKey = model.adapter === "image-openai" ? "image" : catalogRequestKey(model, ["image", "images"], "image");
+    body[referenceKey] = input.references;
   }
   const quantity = Number(input.count) || 1;
   addCatalogField(body, model, "quantity", "n", quantity);

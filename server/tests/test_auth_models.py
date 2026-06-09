@@ -620,6 +620,13 @@ def test_model_ids_are_filtered_by_requested_capability() -> None:
     assert filter_model_ids_for_capability(ids, "video") == ["doubao-seedance-2-0-260128"]
 
 
+def test_generation_timeout_defaults_allow_long_image_and_video_jobs() -> None:
+    settings = Settings()
+
+    assert settings.request_timeout_seconds == 300
+    assert settings.long_request_handoff_seconds == 5
+
+
 def test_production_settings_reject_insecure_launch_defaults() -> None:
     settings = Settings(
         environment="production",

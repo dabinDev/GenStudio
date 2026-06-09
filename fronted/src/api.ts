@@ -21,10 +21,13 @@ const AUTH_CSRF_EXEMPT_ENDPOINTS = new Set(["/api/auth/login", "/api/auth/regist
 let csrfToken = "";
 
 interface ProxyErrorShape {
-  detail?: {
+  detail?:
+    | {
     message?: string;
     [key: string]: unknown;
-  };
+  }
+    | Array<Record<string, unknown>>
+    | string;
   error?: {
     message?: string;
   };
@@ -32,10 +35,10 @@ interface ProxyErrorShape {
 }
 
 export class ApiRequestError extends Error {
-  detail: ProxyErrorShape["detail"] | null;
+  detail: Extract<ProxyErrorShape["detail"], Record<string, unknown>> | null;
   status: number;
 
-  constructor(message: string, status: number, detail: ProxyErrorShape["detail"] | null = null) {
+  constructor(message: string, status: number, detail: Extract<ProxyErrorShape["detail"], Record<string, unknown>> | null = null) {
     super(message);
     this.name = "ApiRequestError";
     this.status = status;
@@ -43,18 +46,59 @@ export class ApiRequestError extends Error {
   }
 }
 
-async function parseErrorPayload(response: Response): Promise<{ message: string; detail: ProxyErrorShape["detail"] | null }> {
+function defaultErrorMessage(status: number): string {
+  if (status === 502) return "服务暂时不可用，请稍后重试。";
+  if (status === 503) return "服务正在维护或暂时不可用，请稍后重试。";
+  if (status === 504) return "请求超时，请稍后重试。";
+  return `请求失败，状态码 ${status}`;
+}
+
+function cleanValidationMessage(message: string): string {
+  return message.replace(/^value error,\s*/i, "").trim();
+}
+
+function extractErrorMessage(value: unknown): string {
+  if (!value) return "";
+  if (typeof value === "string") return cleanValidationMessage(value);
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const message = extractErrorMessage(item);
+      if (message) return message;
+    }
+    return "";
+  }
+  if (typeof value !== "object") return "";
+  const objectValue = value as Record<string, unknown>;
+  for (const key of ["message", "msg", "detail"]) {
+    const message = extractErrorMessage(objectValue[key]);
+    if (message) return message;
+  }
+  return "";
+}
+
+function normalizeErrorDetail(detail: ProxyErrorShape["detail"], message: string): Extract<ProxyErrorShape["detail"], Record<string, unknown>> | null {
+  if (!detail) return null;
+  if (Array.isArray(detail)) {
+    return { message, errors: detail };
+  }
+  if (typeof detail === "string") {
+    return { message: detail };
+  }
+  return detail;
+}
+
+async function parseErrorPayload(response: Response): Promise<{ message: string; detail: Extract<ProxyErrorShape["detail"], Record<string, unknown>> | null }> {
   try {
     const payload = (await response.json()) as ProxyErrorShape;
     const message = (
-      payload.detail?.message ||
+      extractErrorMessage(payload.detail) ||
       payload.error?.message ||
       payload.message ||
-      `请求失败，状态码 ${response.status}`
+      defaultErrorMessage(response.status)
     );
-    return { message, detail: payload.detail || null };
+    return { message, detail: normalizeErrorDetail(payload.detail, message) };
   } catch {
-    return { message: `请求失败，状态码 ${response.status}`, detail: null };
+    return { message: defaultErrorMessage(response.status), detail: null };
   }
 }
 

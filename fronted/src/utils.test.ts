@@ -57,6 +57,7 @@ import {
   videoModeParamValue,
   videoModeRequiredUploadCount,
   videoModeUploadLimit,
+  filterReferenceImageFiles,
 } from "./utils";
 import type { ConversationDefinition, ConversationMessage } from "./types";
 
@@ -70,6 +71,20 @@ const textModel: ModelDefinition = {
   description: "Test model",
   builtin: false,
 };
+
+describe("reference upload helpers", () => {
+  it("keeps only supported image files for reference uploads", () => {
+    const files = [
+      new File(["png"], "scene.png", { type: "image/png" }),
+      new File(["jpg"], "car.JPG", { type: "" }),
+      new File(["gif"], "motion.gif", { type: "image/gif" }),
+      new File(["pdf"], "brief.pdf", { type: "application/pdf" }),
+      new File(["webp"], "texture.webp", { type: "image/webp" }),
+    ];
+
+    expect(filterReferenceImageFiles(files).map((file) => file.name)).toEqual(["scene.png", "car.JPG", "texture.webp"]);
+  });
+});
 
 function setting(patch: Partial<ModelSetting>): ModelSetting {
   return {
@@ -894,6 +909,76 @@ describe("model selection helpers", () => {
     });
     expect(body).not.toHaveProperty("resolution");
     expect(body.size).not.toBe("2k");
+  });
+
+  it("sends image-openai reference uploads on the edit image field even when catalog calls it images", () => {
+    const imageModel: ModelDefinition = {
+      ...textModel,
+      id: "gpt-image-catalog-reference",
+      capability: "image",
+      adapter: "image-openai",
+      primarySubModelId: "sub-image",
+      subModels: [
+        {
+          id: "sub-image",
+          modelName: "gpt-image-2",
+          displayName: "GPT Image 2",
+          capability: "image",
+          adapter: "image-openai",
+          isPrimary: true,
+          status: "active",
+          catalog: {
+            id: "10029",
+            displayName: "GPT Image 2",
+            modelName: "gpt-image-2",
+            modelType: 2,
+            capability: "image",
+            icon: "",
+            description: "",
+            inputHint: "",
+            successRate: "",
+            source: "kkyi",
+            channelGroups: [],
+            parameters: [
+              {
+                id: "reference",
+                displayName: "Reference",
+                paramKey: "images",
+                description: "",
+                widgetType: 6,
+                isRequired: false,
+                defaultValue: "",
+                functionTag: "",
+                maxCount: 4,
+                sortOrder: 1,
+                options: [],
+              },
+            ],
+          },
+        },
+      ],
+      builtin: false,
+    };
+
+    const body = buildImageGenerationRequestBody(
+      imageModel,
+      {
+        references: ["/api/assets/uploads/person.jpg"],
+        count: "1",
+        size: "auto",
+        ratio: "1:1",
+        resolution: "2k",
+        quality: "auto",
+      },
+      "restore the same person",
+      {},
+    );
+
+    expect(body).toMatchObject({
+      prompt: "restore the same person",
+      image: ["/api/assets/uploads/person.jpg"],
+    });
+    expect(body).not.toHaveProperty("images");
   });
 
   it("keeps catalog video modes distinct and reads upload limits from the selected option", () => {

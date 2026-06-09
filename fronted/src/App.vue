@@ -81,6 +81,7 @@ import {
   conversationAssetsFromImageQueryResult,
   conversationAssetFromVideoQueryResult,
   createLocalId,
+  filterReferenceImageFiles,
   findPromptBeforeMessage,
   generatedAssetReferenceFileName,
   getPrimarySubModel,
@@ -151,6 +152,7 @@ import {
 type ViewName = "auth" | "auth-error" | "text" | "images" | "videos" | "settings" | "profile" | "admin";
 type SidebarFilter = Capability | "all";
 type VideoMode = VideoModeValue;
+type VideoUploadTarget = "unified" | "first" | "last" | "seedanceRef" | "startEnd";
 type DialogMode = "create" | "edit";
 type ComposerPopover = "image-settings" | "image-advanced" | "video-mode" | "video-settings" | "video-advanced" | null;
 
@@ -326,6 +328,12 @@ const videoState = reactive({
   createResult: null as VideoCreateResult | null,
   taskResult: null as VideoQueryResult | null,
 });
+
+const referenceDropState = reactive({
+  image: false,
+  video: false,
+});
+
 let textPollTimer: number | null = null;
 let textPollTaskId = "";
 let imagePollTimer: number | null = null;
@@ -727,6 +735,13 @@ const videoQuantityOptions = computed(() => catalogOptionItems(activeModel.value
 const unifiedVideoImageLimit = computed(() => videoModeUploadLimit(activeModel.value, videoState.mode));
 const unifiedVideoRequiredImageCount = computed(() => videoModeRequiredUploadCount(videoState.mode));
 const unifiedVideoAllowsMultiple = computed(() => unifiedVideoImageLimit.value > 1);
+const videoDropHint = computed(() => {
+  const target = currentVideoDropTarget();
+  if (target === "first") return "松开添加首帧";
+  if (target === "last") return "松开添加尾帧";
+  if (target === "startEnd") return "松开添加首尾帧";
+  return "松开添加参考图";
+});
 
 const imageControlSummary = computed(() =>
   imageGenerationSummary({
@@ -2827,24 +2842,103 @@ async function handleTextQuery(taskIdArg?: string, options: { fromPoll?: boolean
   }
 }
 
-async function handleImageUpload(event: Event) {
+function hasDraggedFiles(event: DragEvent): boolean {
+  return Array.from(event.dataTransfer?.types || []).includes("Files");
+}
+
+function dragLeftCurrentTarget(event: DragEvent): boolean {
+  const currentTarget = event.currentTarget;
+  const relatedTarget = event.relatedTarget;
+  if (!(currentTarget instanceof Node) || !(relatedTarget instanceof Node)) return true;
+  return !currentTarget.contains(relatedTarget);
+}
+
+function handleImageDragEnter(event: DragEvent) {
+  if (!hasDraggedFiles(event)) return;
+  referenceDropState.image = true;
+}
+
+function handleImageDragOver(event: DragEvent) {
+  if (!hasDraggedFiles(event)) return;
+  referenceDropState.image = true;
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+}
+
+function handleImageDragLeave(event: DragEvent) {
+  if (dragLeftCurrentTarget(event)) referenceDropState.image = false;
+}
+
+function handleVideoDragEnter(event: DragEvent) {
+  if (!hasDraggedFiles(event) || !currentVideoDropTarget()) return;
+  referenceDropState.video = true;
+}
+
+function handleVideoDragOver(event: DragEvent) {
+  if (!hasDraggedFiles(event) || !currentVideoDropTarget()) return;
+  referenceDropState.video = true;
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+}
+
+function handleVideoDragLeave(event: DragEvent) {
+  if (dragLeftCurrentTarget(event)) referenceDropState.video = false;
+}
+
+function filesFromUploadInput(event: Event): File[] {
   const input = event.target as HTMLInputElement;
+  return input.files ? filterReferenceImageFiles(input.files) : [];
+}
+
+function filesFromDropEvent(event: DragEvent): File[] {
+  return event.dataTransfer?.files ? filterReferenceImageFiles(event.dataTransfer.files) : [];
+}
+
+function notifyTrimmedReferenceUploads(total: number, accepted: number) {
+  if (total > accepted) {
+    showToast(`已按当前上限添加 ${accepted} 张参考图。`, "info");
+  }
+}
+
+async function uploadImageReferenceFiles(files: File[]) {
   const model = activeModel.value;
   const setting = activeSetting.value;
-  if (!model || !setting || !input.files?.length) return;
+  if (!model || !setting) return;
+  if (!files.length) {
+    imageState.error = "请拖入 PNG、JPG 或 WebP 图片。";
+    return;
+  }
+  const remainingSlots = Math.max(0, imageReferenceLimit.value - imageState.references.length);
+  if (!remainingSlots) {
+    imageState.error = `参考图最多 ${imageReferenceLimit.value} 张。`;
+    return;
+  }
+  const selectedFiles = files.slice(0, remainingSlots);
   imageState.uploading = true;
   imageState.error = "";
   try {
     const uploaded = await Promise.all(
-      Array.from(input.files).map((file) => uploadAsset(file, buildUploadConfig(model, setting))),
+      selectedFiles.map((file) => uploadAsset(file, buildUploadConfig(model, setting))),
     );
     imageState.references = [...imageState.references, ...uploaded].slice(0, imageReferenceLimit.value);
+    notifyTrimmedReferenceUploads(files.length, selectedFiles.length);
   } catch (error) {
     imageState.error = error instanceof Error ? error.message : "上传参考图失败。";
   } finally {
-    input.value = "";
     imageState.uploading = false;
   }
+}
+
+async function handleImageUpload(event: Event) {
+  const input = event.target as HTMLInputElement;
+  try {
+    await uploadImageReferenceFiles(filesFromUploadInput(event));
+  } finally {
+    input.value = "";
+  }
+}
+
+async function handleImageDrop(event: DragEvent) {
+  referenceDropState.image = false;
+  await uploadImageReferenceFiles(filesFromDropEvent(event));
 }
 
 async function handleImageSubmit() {
@@ -3040,30 +3134,111 @@ function supportsUnifiedAdapter(adapter?: Adapter): boolean {
   return adapter ? UNIFIED_ADAPTERS.includes(adapter) : false;
 }
 
-async function uploadVideoFiles(event: Event, target: "unified" | "first" | "last" | "seedanceRef") {
-  const input = event.target as HTMLInputElement;
+function currentVideoDropTarget(): VideoUploadTarget | null {
+  const model = activeModel.value;
+  if (!model) return null;
+  if (supportsUnifiedAdapter(model.adapter)) {
+    return videoState.mode === "text" ? null : "unified";
+  }
+  if (model.adapter !== "video-seedance") return null;
+  if (videoState.mode === "reference") return "seedanceRef";
+  if (videoState.mode === "first-frame") return "first";
+  if (videoState.mode === "start-end") return "startEnd";
+  return null;
+}
+
+function seedanceReferenceLimit(): number {
+  return videoModeUploadLimit(activeModel.value, "reference");
+}
+
+function assignStartEndFrames(uploaded: UploadedAsset[]) {
+  const queue = [...uploaded];
+  if (!videoState.seedanceFirst && queue.length) {
+    videoState.seedanceFirst = queue.shift() || null;
+  } else if (queue.length) {
+    videoState.seedanceFirst = queue.shift() || null;
+  }
+  if (!videoState.seedanceLast && queue.length) {
+    videoState.seedanceLast = queue.shift() || null;
+  } else if (queue.length) {
+    videoState.seedanceLast = queue.shift() || null;
+  }
+}
+
+async function uploadVideoReferenceFiles(files: File[], target: VideoUploadTarget) {
   const model = activeModel.value;
   const setting = activeSetting.value;
-  if (!model || !setting || !input.files?.length) return;
+  if (!model || !setting) return;
+  if (!files.length) {
+    videoState.error = "请拖入 PNG、JPG 或 WebP 图片。";
+    return;
+  }
+
+  let selectedFiles = files;
+  if (target === "unified") {
+    const remainingSlots = Math.max(0, unifiedVideoImageLimit.value - videoState.unifiedImages.length);
+    if (!remainingSlots) {
+      videoState.error = `参考图最多 ${unifiedVideoImageLimit.value} 张。`;
+      return;
+    }
+    selectedFiles = files.slice(0, remainingSlots);
+  }
+  if (target === "seedanceRef") {
+    const limit = seedanceReferenceLimit();
+    const remainingSlots = Math.max(0, limit - videoState.seedanceReferences.length);
+    if (!remainingSlots) {
+      videoState.error = `参考图最多 ${limit} 张。`;
+      return;
+    }
+    selectedFiles = files.slice(0, remainingSlots);
+  }
+  if (target === "first" || target === "last") {
+    selectedFiles = files.slice(0, 1);
+  }
+  if (target === "startEnd") {
+    selectedFiles = files.slice(0, 2);
+  }
 
   videoState.uploading = true;
   videoState.error = "";
   try {
     const uploaded = await Promise.all(
-      Array.from(input.files).map((file) => uploadAsset(file, buildUploadConfig(model, setting))),
+      selectedFiles.map((file) => uploadAsset(file, buildUploadConfig(model, setting))),
     );
     if (target === "unified") {
       videoState.unifiedImages = [...videoState.unifiedImages, ...uploaded].slice(0, unifiedVideoImageLimit.value);
     }
     if (target === "first") videoState.seedanceFirst = uploaded[0] || null;
     if (target === "last") videoState.seedanceLast = uploaded[0] || null;
-    if (target === "seedanceRef") videoState.seedanceReferences.push(...uploaded);
+    if (target === "seedanceRef") {
+      videoState.seedanceReferences = [...videoState.seedanceReferences, ...uploaded].slice(0, seedanceReferenceLimit());
+    }
+    if (target === "startEnd") assignStartEndFrames(uploaded);
+    notifyTrimmedReferenceUploads(files.length, selectedFiles.length);
   } catch (error) {
     videoState.error = error instanceof Error ? error.message : "素材上传失败。";
   } finally {
-    input.value = "";
     videoState.uploading = false;
   }
+}
+
+async function uploadVideoFiles(event: Event, target: VideoUploadTarget) {
+  const input = event.target as HTMLInputElement;
+  try {
+    await uploadVideoReferenceFiles(filesFromUploadInput(event), target);
+  } finally {
+    input.value = "";
+  }
+}
+
+async function handleVideoDrop(event: DragEvent) {
+  referenceDropState.video = false;
+  const target = currentVideoDropTarget();
+  if (!target) {
+    videoState.error = "当前视频模式不需要参考图。";
+    return;
+  }
+  await uploadVideoReferenceFiles(filesFromDropEvent(event), target);
 }
 
 function buildVideoRequestBody(model: ModelDefinition, modelName: string, finalPrompt: string, extra: Record<string, unknown>) {
@@ -4104,7 +4279,18 @@ async function batchDelete() {
             <div v-if="textState.error" class="inline-message inline-danger">{{ textState.error }}</div>
           </div>
 
-          <div v-if="view === 'images'" class="composer-surface">
+          <div
+            v-if="view === 'images'"
+            :class="['composer-surface', referenceDropState.image ? 'composer-surface-drop-active' : '']"
+            @dragenter.prevent="handleImageDragEnter"
+            @dragover.prevent="handleImageDragOver"
+            @dragleave="handleImageDragLeave"
+            @drop.prevent="handleImageDrop"
+          >
+            <div v-if="referenceDropState.image" class="composer-drop-hint">
+              <strong>松开添加参考图</strong>
+              <span>PNG / JPG / WebP</span>
+            </div>
             <div class="composer-attach-row">
               <label class="button-secondary composer-attach-button">
                 {{ imageState.uploading ? "上传中" : "+ 参考图" }}
@@ -4230,7 +4416,18 @@ async function batchDelete() {
             <div v-if="imageState.error" class="inline-message inline-danger">{{ imageState.error }}</div>
           </div>
 
-          <div v-if="view === 'videos'" class="composer-surface">
+          <div
+            v-if="view === 'videos'"
+            :class="['composer-surface', referenceDropState.video ? 'composer-surface-drop-active' : '']"
+            @dragenter.prevent="handleVideoDragEnter"
+            @dragover.prevent="handleVideoDragOver"
+            @dragleave="handleVideoDragLeave"
+            @drop.prevent="handleVideoDrop"
+          >
+            <div v-if="referenceDropState.video" class="composer-drop-hint">
+              <strong>{{ videoDropHint }}</strong>
+              <span>PNG / JPG / WebP</span>
+            </div>
             <div class="composer-attach-row composer-video-attach-row">
               <button v-if="supportsUnifiedAdapter(activeModel?.adapter) && videoState.mode === 'text'" class="button-secondary composer-attach-button" disabled>无需素材</button>
               <label v-else-if="supportsUnifiedAdapter(activeModel?.adapter)" class="button-secondary composer-attach-button">

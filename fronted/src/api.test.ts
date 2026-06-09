@@ -9,6 +9,7 @@ import {
   loginWithPassword,
   postApi,
   publishAdminModel,
+  registerAccount,
   setCsrfToken,
   shouldFallbackToLocalReference,
   uploadAsset,
@@ -132,6 +133,34 @@ describe("auth api helpers", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(fetchCsrfToken()).resolves.toBe("csrf-456");
+  });
+
+  it("shows FastAPI validation messages when registration is rejected", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          detail: [
+            {
+              type: "value_error",
+              loc: ["body", "password"],
+              msg: "Value error, 密码至少需要 8 位。",
+            },
+          ],
+        }),
+        { status: 422 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      registerAccount({
+        email: "new@example.com",
+        password: "123",
+      }),
+    ).rejects.toMatchObject({
+      message: "密码至少需要 8 位。",
+      status: 422,
+    });
   });
 
   it("refreshes csrf token and retries once when a session write request is rejected", async () => {

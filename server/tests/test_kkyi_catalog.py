@@ -672,7 +672,7 @@ def test_catalog_image_model_accepts_catalog_images_parameter(monkeypatch) -> No
         "prompt": "image test",
         "size": "auto",
         "quality": "auto",
-        "images": ["https://cdn.example.com/reference.png"],
+        "image": ["https://cdn.example.com/reference.png"],
         "response_format": "url",
     }
 
@@ -687,11 +687,15 @@ def test_catalog_image_model_expands_local_references_from_images_parameter(monk
     upload_path.write_bytes(b"\x89PNG\r\n\x1a\n")
     captured: dict[str, object] = {}
 
-    async def fake_forward_json(method, url, api_key, body=None):
-        captured.update({"method": method, "url": url, "body": body})
+    async def fail_forward_json(method, url, api_key, body=None):
+        raise AssertionError("local image-openai references should use image edits")
+
+    async def fake_forward_multipart(url, api_key, *, data=None, files=None):
+        captured.update({"url": url, "data": data, "files": files})
         return httpx.Response(200, json={"data": [{"url": "https://cdn.example.com/image.png"}]}), {"data": [{"url": "https://cdn.example.com/image.png"}]}
 
-    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    monkeypatch.setattr(main_module, "forward_json", fail_forward_json)
+    monkeypatch.setattr(main_module, "forward_multipart", fake_forward_multipart)
     client = TestClient(app)
     client.post("/api/auth/dev-login", json={"externalUserId": "official-1"})
     created = client.post(
@@ -725,9 +729,8 @@ def test_catalog_image_model_expands_local_references_from_images_parameter(monk
     )
 
     assert response.status_code == 200
-    body = captured["body"]
-    assert isinstance(body, dict)
-    assert str(body["images"][0]).startswith("data:image/png;base64,")
+    assert captured["url"] == "https://ai-api.kkidc.com/v1/images/edits"
+    assert captured["files"] == [("image", ("catalog-reference.png", b"\x89PNG\r\n\x1a\n", "image/png"))]
 
 
 def test_catalog_video_model_test_uses_kkyi_generation_path_and_flat_parameters(monkeypatch) -> None:

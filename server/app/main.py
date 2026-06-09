@@ -1266,6 +1266,14 @@ def collect_image_edit_references(body: dict[str, Any]) -> list[dict[str, Any]]:
     return collected
 
 
+def normalize_image_reference_fields_for_adapter(body: dict[str, Any], adapter: str) -> dict[str, Any]:
+    if adapter != "image-openai" or "image" in body or "images" not in body:
+        return body
+    normalized = copy.deepcopy(body)
+    normalized["image"] = normalized.pop("images")
+    return normalized
+
+
 def expand_local_image_references(body: dict[str, Any]) -> dict[str, Any]:
     reference_key = "image" if "image" in body else "images" if "images" in body else "image"
     references = body.get(reference_key)
@@ -2675,14 +2683,17 @@ async def proxy_image(
         model_group, sub_model, api_key_record, api_key = get_sub_model_for_user(db, current_user, str(payload["subModelId"]))
         base_url = api_key_record.base_url
         model = sub_model.model_name
+        adapter = sub_model.adapter
     else:
         base_url, api_key = validate_config(payload.get("config"))
         model = str(payload.get("model", "")).strip()
+        adapter = str(payload.get("adapter") or "").strip()
     if not model:
         raise HTTPException(status_code=400, detail={"message": "缺少模型标识。"})
 
     request_body = copy.deepcopy(payload.get("requestBody") or {})
     body = {"model": model, **request_body}
+    body = normalize_image_reference_fields_for_adapter(body, adapter)
     reference_assets = collect_reference_image_assets(body)
     edit_references = collect_image_edit_references(body)
     target_url = resolve_url(base_url, "/v1/images/edits" if edit_references else "/v1/images/generations")

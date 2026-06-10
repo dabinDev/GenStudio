@@ -14,7 +14,7 @@ from urllib.parse import quote, urlparse
 import httpx
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -98,6 +98,7 @@ from app.model_service import (
     update_model_group,
 )
 from app.proxy_utils import (
+    auth_headers,
     build_test_body,
     coerce_json_object,
     forward_json,
@@ -3123,6 +3124,76 @@ async def proxy_image_query(
         )
 
     return result
+
+
+@app.get("/api/assets/video-content/{asset_id}")
+async def generated_video_content(
+    asset_id: str,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> StreamingResponse:
+    asset = db.get(GeneratedAsset, asset_id)
+    if not asset or asset.user_id != current_user.id or asset.asset_type != "video":
+        raise HTTPException(status_code=404, detail={"message": "视频资源不存在或已被清理。"})
+    source_url = asset.url
+    if not source_url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail={"message": "视频资源地址不可用。"})
+
+    message = db.get(ConversationMessage, asset.message_id)
+    if not message or not message.sub_model_id:
+        raise HTTPException(status_code=400, detail={"message": "视频资源缺少模型配置，无法播放。"})
+    if urlparse(source_url).path.rstrip("/").endswith("/content") and message.response_json:
+        try:
+            raw_response = json.loads(message.response_json)
+        except ValueError:
+            raw_response = None
+        if isinstance(raw_response, dict):
+            refreshed_url = pick_video_query_payload(raw_response, message.content).get("videoUrl")
+            if isinstance(refreshed_url, str) and refreshed_url.startswith(("http://", "https://")):
+                source_url = refreshed_url
+
+    _model_group, _sub_model, _api_key_record, api_key = get_sub_model_for_user(db, current_user, message.sub_model_id)
+    upstream_headers = auth_headers(api_key)
+    range_header = request.headers.get("range")
+    if range_header:
+        upstream_headers["Range"] = range_header
+    upstream_headers["Accept"] = "video/*,*/*"
+
+    client = httpx.AsyncClient(timeout=settings.request_timeout_seconds, follow_redirects=True, trust_env=False)
+    upstream_response = await client.send(
+        client.build_request("GET", source_url, headers=upstream_headers),
+        stream=True,
+    )
+    if not upstream_response.is_success:
+        await upstream_response.aread()
+        await upstream_response.aclose()
+        await client.aclose()
+        raise HTTPException(status_code=502, detail={"message": "视频文件获取失败，请稍后重试。"})
+
+    response_headers: dict[str, str] = {
+        "Cache-Control": "private, max-age=300",
+    }
+    for header in ("content-length", "content-range", "accept-ranges", "etag", "last-modified"):
+        value = upstream_response.headers.get(header)
+        if value:
+            response_headers[header.title()] = value
+
+    async def body_iterator():
+        try:
+            async for chunk in upstream_response.aiter_bytes():
+                yield chunk
+        finally:
+            await upstream_response.aclose()
+            await client.aclose()
+
+    return StreamingResponse(
+        body_iterator(),
+        status_code=upstream_response.status_code,
+        media_type=upstream_response.headers.get("content-type") or "video/mp4",
+        headers=response_headers,
+    )
 
 
 @app.post("/api/proxy/video/create")

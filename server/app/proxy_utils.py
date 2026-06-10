@@ -379,6 +379,44 @@ def first_string_at_paths(payload: Any, paths: list[tuple[str, ...]]) -> str | N
     return None
 
 
+def _string_at_path(payload: Any, path: tuple[str, ...]) -> str | None:
+    cursor = payload
+    for key in path:
+        if not isinstance(cursor, dict):
+            return None
+        cursor = cursor.get(key)
+    return cursor.strip() if isinstance(cursor, str) and cursor.strip() else None
+
+
+def _looks_like_authenticated_video_content(url: str) -> bool:
+    parsed = urlparse(url)
+    return parsed.path.rstrip("/").endswith("/content")
+
+
+def _looks_like_direct_video_file(url: str) -> bool:
+    parsed = urlparse(url)
+    path = parsed.path.lower()
+    return any(path.endswith(ext) for ext in (".mp4", ".webm", ".mov", ".m4v"))
+
+
+def pick_video_url_at_paths(payload: Any, paths: list[tuple[str, ...]]) -> str | None:
+    candidates: list[tuple[int, int, str]] = []
+    for index, path in enumerate(paths):
+        value = _string_at_path(payload, path)
+        if not value:
+            continue
+        priority = 2
+        if _looks_like_direct_video_file(value):
+            priority = 0
+        elif path in {("result_url",), ("data", "result_url")}:
+            priority = 1
+        elif not _looks_like_authenticated_video_content(value):
+            priority = 1
+        candidates.append((priority, index, value))
+    candidates.sort(key=lambda item: (item[0], item[1]))
+    return candidates[0][2] if candidates else None
+
+
 def pick_video_query_payload(raw: dict[str, Any], task_id: str) -> dict[str, Any]:
     seedance_data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
     nested_seedance_data = (
@@ -399,15 +437,17 @@ def pick_video_query_payload(raw: dict[str, Any], task_id: str) -> dict[str, Any
         if isinstance(nested_seedance_data.get("status"), str)
         else "processing"
     )
-    video_url = first_string_at_paths(
+    video_url = pick_video_url_at_paths(
         raw,
         [
             ("video_url",),
             ("videoUrl",),
             ("url",),
+            ("result_url",),
             ("data", "video_url"),
             ("data", "videoUrl"),
             ("data", "url"),
+            ("data", "result_url"),
             ("data", "data", "video_url"),
             ("data", "data", "videoUrl"),
             ("data", "data", "url"),
@@ -419,7 +459,6 @@ def pick_video_query_payload(raw: dict[str, Any], task_id: str) -> dict[str, Any
             ("data", "data", "metadata", "download_url"),
             ("data", "data", "metadata", "url"),
             ("data", "content", "video_url"),
-            ("data", "result_url"),
         ],
     )
     thumbnail_url = first_string_at_paths(

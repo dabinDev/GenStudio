@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session, selectinload
@@ -63,11 +64,15 @@ def make_title(value: str, fallback: str = "新的创作") -> str:
 
 
 def serialize_asset(asset: GeneratedAsset) -> GeneratedAssetOut:
+    url = asset.url
+    parsed_path = urlparse(asset.url).path.rstrip("/") if asset.url.startswith(("http://", "https://")) else ""
+    if asset.asset_type == "video" and parsed_path.endswith("/content"):
+        url = f"/api/assets/video-content/{asset.id}"
     return GeneratedAssetOut(
         id=asset.id,
         capability=asset.capability,
         assetType=asset.asset_type,
-        url=asset.url,
+        url=url,
         thumbnailUrl=asset.thumbnail_url,
         metadata=_json_loads(asset.metadata_json),
         createdAt=asset.created_at,

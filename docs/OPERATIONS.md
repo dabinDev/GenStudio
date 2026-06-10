@@ -142,6 +142,97 @@ Deployment verification:
 - `https://studio.cylonai.cn/api/health` returned `{"status":"ok","database":"ok","storage":"not_configured"}`.
 - Local verification before deployment: frontend tests passed, backend tests passed, and the frontend production build succeeded.
 
+## Deployment Runbook
+
+2026-06-10 verified production release flow for `studio.cylonai.cn`:
+
+- Production host: Guangzhou CVM `175.178.189.234`.
+- SSH command shape: `ssh -F NUL -i G:/my-linux/guangzhou.pem root@175.178.189.234`.
+- Backend/project path: `/opt/genstudio`.
+- Frontend static path: `/opt/nginx/html/genstudio`.
+- Backend container: `genstudio-api`, mapped as `127.0.0.1:18082 -> 8000`.
+- Database container: `genstudio-mysql`.
+- Reverse proxy container: `nginx`.
+- Remote deploy helper: `.deploy-stage/remote-brand-deploy.sh`.
+
+Local preflight:
+
+```powershell
+git status --short
+git log -1 --oneline
+cd fronted
+npm run build
+cd ..
+```
+
+Optional full verification before a larger release:
+
+```powershell
+cd fronted
+npm test
+npm run build
+cd ..
+python -m pytest server/tests/test_conversations.py
+```
+
+Package the release from the project root after `fronted/dist` is fresh:
+
+```powershell
+$stageRoot = Join-Path (Resolve-Path '.deploy-stage').Path 'genstudio-release'
+$pkg = Join-Path (Resolve-Path '.deploy-stage').Path 'genstudio-brand-release.tar.gz'
+$resolvedDeploy = (Resolve-Path '.deploy-stage').Path
+if ($stageRoot -notlike "$resolvedDeploy*") { throw "Unexpected stage path: $stageRoot" }
+if (Test-Path -LiteralPath $stageRoot) { Remove-Item -LiteralPath $stageRoot -Recurse -Force }
+New-Item -ItemType Directory -Path $stageRoot | Out-Null
+Copy-Item -LiteralPath 'server' -Destination (Join-Path $stageRoot 'server') -Recurse
+Copy-Item -LiteralPath 'docs' -Destination (Join-Path $stageRoot 'docs') -Recurse
+Copy-Item -LiteralPath '.dockerignore' -Destination (Join-Path $stageRoot '.dockerignore')
+New-Item -ItemType Directory -Path (Join-Path $stageRoot 'fronted') | Out-Null
+Copy-Item -LiteralPath 'fronted\dist' -Destination (Join-Path $stageRoot 'fronted\dist') -Recurse
+if (Test-Path -LiteralPath $pkg) { Remove-Item -LiteralPath $pkg -Force }
+tar -czf $pkg -C $stageRoot .
+```
+
+Upload and execute the deployment:
+
+```powershell
+scp -F NUL -i G:/my-linux/guangzhou.pem .deploy-stage/genstudio-brand-release.tar.gz root@175.178.189.234:/tmp/genstudio-brand-release.tar.gz
+scp -F NUL -i G:/my-linux/guangzhou.pem .deploy-stage/remote-brand-deploy.sh root@175.178.189.234:/tmp/genstudio-remote-deploy.sh
+ssh -F NUL -i G:/my-linux/guangzhou.pem root@175.178.189.234 "bash /tmp/genstudio-remote-deploy.sh"
+```
+
+The remote deploy helper should:
+
+- unpack `/tmp/genstudio-brand-release.tar.gz`;
+- back up `/opt/genstudio/server` and `/opt/nginx/html/genstudio` under `/opt/genstudio_backups`;
+- `rsync --delete` the new `server`, `docs`, `.dockerignore`, and `fronted/dist`;
+- keep `/opt/genstudio/deploy/.env` in place and ensure `GENSTUDIO_ADMIN_IDENTIFIERS` contains `cylonai`;
+- run `docker compose build genstudio-api`;
+- run `docker compose up -d genstudio-api`;
+- run `docker exec nginx nginx -s reload`;
+- verify `curl -fsS http://127.0.0.1:18082/api/health`.
+
+Post-deploy checks:
+
+```powershell
+ssh -F NUL -i G:/my-linux/guangzhou.pem root@175.178.189.234 "curl -fsS http://127.0.0.1:18082/api/health && docker ps --format '{{.Names}} {{.Status}} {{.Ports}}' | grep -E 'genstudio|nginx'"
+curl.exe -fsS --resolve studio.cylonai.cn:443:175.178.189.234 https://studio.cylonai.cn/api/health
+curl.exe -fsS --resolve studio.cylonai.cn:443:175.178.189.234 https://studio.cylonai.cn/
+```
+
+Expected health response:
+
+```json
+{"status":"ok","database":"ok","storage":"not_configured"}
+```
+
+Notes:
+
+- Do not commit or print secret contents. The SSH key path is reusable environment knowledge; the key material is not.
+- Use `ssh -F NUL` on this Windows host because the user's default SSH config can have permission issues.
+- If a shell script copied from Windows reports `set: command not found` or malformed `curl` URL output, check for a UTF-8 BOM or CRLF line endings before re-running.
+- Nginx may print existing warnings about deprecated `listen ... http2`; treat them as warnings unless `nginx -t` fails.
+
 ## Rollback
 
 Keep the previous backend image and frontend `dist` artifact. Roll back application code first. Roll back database only from a tested backup when a migration itself is the fault; otherwise prefer a forward fix.

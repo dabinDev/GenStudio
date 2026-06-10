@@ -118,6 +118,30 @@ def create_model(client: TestClient, capability: str, adapter: str, model_name: 
     return response.json()["model"]["primarySubModelId"]
 
 
+def create_model_with_base_url(
+    client: TestClient,
+    capability: str,
+    adapter: str,
+    model_name: str,
+    base_url: str,
+) -> str:
+    response = client.post(
+        "/api/models",
+        headers=csrf_headers(client),
+        json={
+            "name": f"{capability} model",
+            "vendor": "Test",
+            "capability": capability,
+            "adapter": adapter,
+            "baseUrl": base_url,
+            "apiKey": "sk-test",
+            "primaryModelName": model_name,
+        },
+    )
+    assert response.status_code == 200
+    return response.json()["model"]["primarySubModelId"]
+
+
 def create_public_model(admin: TestClient, capability: str, adapter: str, model_name: str) -> dict:
     response = admin.post(
         "/api/models",
@@ -1690,6 +1714,175 @@ def test_video_query_extracts_nested_veo_result_url(monkeypatch) -> None:
     assert payload["videoUrl"] == "https://accessfree.example.com/task-veo.mp4"
     assert payload["assistantMessage"]["status"] == "success"
     assert payload["assistantMessage"]["assets"][0]["url"] == "https://accessfree.example.com/task-veo.mp4"
+
+
+def test_video_query_prefers_kkyi_authenticated_content_url_and_serializes_proxy(monkeypatch) -> None:
+    async def fake_forward_json(method, url, api_key, body=None):
+        if method == "POST":
+            return httpx.Response(200, json={"id": "task-auth", "status": "processing"}), {
+                "id": "task-auth",
+                "status": "processing",
+            }
+        return httpx.Response(
+            200,
+            json={
+                "code": "success",
+                "data": {
+                    "task_id": "task-auth",
+                    "status": "SUCCESS",
+                    "progress": "100%",
+                    "result_url": "https://ai-api.kkidc.com/v1/videos/task-auth/content",
+                    "data": {
+                        "status": "completed",
+                        "url": "https://apibusiness.bafang.me/v1/videos/inner-task/content",
+                        "video_url": "https://apibusiness.bafang.me/v1/videos/inner-task/content",
+                        "download_url": "https://apibusiness.bafang.me/v1/videos/inner-task/content",
+                    },
+                },
+            },
+        ), {
+            "code": "success",
+            "data": {
+                "task_id": "task-auth",
+                "status": "SUCCESS",
+                "progress": "100%",
+                "result_url": "https://ai-api.kkidc.com/v1/videos/task-auth/content",
+                "data": {
+                    "status": "completed",
+                    "url": "https://apibusiness.bafang.me/v1/videos/inner-task/content",
+                    "video_url": "https://apibusiness.bafang.me/v1/videos/inner-task/content",
+                    "download_url": "https://apibusiness.bafang.me/v1/videos/inner-task/content",
+                },
+            },
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+    sub_model_id = create_model_with_base_url(
+        client,
+        "video",
+        "video-unified-generic",
+        "gemini-veo-3.1-generate-preview-8s",
+        "https://ai-api.kkidc.com",
+    )
+
+    created = client.post(
+        "/api/proxy/video/create",
+        headers=csrf_headers(client),
+        json={"subModelId": sub_model_id, "requestBody": {"prompt": "veo auth content"}},
+    )
+    assert created.status_code == 200
+    conversation_id = created.json()["conversation"]["id"]
+
+    queried = client.post(
+        "/api/proxy/video/query",
+        headers=csrf_headers(client),
+        json={"subModelId": sub_model_id, "conversationId": conversation_id, "taskId": "task-auth"},
+    )
+
+    assert queried.status_code == 200
+    payload = queried.json()
+    assert payload["status"] == "completed"
+    assert payload["videoUrl"] == "https://ai-api.kkidc.com/v1/videos/task-auth/content"
+    asset = payload["assistantMessage"]["assets"][0]
+    assert asset["assetType"] == "video"
+    assert asset["url"] == f"/api/assets/video-content/{asset['id']}"
+
+
+def test_video_content_proxy_streams_asset_with_model_key_and_range(monkeypatch) -> None:
+    async def fake_forward_json(method, url, api_key, body=None):
+        if method == "POST":
+            return httpx.Response(200, json={"id": "task-auth", "status": "processing"}), {
+                "id": "task-auth",
+                "status": "processing",
+            }
+        return httpx.Response(200, json={"id": "task-auth", "status": "completed", "video_url": "https://ai-api.kkidc.com/v1/videos/task-auth/content"}), {
+            "id": "task-auth",
+            "status": "completed",
+            "video_url": "https://ai-api.kkidc.com/v1/videos/task-auth/content",
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+    sub_model_id = create_model_with_base_url(
+        client,
+        "video",
+        "video-unified-generic",
+        "gemini-veo-3.1-generate-preview-8s",
+        "https://ai-api.kkidc.com",
+    )
+    created = client.post(
+        "/api/proxy/video/create",
+        headers=csrf_headers(client),
+        json={"subModelId": sub_model_id, "requestBody": {"prompt": "veo auth content"}},
+    )
+    conversation_id = created.json()["conversation"]["id"]
+    queried = client.post(
+        "/api/proxy/video/query",
+        headers=csrf_headers(client),
+        json={"subModelId": sub_model_id, "conversationId": conversation_id, "taskId": "task-auth"},
+    )
+    asset = queried.json()["assistantMessage"]["assets"][0]
+    from app.database import SessionLocal
+    from app.db_models import GeneratedAsset
+
+    with SessionLocal() as db:
+        stored_asset = db.get(GeneratedAsset, asset["id"])
+        assert stored_asset is not None
+        stored_asset.url = "https://apibusiness.bafang.me/v1/videos/legacy-inner-task/content"
+        db.commit()
+
+    captured: dict[str, object] = {}
+
+    class FakeStreamResponse:
+        status_code = 206
+        is_success = True
+        headers = {
+            "content-type": "video/mp4",
+            "content-length": "4",
+            "content-range": "bytes 0-3/8",
+            "accept-ranges": "bytes",
+        }
+
+        async def aiter_bytes(self):
+            yield b"ftyp"
+
+        async def aread(self):
+            return b""
+
+        async def aclose(self):
+            return None
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            captured["client_kwargs"] = kwargs
+
+        def build_request(self, method, url, headers=None):
+            captured["method"] = method
+            captured["url"] = url
+            captured["headers"] = headers or {}
+            return {"method": method, "url": url, "headers": headers or {}}
+
+        async def send(self, request, stream=False):
+            captured["stream"] = stream
+            return FakeStreamResponse()
+
+        async def aclose(self):
+            captured["closed"] = True
+
+    monkeypatch.setattr(main_module.httpx, "AsyncClient", FakeAsyncClient)
+
+    response = client.get(asset["url"], headers={"Range": "bytes=0-3"})
+
+    assert response.status_code == 206
+    assert response.content == b"ftyp"
+    assert captured["method"] == "GET"
+    assert captured["url"] == "https://ai-api.kkidc.com/v1/videos/task-auth/content"
+    assert captured["headers"]["Authorization"] == "Bearer sk-test"
+    assert captured["headers"]["Range"] == "bytes=0-3"
+    assert captured["stream"] is True
 
 
 def test_video_query_validation_messages_are_readable() -> None:

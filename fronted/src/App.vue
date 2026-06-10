@@ -1934,6 +1934,15 @@ function assetDisplayLabel(asset: ConversationAsset, message?: ConversationMessa
   return asset.assetType === "video" ? "视频结果" : "图片结果";
 }
 
+function assetMediaUrl(asset: ConversationAsset): string {
+  if (asset.assetType !== "video") return asset.url;
+  if (asset.url.startsWith("/api/assets/video-content/")) return asset.url;
+  if (!asset.id || asset.id.startsWith("local-")) return asset.url;
+  if (!asset.url.startsWith("http://") && !asset.url.startsWith("https://")) return asset.url;
+  if (!new URL(asset.url).pathname.replace(/\/$/, "").endsWith("/content")) return asset.url;
+  return `/api/assets/video-content/${encodeURIComponent(asset.id)}`;
+}
+
 function resetMediaPreviewTransform() {
   mediaPreviewState.scale = 1;
   mediaPreviewState.offsetX = 0;
@@ -4655,12 +4664,12 @@ async function removeUnavailableModels() {
                   <button v-if="asset.assetType === 'image'" class="asset-preview-trigger" @click="openMediaPreview(asset)">
                     <img :src="asset.thumbnailUrl || asset.url" :alt="assetDisplayLabel(asset, message)" />
                   </button>
-                  <video v-else-if="asset.assetType === 'video'" :src="asset.url" :poster="asset.thumbnailUrl || undefined" controls playsinline preload="metadata" />
+                  <video v-else-if="asset.assetType === 'video'" :src="assetMediaUrl(asset)" :poster="asset.thumbnailUrl || undefined" controls playsinline preload="metadata" />
                   <div class="asset-actions">
                     <button class="button-link" @click="openMediaPreview(asset)">查看</button>
                     <button v-if="asset.assetType === 'image'" class="button-secondary" @click="useGeneratedAsset(asset)">引用编辑</button>
                     <button v-if="asset.assetType === 'image'" class="button-secondary" @click="editSelectedAsset(asset)">选取编辑</button>
-                    <a class="button-secondary" :href="asset.url" download target="_blank" rel="noreferrer">保存</a>
+                    <a class="button-secondary" :href="assetMediaUrl(asset)" download target="_blank" rel="noreferrer">保存</a>
                   </div>
                 </article>
               </div>
@@ -6620,7 +6629,7 @@ async function removeUnavailableModels() {
                   </svg>
                 </button>
               </div>
-              <a class="button-secondary media-action-button" :href="mediaPreviewState.asset.url" download target="_blank" rel="noreferrer">
+              <a class="button-secondary media-action-button" :href="assetMediaUrl(mediaPreviewState.asset)" download target="_blank" rel="noreferrer">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                   <path d="M12 4v10" />
                   <path d="m8 10 4 4 4-4" />
@@ -6671,14 +6680,14 @@ async function removeUnavailableModels() {
           >
             <img
               v-if="mediaPreviewState.asset.assetType === 'image'"
-              :src="mediaPreviewState.asset.url"
+              :src="assetMediaUrl(mediaPreviewState.asset)"
               alt="生成图片预览"
               :style="{ transform: mediaPreviewTransform() }"
               draggable="false"
             />
             <video
               v-else-if="mediaPreviewState.asset.assetType === 'video'"
-              :src="mediaPreviewState.asset.url"
+              :src="assetMediaUrl(mediaPreviewState.asset)"
               :poster="mediaPreviewState.asset.thumbnailUrl || undefined"
               controls
               autoplay

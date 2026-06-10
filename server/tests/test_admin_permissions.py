@@ -162,3 +162,23 @@ def test_admin_permissions_me_route_returns_role_and_permissions(monkeypatch) ->
     assert "settings:update" in response.json()["permissions"]
 
     app.dependency_overrides.clear()
+
+
+def test_admin_permissions_me_route_rejects_non_admin() -> None:
+    from app.auth import get_current_user
+    from app.config import get_settings
+    from app.main import app
+
+    user = make_user(email="normal@example.com")
+    settings = Settings(admin_emails=["owner@example.com"], admin_identifiers=[])
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_settings] = lambda: settings
+    client = TestClient(app)
+
+    response = client.get("/api/admin/permissions/me")
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": {"message": "当前账号没有管理员权限。"}}
+
+    app.dependency_overrides.clear()

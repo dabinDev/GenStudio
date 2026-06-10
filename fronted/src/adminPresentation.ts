@@ -19,35 +19,35 @@ export interface AdminTabDefinition {
 }
 
 export const adminTabs: AdminTabDefinition[] = [
-  { value: "overview", label: "运营面板", hint: "调用、失败率、公私模型分布", icon: "chart", tone: "blue" },
-  { value: "models", label: "公用模型配置", hint: "发布、取消公用、图标、提示语", icon: "model", tone: "green" },
-  { value: "prompts", label: "提示语模板", hint: "AI 文案优化模板", icon: "spark", tone: "cyan" },
-  { value: "users", label: "用户管理", hint: "启用、禁用、删除、恢复", icon: "user", tone: "cyan" },
+  { value: "overview", label: "运营概览", hint: "调用统计、成功率、模型分布", icon: "chart", tone: "blue" },
+  { value: "models", label: "模型管理", hint: "发布、配置公用模型", icon: "model", tone: "green" },
+  { value: "prompts", label: "提示词模板", hint: "AI文案优化模板", icon: "spark", tone: "cyan" },
+  { value: "users", label: "用户管理", hint: "启用、禁用、角色管理", icon: "user", tone: "cyan" },
   { value: "text-records", label: "文案记录", hint: "提示词与响应追踪", icon: "text", tone: "slate" },
   { value: "image-records", label: "生图记录", hint: "图片结果与参数", icon: "image", tone: "amber" },
-  { value: "video-records", label: "视频记录", hint: "任务、视频、失败原因", icon: "video", tone: "blue" },
-  { value: "audit", label: "操作记录", hint: "管理员变更审计", icon: "audit", tone: "slate" },
+  { value: "video-records", label: "视频记录", hint: "任务状态与视频结果", icon: "video", tone: "blue" },
+  { value: "audit", label: "操作日志", hint: "管理员变更审计", icon: "audit", tone: "slate" },
 ];
 
 export const adminCapabilityTabs: Array<{ value: Capability | "all"; label: string }> = [
   { value: "all", label: "全部" },
-  { value: "text", label: "文案创作" },
-  { value: "image", label: "图片创作" },
-  { value: "video", label: "视频创作" },
+  { value: "text", label: "文案" },
+  { value: "image", label: "图片" },
+  { value: "video", label: "视频" },
 ];
 
 export const adminRecordCapabilityTabs: Array<{ value: Capability; label: string; hint: string }> = [
   { value: "text", label: "文案", hint: "提问 / 回答" },
-  { value: "image", label: "图片/图文", hint: "提示词 / 图片结果" },
-  { value: "video", label: "视频", hint: "提示词 / 视频结果" },
+  { value: "image", label: "图片", hint: "提示词 / 结果" },
+  { value: "video", label: "视频", hint: "任务 / 视频" },
 ];
 
 export const adminNavGroups: Array<{ title: string; tabs: AdminTab[] }> = [
   { title: "总览", tabs: ["overview"] },
-  { title: "模型资产", tabs: ["models", "prompts"] },
-  { title: "用户与权限", tabs: ["users"] },
-  { title: "创作记录", tabs: ["text-records", "image-records", "video-records"] },
-  { title: "安全审计", tabs: ["audit"] },
+  { title: "配置", tabs: ["models", "prompts"] },
+  { title: "用户", tabs: ["users"] },
+  { title: "记录", tabs: ["text-records", "image-records", "video-records"] },
+  { title: "审计", tabs: ["audit"] },
 ];
 
 export const ADMIN_RECORD_CAPABILITY_BY_TAB: Partial<Record<AdminTab, Capability>> = {
@@ -58,43 +58,43 @@ export const ADMIN_RECORD_CAPABILITY_BY_TAB: Partial<Record<AdminTab, Capability
 
 export const ADMIN_PAGE_SUGGESTIONS: Record<AdminTab, string[]> = {
   overview: [
-    "把趋势图作为第一屏主角，按日、周、月查看增长和异常波动。",
-    "把失败率最高的模型入口联动到记录页，减少排查路径。",
-    "增加额度消耗、平均排队时间、任务超时率，形成完整运营健康分。",
+    "趋势图支持日/周/月切换，快速定位增长和异常。",
+    "失败模型可直接点击查看相关记录。",
+    "成功率、调用数、模型分布一目了然。",
   ],
   models: [
-    "支持批量设为公用、批量取消公用和批量启用提示优化。",
-    "给图标 URL 加预览和失败提示，避免上线后模型图标静默失效。",
-    "把默认参数 JSON 改成结构化表单，同时保留高级 JSON 模式。",
+    "支持批量设置公用状态。",
+    "图标URL实时预览，避免失效。",
+    "默认参数支持结构化表单编辑。",
   ],
   prompts: [
-    "增加模板版本历史，方便回滚一次效果不佳的提示语修改。",
-    "把测试预览扩展为多样例测试，覆盖文案、图片、视频三类短提示词。",
-    "增加模型级启用状态总览，避免模板存在但某个模型未启用。",
+    "模板支持启用/禁用切换。",
+    "测试预览支持多场景验证。",
+    "按能力类型快速筛选模板。",
   ],
   users: [
-    "增加用户详情侧栏，集中展示模型数、调用数、失败率和最近记录。",
-    "增加角色筛选和管理员变更确认，降低误操作风险。",
-    "增加导出用户列表和最近登录 IP，便于上线后的运营和风控。",
+    "支持按角色筛选用户。",
+    "用户状态一键切换。",
+    "操作日志完整记录变更。",
   ],
   "text-records": [
-    "支持在提示词和回答中搜索关键词，快速定位内容。",
-    "支持按模型和状态保存常用筛选条件，方便重复排查同类问题。",
-    "增加 Markdown 渲染开关，在后台直接查看文案最终展示效果。",
+    "支持关键词搜索提示词。",
+    "按模型和状态筛选记录。",
+    "查看完整请求参数。",
   ],
   "image-records": [
-    "增加图片瀑布流密度模式，快速扫生成质量和失败样本。",
-    "点击图片打开详情抽屉，展示原图、引用图和完整参数。",
-    "按尺寸、比例、参考图数量筛选，便于定位参数异常。",
+    "图片结果缩略图预览。",
+    "按尺寸和比例筛选。",
+    "查看参考图和生成参数。",
   ],
   "video-records": [
-    "增加任务状态时间线，展示创建、轮询、成功或失败的关键节点。",
-    "支持视频在线播放和复制任务 ID，减少跳转排查成本。",
-    "按视频时长、分辨率、模式筛选，定位具体模型参数限制。",
+    "任务状态实时更新。",
+    "视频在线播放预览。",
+    "按模型和状态筛选。",
   ],
   audit: [
-    "高风险操作加醒目标记，例如删除用户、取消公用模型、修改模板。",
-    "按目标对象筛选，快速查看某个模型或用户的变更历史。",
-    "增加审计日志导出，满足上线后的追踪和备份需求。",
+    "高风险操作醒目标记。",
+    "按目标对象筛选。",
+    "支持日志导出。",
   ],
 };

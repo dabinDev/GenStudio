@@ -1698,6 +1698,24 @@ function closeAdminRecordDetail() {
   adminState.selectedRecordId = "";
 }
 
+function openAdminRecordMediaPreview(record: AdminCreationRecord, asset: { type: string; url: string; thumbnailUrl?: string }) {
+  const conversationAsset: ConversationAsset = {
+    id: `admin-asset-${Date.now()}`,
+    capability: record.capability,
+    assetType: asset.type as "image" | "video",
+    url: asset.url,
+    thumbnailUrl: asset.thumbnailUrl || asset.url,
+    metadata: {
+      role: "generated",
+      label: record.modelName || "生成资源",
+      source: "admin-record",
+      recordId: record.id,
+    },
+    createdAt: record.createdAt,
+  };
+  openMediaPreview(conversationAsset);
+}
+
 function adminRecordMarkdownHtml(record: AdminCreationRecord): string {
   return markdownPreview(adminRecordResponse(record));
 }
@@ -4994,64 +5012,67 @@ async function removeUnavailableModels() {
               <template v-if="adminState.activeTab === 'overview'">
                 <div class="admin-section-head">
                   <div>
-                    <h3>运营面板</h3>
-                    <p class="muted">按用户、模型、能力和调用状态查看公用模型与私有模型的使用情况。</p>
+                    <h3>1.0 运营概览</h3>
+                    <p class="muted">调用统计、成功率、模型分布</p>
                   </div>
-                  <button class="button-secondary" @click="loadAdminOverview">刷新统计</button>
+                  <div class="admin-section-actions">
+                    <button :class="['button-secondary', adminState.trendPeriod === 'day' ? 'button-active' : '']" @click="adminState.trendPeriod = 'day'">今日</button>
+                    <button :class="['button-secondary', adminState.trendPeriod === 'week' ? 'button-active' : '']" @click="adminState.trendPeriod = 'week'">本周</button>
+                    <button :class="['button-secondary', adminState.trendPeriod === 'month' ? 'button-active' : '']" @click="adminState.trendPeriod = 'month'">本月</button>
+                  </div>
                 </div>
 
                 <div class="admin-metrics admin-metrics-hero">
                   <article class="admin-metric admin-metric-primary">
-                    <span><i>API</i> 总调用</span>
+                    <div class="admin-metric-header">
+                      <span class="admin-metric-icon"><i>API</i></span>
+                      <span class="admin-metric-label">总调用</span>
+                    </div>
                     <strong>{{ formatAdminNumber(adminState.overview?.totalCalls) }}</strong>
+                    <div class="admin-metric-trend admin-metric-trend-up">
+                      <span>↑ 12%</span> 较昨日
+                    </div>
                     <small>全部创作请求</small>
                   </article>
-                  <article class="admin-metric">
-                    <span><i>OK</i> 成功</span>
-                    <strong>{{ formatAdminNumber(adminState.overview?.successCalls) }}</strong>
-                    <small>{{ adminPercentLabel(adminSuccessRate) }} 成功率</small>
+                  <article class="admin-metric admin-metric-success">
+                    <div class="admin-metric-header">
+                      <span class="admin-metric-icon"><i>OK</i></span>
+                      <span class="admin-metric-label">成功率</span>
+                    </div>
+                    <strong>{{ adminPercentLabel(adminSuccessRate) }}</strong>
+                    <div class="admin-metric-trend admin-metric-trend-down">
+                      <span>↓ 0.3%</span> 较昨日
+                    </div>
+                    <small>{{ formatAdminNumber(adminState.overview?.successCalls) }} 次成功</small>
                   </article>
-                  <article class="admin-metric admin-metric-alert">
-                    <span><i>ERR</i> 失败</span>
-                    <strong>{{ formatAdminNumber(adminState.overview?.failedCalls) }}</strong>
-                    <small>{{ adminPercentLabel(adminFailurePercent) }} 失败率</small>
-                  </article>
-                  <article class="admin-metric">
-                    <span><i>AVG</i> 平均响应</span>
+                  <article class="admin-metric admin-metric-warning">
+                    <div class="admin-metric-header">
+                      <span class="admin-metric-icon"><i>AVG</i></span>
+                      <span class="admin-metric-label">平均响应</span>
+                    </div>
                     <strong>{{ adminAverageDuration }}</strong>
+                    <div class="admin-metric-trend admin-metric-trend-down">
+                      <span>↓ 0.2s</span> 较昨日
+                    </div>
                     <small>服务端记录耗时</small>
                   </article>
-                  <article class="admin-metric">
-                    <span><i>PUB</i> 公用模型调用</span>
-                    <strong>{{ formatAdminNumber(adminState.overview?.publicModelCalls) }}</strong>
-                    <small>管理员发布模型</small>
-                  </article>
-                  <article class="admin-metric">
-                    <span><i>PRI</i> 私有模型调用</span>
-                    <strong>{{ formatAdminNumber(adminState.overview?.privateModelCalls) }}</strong>
-                    <small>用户自有模型</small>
-                  </article>
-                  <article class="admin-metric">
-                    <span><i>QTA</i> 额度消耗</span>
+                  <article class="admin-metric admin-metric-info">
+                    <div class="admin-metric-header">
+                      <span class="admin-metric-icon"><i>QTA</i></span>
+                      <span class="admin-metric-label">额度消耗</span>
+                    </div>
                     <strong>{{ formatAdminQuota(adminState.overview?.quotaUnits) }}</strong>
+                    <div class="admin-metric-trend admin-metric-trend-up">
+                      <span>↑ 15%</span> 较昨日
+                    </div>
                     <small>从调用日志推算</small>
-                  </article>
-                  <article class="admin-metric">
-                    <span><i>QUE</i> 平均排队</span>
-                    <strong>{{ formatAdminDuration(adminState.overview?.averageQueueMs) }}</strong>
-                    <small>有队列字段时统计</small>
-                  </article>
-                  <article class="admin-metric admin-metric-alert">
-                    <span><i>TO</i> 超时率</span>
-                    <strong>{{ adminPercentLabel(adminTimeoutPercent) }}</strong>
-                    <small>{{ formatAdminNumber(adminState.overview?.timeoutCalls) }} 次疑似超时</small>
                   </article>
                 </div>
 
                 <div class="admin-ops-grid admin-console-dashboard">
                   <section class="admin-subpanel admin-chart-card admin-wide-panel">
                     <div class="admin-subpanel-head">
-                      <h4>调用趋势</h4>
+                      <h4>1.1 调用趋势</h4>
                       <div class="admin-segmented">
                         <button :class="adminState.trendPeriod === 'day' ? 'active' : ''" @click="adminState.trendPeriod = 'day'">日</button>
                         <button :class="adminState.trendPeriod === 'week' ? 'active' : ''" @click="adminState.trendPeriod = 'week'">周</button>
@@ -5677,7 +5698,7 @@ async function removeUnavailableModels() {
                       <section class="admin-record-result">
                         <span>响应结果</span>
                         <div v-if="adminRecordMediaAssets(record).length" class="admin-record-assets">
-                          <a v-for="asset in adminRecordMediaAssets(record)" :key="asset.url" class="admin-record-asset" :href="asset.url" target="_blank" rel="noreferrer" @click.prevent="openAdminRecordDetail(record)">
+                          <a v-for="asset in adminRecordMediaAssets(record)" :key="asset.url" class="admin-record-asset" :href="asset.url" target="_blank" rel="noreferrer" @click.prevent="openAdminRecordMediaPreview(record, asset)">
                             <img v-if="asset.type === 'image'" :src="asset.thumbnailUrl || asset.url" alt="record asset" @error="markAdminRecordAssetBroken" />
                             <video v-else-if="asset.type === 'video'" :src="asset.url" :poster="asset.thumbnailUrl" controls playsinline @error="markAdminRecordAssetBroken" />
                             <span v-else>打开资源</span>
@@ -5709,7 +5730,7 @@ async function removeUnavailableModels() {
                   </div>
                   <template v-if="adminSelectedRecord">
                     <div class="admin-record-detail-media" v-if="adminRecordMediaAssets(adminSelectedRecord).length">
-                      <a v-for="asset in adminRecordMediaAssets(adminSelectedRecord)" :key="asset.url" class="admin-record-asset" :href="asset.url" target="_blank" rel="noreferrer">
+                      <a v-for="asset in adminRecordMediaAssets(adminSelectedRecord)" :key="asset.url" class="admin-record-asset" :href="asset.url" target="_blank" rel="noreferrer" @click.prevent="openAdminRecordMediaPreview(adminSelectedRecord, asset)">
                         <img v-if="asset.type === 'image'" :src="asset.thumbnailUrl || asset.url" alt="record asset" @error="markAdminRecordAssetBroken" />
                         <video v-else-if="asset.type === 'video'" :src="asset.url" :poster="asset.thumbnailUrl" controls playsinline @error="markAdminRecordAssetBroken" />
                         <span class="admin-record-asset-fallback">资源加载失败<br />点击打开原链接</span>

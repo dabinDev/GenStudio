@@ -9,34 +9,74 @@ ROLE_OPERATOR = "operator"
 ROLE_VIEWER = "viewer"
 ROLE_NONE = "none"
 
-PERMISSION_SETTINGS_UPDATE = "settings:update"
-PERMISSION_MODEL_PUBLISH = "model:publish"
-PERMISSION_MODEL_MANAGE = "model:manage"
-PERMISSION_USER_MANAGE = "user:manage"
-PERMISSION_RECORD_VIEW = "record:view"
-PERMISSION_AUDIT_VIEW = "audit:view"
+MODEL_PERMISSIONS = {
+    "model:view",
+    "model:create",
+    "model:update",
+    "model:delete",
+    "model:publish",
+    "model:unpublish",
+    "model:test",
+    "model:pricing",
+    "model:secret:view_summary",
+}
+USER_CREDIT_PERMISSIONS = {
+    "user:view",
+    "user:update",
+    "user:disable",
+    "user:delete",
+    "user:restore",
+    "user:role:update",
+    "credit:view",
+    "credit:adjust",
+    "credit:settings",
+}
+RECORD_AUDIT_PERMISSIONS = {
+    "record:view",
+    "record:raw_json",
+    "record:export",
+    "audit:view",
+    "audit:export",
+}
+SYSTEM_PERMISSIONS = {"settings:view", "settings:update", "maintenance:user_merge"}
 
 SUPER_ADMIN_PERMISSIONS = frozenset(
-    {
-        PERMISSION_SETTINGS_UPDATE,
-        PERMISSION_MODEL_PUBLISH,
-        PERMISSION_MODEL_MANAGE,
-        PERMISSION_USER_MANAGE,
-        PERMISSION_RECORD_VIEW,
-        PERMISSION_AUDIT_VIEW,
-    }
+    MODEL_PERMISSIONS | USER_CREDIT_PERMISSIONS | RECORD_AUDIT_PERMISSIONS | SYSTEM_PERMISSIONS
 )
 ADMIN_PERMISSIONS = frozenset(
-    {
-        PERMISSION_MODEL_PUBLISH,
-        PERMISSION_MODEL_MANAGE,
-        PERMISSION_USER_MANAGE,
-        PERMISSION_RECORD_VIEW,
-        PERMISSION_AUDIT_VIEW,
+    (MODEL_PERMISSIONS - {"model:secret:view_summary"})
+    | RECORD_AUDIT_PERMISSIONS
+    | {
+        "user:view",
+        "user:update",
+        "user:disable",
+        "user:restore",
+        "credit:view",
+        "credit:adjust",
+        "settings:view",
     }
 )
-OPERATOR_PERMISSIONS = frozenset({PERMISSION_RECORD_VIEW})
-VIEWER_PERMISSIONS = frozenset({PERMISSION_RECORD_VIEW, PERMISSION_AUDIT_VIEW})
+OPERATOR_PERMISSIONS = frozenset(
+    {
+        "model:view",
+        "model:test",
+        "user:view",
+        "credit:view",
+        "record:view",
+        "audit:view",
+        "settings:view",
+    }
+)
+VIEWER_PERMISSIONS = frozenset(
+    {
+        "model:view",
+        "user:view",
+        "credit:view",
+        "record:view",
+        "audit:view",
+        "settings:view",
+    }
+)
 
 PERMISSIONS_BY_ROLE = {
     ROLE_SUPER_ADMIN: SUPER_ADMIN_PERMISSIONS,

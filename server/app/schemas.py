@@ -266,6 +266,11 @@ class AdminUserUpdate(BaseModel):
     status: str | None = None
 
 
+class AdminPermissionOut(BaseModel):
+    role: str
+    permissions: list[str] = Field(default_factory=list)
+
+
 class AdminOverviewOut(BaseModel):
     totalCalls: int
     successCalls: int

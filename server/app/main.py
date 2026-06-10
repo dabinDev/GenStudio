@@ -55,6 +55,7 @@ from app.admin_service import (
     update_admin_user,
     upsert_prompt_template,
 )
+from app.admin_permissions import permissions_for_role, resolve_admin_role
 from app.config import Settings, get_settings
 from app.conversation_service import (
     add_asset,
@@ -125,6 +126,7 @@ from app.proxy_utils import (
 from app.rate_limit import InMemoryRateLimiter, check_rate_limit
 from app.schemas import (
     AdminModelUpdate,
+    AdminPermissionOut,
     AdminUserUpdate,
     ConversationCreate,
     ConversationUpdate,
@@ -1895,6 +1897,15 @@ async def admin_models(
             for item in list_admin_models(db, capability=capability, search=search, public_state=publicState)
         ]
     }
+
+
+@app.get("/api/admin/permissions/me", response_model=AdminPermissionOut)
+async def admin_permissions_me(
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+) -> AdminPermissionOut:
+    role = resolve_admin_role(admin, settings)
+    return AdminPermissionOut(role=role, permissions=permissions_for_role(role))
 
 
 @app.put("/api/admin/models/{model_id}")

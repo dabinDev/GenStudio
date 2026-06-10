@@ -12,26 +12,13 @@ from sqlalchemy.orm import Session
 from app.config import Settings, get_settings
 from app.database import get_db
 from app.db_models import SessionCsrfToken, SessionRecord, User, UserCredential, utcnow
+from app.admin_permissions import resolve_admin_role
 from app.schemas import LoginRequest, ProfileUpdateRequest, RegisterRequest, UserOut
 from app.security import create_csrf_token, create_session_token, hash_password, hash_token, verify_password
 
 
 def is_admin_user(user: User | None, settings: Settings | None = None) -> bool:
-    if not user:
-        return False
-    resolved_settings = settings or get_settings()
-    email = (user.email or "").strip().lower()
-    admin_emails = {item.strip().lower() for item in resolved_settings.admin_emails}
-    if email and email in admin_emails:
-        return True
-    admin_identifiers = {item.strip().lower() for item in resolved_settings.admin_identifiers}
-    identities = {
-        (user.external_user_id or "").strip().lower(),
-        email,
-        (user.phone or "").strip().lower(),
-        (user.nickname or "").strip().lower(),
-    }
-    return bool(admin_identifiers.intersection(identity for identity in identities if identity))
+    return resolve_admin_role(user, settings) != "none"
 
 
 def ensure_user_active(user: User) -> User:
@@ -176,7 +163,7 @@ def require_admin_user(
 ) -> User:
     ensure_user_active(current_user)
     if not is_admin_user(current_user, settings):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"message": "????????"})
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"message": "当前账号没有管理员权限。"})
     return current_user
 
 

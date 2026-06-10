@@ -124,7 +124,7 @@ describe("admin presentation metadata", () => {
   });
 
   it("stops stale generation polling when starting a new conversation", () => {
-    const match = appSource.match(/function startNewConversation[\s\S]*?\n}\n/);
+    const match = appSource.match(/function startNewConversation[\s\S]*?\r?\n}\r?\n/);
     expect(match?.[0] || "").toContain("stopTextPolling()");
     expect(match?.[0] || "").toContain("stopImagePolling()");
     expect(match?.[0] || "").toContain("stopVideoPolling()");
@@ -241,5 +241,17 @@ describe("admin presentation metadata", () => {
     expect(finalLayer).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)\s+minmax\(280px,\s*360px\)/);
     expect(finalLayer).toMatch(/-webkit-line-clamp:\s*3/);
     expect(finalLayer).not.toMatch(/purple|violet/i);
+  });
+
+  it("keeps dense admin list rows to two inline actions and moves overflow actions into a drawer", () => {
+    expect(appSource).toContain("admin-row-operation-button");
+    expect(appSource).toContain("admin-action-drawer");
+
+    const userActionCell = appSource.match(/<div class="admin-action-cell">\s*<button class="button-secondary" @click="adminState\.selectedUserId = user\.id"[\s\S]*?<\/div>/)?.[0] || "";
+    const inlineButtons = userActionCell.match(/<button/g) || [];
+
+    expect(inlineButtons).toHaveLength(2);
+    expect(userActionCell).toContain("admin-row-operation-button");
+    expect(userActionCell).not.toContain("setAdminUserStatus(user");
   });
 });

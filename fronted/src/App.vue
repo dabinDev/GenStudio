@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
+import { gsap } from "gsap";
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 
 import {
   ADAPTER_LABELS,
@@ -40,6 +41,7 @@ import {
   unpublishAdminModel,
   updateAdminModel,
   updateAdminUser,
+  updateConversationTitle,
   updateServerModel,
   uploadAsset,
 } from "./api";
@@ -78,6 +80,7 @@ import {
   catalogVideoModeValue,
   canEditModel,
   combinePrompt,
+  composerShortcutFromKeyboardEvent,
   conversationAssetsFromImageQueryResult,
   conversationAssetFromVideoQueryResult,
   createLocalId,
@@ -93,6 +96,7 @@ import {
   imageGenerationSummary,
   isGeneratedModelDisplayName,
   isPrivateView,
+  latestConversationForModel,
   loginRedirectForView,
   markConversationMessageFailed,
   mediaPreviewActionLabels,
@@ -160,6 +164,7 @@ type VideoMode = VideoModeValue;
 type VideoUploadTarget = "unified" | "first" | "last" | "seedanceRef" | "startEnd";
 type DialogMode = "create" | "edit";
 type ComposerPopover = "image-settings" | "image-advanced" | "video-mode" | "video-settings" | "video-advanced" | null;
+type AdminActionDrawerType = "" | "user" | "model" | "record";
 
 interface ImageResult {
   images: Array<{ src: string; revisedPrompt?: string }>;
@@ -347,6 +352,7 @@ let imagePollTimer: number | null = null;
 let imagePollTaskId = "";
 let videoPollTimer: number | null = null;
 let videoPollTaskId = "";
+let aiThinkingAnimations: gsap.core.Animation[] = [];
 
 const settingsState = reactive({
   selectedIds: [] as string[],
@@ -395,6 +401,8 @@ const adminState = reactive({
   trendPeriod: "day" as "day" | "week" | "month",
   editingModelId: "",
   editingUserId: "",
+  actionDrawerType: "" as AdminActionDrawerType,
+  actionDrawerId: "",
   overview: null as AdminOverview | null,
   overviewUsers: [] as AdminOverviewUserRow[],
   overviewModels: [] as AdminOverviewModelRow[],
@@ -503,6 +511,12 @@ const adminFilteredUsers = computed(() =>
   }),
 );
 const adminSelectedUser = computed(() => adminState.users.find((user) => user.id === adminState.selectedUserId) || null);
+const adminActionDrawerUser = computed(() =>
+  adminState.actionDrawerType === "user"
+    ? adminState.users.find((user) => user.id === adminState.actionDrawerId) || null
+    : null,
+);
+const adminActionDrawerOpen = computed(() => Boolean(adminState.actionDrawerType && adminState.actionDrawerId));
 const adminSelectedRecord = computed(() =>
   adminRecordList(adminState.activeTab).find((record) => record.id === adminState.selectedRecordId) || null,
 );
@@ -532,7 +546,13 @@ const conversationState = reactive({
   activeRequest: null as AbortController | null,
   streamingMessageId: "",
   streamingContent: "",
+  renameEditing: false,
+  renameDraft: "",
+  renameSaving: false,
+  renameError: "",
 });
+
+let modelConversationLoadVersion = 0;
 
 const mediaPreviewState = reactive({
   asset: null as ConversationAsset | null,
@@ -668,6 +688,12 @@ const visibleConversations = computed(() => {
 });
 
 const currentMessages = computed(() => visibleConversationMessages(conversationState.current, activeCapability.value));
+
+const currentConversationTitle = computed(() => {
+  if (conversationState.current?.title) return conversationState.current.title;
+  if (activeModel.value) return `${modelDisplayName(activeModel.value)} 的新对话`;
+  return "新对话";
+});
 
 const currentModelLabel = computed(() => {
   const model = activeModel.value;
@@ -810,20 +836,124 @@ function toggleTheme() {
   setThemeMode(toggleThemeMode(themeMode.value));
 }
 
+function canUseComposerShortcut(): boolean {
+  return Boolean(
+    activeCapability.value &&
+      (view.value === "text" || view.value === "images" || view.value === "videos") &&
+      !conversationState.renameEditing &&
+      !mediaPreviewState.asset,
+  );
+}
+
+function canOptimizeActivePrompt(capability: Capability): boolean {
+  if (capability === "text") return !textState.loading && !textState.optimizing && Boolean(textState.prompt.trim());
+  if (capability === "image") return !imageState.loading && !imageState.optimizing && Boolean(imageState.prompt.trim());
+  return !videoState.loading && !videoState.optimizing && Boolean(videoState.prompt.trim());
+}
+
+function canSubmitActivePrompt(capability: Capability): boolean {
+  if (capability === "text") return !textState.loading;
+  if (capability === "image") return !imageState.loading;
+  return !videoState.loading;
+}
+
+function submitActiveComposer(capability: Capability) {
+  if (capability === "text") void handleTextSubmit();
+  if (capability === "image") void handleImageSubmit();
+  if (capability === "video") void handleVideoCreate();
+}
+
+function handleComposerShortcutKey(event: KeyboardEvent) {
+  const action = composerShortcutFromKeyboardEvent(event);
+  const capability = activeCapability.value;
+  if (!action || !capability || !canUseComposerShortcut()) return;
+  if (action === "optimize") {
+    if (!canOptimizeActivePrompt(capability)) return;
+    event.preventDefault();
+    void handlePromptOptimize(capability);
+    return;
+  }
+  if (!canSubmitActivePrompt(capability)) return;
+  event.preventDefault();
+  submitActiveComposer(capability);
+}
+
+function teardownAiThinkingAnimation() {
+  aiThinkingAnimations.forEach((animation) => animation.kill());
+  aiThinkingAnimations = [];
+}
+
+function setupAiThinkingAnimation() {
+  void nextTick(() => {
+    teardownAiThinkingAnimation();
+    const panels = Array.from(document.querySelectorAll<HTMLElement>(".ai-thinking-panel"));
+    if (!panels.length || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+    panels.forEach((panel) => {
+      const orbs = panel.querySelectorAll(".ai-thinking-orb");
+      const dots = panel.querySelectorAll(".ai-thinking-dot");
+      const ring = panel.querySelector(".ai-thinking-ring");
+      const scan = panel.querySelector(".ai-thinking-scan");
+      const timeline = gsap.timeline({ repeat: -1, defaults: { ease: "sine.inOut" } });
+
+      timeline
+        .to(
+          orbs,
+          {
+            y: -5,
+            scale: 1.1,
+            autoAlpha: 0.92,
+            duration: 0.58,
+            stagger: { each: 0.08, from: "center" },
+            yoyo: true,
+            repeat: 1,
+          },
+          0,
+        )
+        .to(
+          dots,
+          {
+            y: -4,
+            autoAlpha: 0.5,
+            duration: 0.48,
+            stagger: { each: 0.12, from: "start" },
+            yoyo: true,
+            repeat: 1,
+          },
+          0.08,
+        );
+
+      aiThinkingAnimations.push(timeline);
+      if (ring) {
+        aiThinkingAnimations.push(
+          gsap.to(ring, { rotation: 360, duration: 2.8, repeat: -1, ease: "none", transformOrigin: "50% 50%" }),
+        );
+      }
+      if (scan) {
+        aiThinkingAnimations.push(gsap.fromTo(scan, { xPercent: -120 }, { xPercent: 120, duration: 1.6, repeat: -1, ease: "power1.inOut" }));
+      }
+    });
+  });
+}
+
 onMounted(async () => {
   await initializeSession();
   syncProfileForm();
   syncInitialModels();
   handleHashChange();
   window.addEventListener("hashchange", handleHashChange);
+  window.addEventListener("keydown", handleComposerShortcutKey);
+  setupAiThinkingAnimation();
 });
 
 onUnmounted(() => {
   stopTextPolling();
   stopImagePolling();
   stopVideoPolling();
+  teardownAiThinkingAnimation();
   document.documentElement.classList.remove("media-preview-open");
   window.removeEventListener("hashchange", handleHashChange);
+  window.removeEventListener("keydown", handleComposerShortcutKey);
 });
 
 watch(
@@ -834,6 +964,16 @@ watch(
     localStorage.setItem(THEME_STORAGE_KEY, normalized);
   },
   { immediate: true },
+);
+
+watch(
+  () =>
+    currentMessages.value
+      .filter((message) => message.status === "processing")
+      .map((message) => `${message.id}:${message.capability}:${message.content}`)
+      .join("|"),
+  () => setupAiThinkingAnimation(),
+  { flush: "post" },
 );
 
 watch(
@@ -966,24 +1106,33 @@ async function refreshConversations() {
 
 async function openConversation(conversationId: string) {
   if (!auth.state.user) return;
+  const loadVersion = ++modelConversationLoadVersion;
   conversationState.loading = true;
   conversationState.error = "";
   try {
     const conversation = await fetchConversation(conversationId);
+    if (loadVersion !== modelConversationLoadVersion) return;
     setCurrentConversation(conversation);
     navigate(capabilityToView(conversation.capability));
     selectConversationModel(conversation);
     conversationState.listOpen = false;
   } catch (error) {
-    conversationState.error = error instanceof Error ? error.message : "打开历史记录失败。";
+    if (loadVersion === modelConversationLoadVersion) {
+      conversationState.error = error instanceof Error ? error.message : "打开历史记录失败。";
+    }
   } finally {
-    conversationState.loading = false;
+    if (loadVersion === modelConversationLoadVersion) {
+      conversationState.loading = false;
+    }
   }
 }
 
 function setCurrentConversation(conversation?: ConversationDefinition | null) {
   if (!conversation) return;
   conversationState.current = conversation;
+  conversationState.renameEditing = false;
+  conversationState.renameDraft = conversation.title || "";
+  conversationState.renameError = "";
   upsertConversationSummary(conversation);
 }
 
@@ -1004,6 +1153,7 @@ function capabilityToView(capability: Capability): ViewName {
 }
 
 function startNewConversation(nextView: ViewName = view.value) {
+  modelConversationLoadVersion += 1;
   stopActiveRequest();
   stopTextPolling();
   stopImagePolling();
@@ -1013,6 +1163,9 @@ function startNewConversation(nextView: ViewName = view.value) {
   conversationState.current = null;
   conversationState.streamingMessageId = "";
   conversationState.streamingContent = "";
+  conversationState.renameEditing = false;
+  conversationState.renameDraft = "";
+  conversationState.renameError = "";
   textState.result = null;
   imageState.result = null;
   videoState.createResult = null;
@@ -1213,7 +1366,7 @@ async function toggleHistoryDrawer() {
 function selectConversationModel(conversation: ConversationDefinition) {
   if (!conversation.modelGroupId) return;
   const model = store.models.value.find((item) => item.id === conversation.modelGroupId);
-  if (model) selectModel(model);
+  if (model) applySelectedModel(model);
 }
 
 function updateConversationFromUnknown(payload: unknown) {
@@ -2087,6 +2240,19 @@ function editAdminUser(user: AdminUserDefinition) {
   adminState.editingUserId = adminState.editingUserId === user.id ? "" : user.id;
 }
 
+function openAdminActionDrawer(type: AdminActionDrawerType, id: string) {
+  adminState.actionDrawerType = type;
+  adminState.actionDrawerId = id;
+  if (type === "user") {
+    adminState.selectedUserId = id;
+  }
+}
+
+function closeAdminActionDrawer() {
+  adminState.actionDrawerType = "";
+  adminState.actionDrawerId = "";
+}
+
 function adminSaveError(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
@@ -2550,18 +2716,116 @@ function getModelHref(model: ModelDefinition): ViewName {
   return "text";
 }
 
-function selectModel(model: ModelDefinition) {
-  if (shouldResetConversationForModelSwitch(conversationState.current, {
-    capability: model.capability,
-    modelGroupId: model.id,
-    subModelId: model.primarySubModelId || null,
-  })) {
-    startNewConversation(getModelHref(model));
-  }
+function applySelectedModel(model: ModelDefinition) {
   if (model.capability === "text") textModelId.value = model.id;
   if (model.capability === "image") imageModelId.value = model.id;
   if (model.capability === "video") videoModelId.value = model.id;
-  navigate(getModelHref(model));
+}
+
+async function loadLatestConversationForModel(model: ModelDefinition, loadVersion: number): Promise<boolean> {
+  if (!auth.state.user) return false;
+  conversationState.loading = true;
+  conversationState.error = "";
+  try {
+    conversationState.conversations = await fetchConversations();
+    if (loadVersion !== modelConversationLoadVersion) return false;
+    const latest = latestConversationForModel(conversationState.conversations, {
+      capability: model.capability,
+      modelGroupId: model.id,
+      subModelId: model.primarySubModelId || null,
+    });
+    if (!latest) return false;
+    const conversation = await fetchConversation(latest.id);
+    if (loadVersion !== modelConversationLoadVersion) return false;
+    setCurrentConversation(conversation);
+    return true;
+  } catch (error) {
+    if (loadVersion === modelConversationLoadVersion) {
+      conversationState.error = error instanceof Error ? error.message : "加载最近对话失败。";
+    }
+    return false;
+  } finally {
+    if (loadVersion === modelConversationLoadVersion) {
+      conversationState.loading = false;
+    }
+  }
+}
+
+async function selectModel(model: ModelDefinition, options: { restoreLatestConversation?: boolean } = {}) {
+  const targetView = getModelHref(model);
+  const shouldClearCurrent = shouldResetConversationForModelSwitch(conversationState.current, {
+    capability: model.capability,
+    modelGroupId: model.id,
+    subModelId: model.primarySubModelId || null,
+  });
+  applySelectedModel(model);
+  navigate(targetView);
+  if (options.restoreLatestConversation === false) return;
+  const loadVersion = ++modelConversationLoadVersion;
+  const restored = await loadLatestConversationForModel(model, loadVersion);
+  if (!restored && shouldClearCurrent && loadVersion === modelConversationLoadVersion) {
+    startNewConversation(targetView);
+  }
+}
+
+function applyConversationTitle(conversationId: string, title: string) {
+  if (conversationState.current?.id === conversationId) {
+    conversationState.current = {
+      ...conversationState.current,
+      title,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+  const index = conversationState.conversations.findIndex((item) => item.id === conversationId);
+  if (index >= 0) {
+    conversationState.conversations[index] = {
+      ...conversationState.conversations[index],
+      title,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+}
+
+function startRenameConversation() {
+  if (!conversationState.current) {
+    showToast("当前还没有可重命名的对话。", "info");
+    return;
+  }
+  conversationState.renameDraft = conversationState.current.title || "";
+  conversationState.renameError = "";
+  conversationState.renameEditing = true;
+}
+
+function cancelRenameConversation() {
+  conversationState.renameEditing = false;
+  conversationState.renameDraft = conversationState.current?.title || "";
+  conversationState.renameError = "";
+}
+
+async function saveConversationRename() {
+  const conversation = conversationState.current;
+  if (!conversation) return;
+  const title = conversationState.renameDraft.trim();
+  if (!title) {
+    conversationState.renameError = "请输入对话名称。";
+    return;
+  }
+  conversationState.renameSaving = true;
+  conversationState.renameError = "";
+  try {
+    if (!auth.state.user || conversation.id.startsWith("local-")) {
+      applyConversationTitle(conversation.id, title);
+    } else {
+      setCurrentConversation(await updateConversationTitle(conversation.id, title));
+    }
+    conversationState.renameEditing = false;
+    showToast("对话已重命名", "success");
+  } catch (error) {
+    conversationState.renameError = error instanceof Error ? error.message : "重命名失败，请稍后重试。";
+    showToast(conversationState.renameError, "error");
+  } finally {
+    conversationState.renameSaving = false;
+  }
 }
 
 function activeModelIdForSidebar(): string {
@@ -3748,6 +4012,47 @@ function modelIconUrl(model: ModelDefinition): string {
   return modelCatalogIconUrl(model);
 }
 
+function avatarInitial(value: string | null | undefined, fallback: string) {
+  const normalized = (value || "").trim();
+  if (!normalized) return fallback;
+  return Array.from(normalized)[0]?.toUpperCase() || fallback;
+}
+
+function messageModel(message: ConversationMessage): ModelDefinition | null {
+  return store.models.value.find((model) => model.id === message.modelGroupId) || activeModel.value || null;
+}
+
+function messageAuthorLabel(message: ConversationMessage): string {
+  if (message.role === "user") {
+    return auth.state.user?.nickname || auth.state.user?.email || auth.state.user?.phone || "你";
+  }
+  const model = messageModel(message);
+  return model ? modelDisplayName(model) : "AI";
+}
+
+function messageAvatarUrl(message: ConversationMessage): string {
+  if (message.role === "user") return auth.state.user?.avatarUrl || "";
+  const model = messageModel(message);
+  return model ? modelIconUrl(model) : "";
+}
+
+function messageAvatarLabel(message: ConversationMessage): string {
+  if (message.role === "user") {
+    return avatarInitial(auth.state.user?.nickname || auth.state.user?.email || auth.state.user?.phone, "U");
+  }
+  const model = messageModel(message);
+  if (model) return avatarInitial(modelDisplayName(model), "AI");
+  if (message.capability === "image") return "I";
+  if (message.capability === "video") return "V";
+  return "AI";
+}
+
+function aiThinkingCaption(message: ConversationMessage): string {
+  if (message.capability === "image") return "正在绘制图像与处理参考图";
+  if (message.capability === "video") return "正在生成视频任务并等待上游结果";
+  return "正在组织回复内容";
+}
+
 function modelSafeDescription(model: ModelDefinition | null | undefined): string {
   return safeModelDescription(model, "选择模型并输入需求开始调试。");
 }
@@ -4223,6 +4528,25 @@ async function removeUnavailableModels() {
         <div class="workspace-topbar-actions">
           <button @click="startNewConversation()">+ 新建对话</button>
           <button class="button-secondary" @click="toggleHistoryDrawer">历史记录</button>
+          <div v-if="activeCapability" class="topbar-conversation-name">
+            <template v-if="conversationState.renameEditing">
+              <input
+                v-model="conversationState.renameDraft"
+                class="topbar-conversation-input"
+                :disabled="conversationState.renameSaving"
+                placeholder="输入对话名称"
+                @keyup.enter="saveConversationRename"
+                @keyup.esc="cancelRenameConversation"
+              />
+              <button class="button-secondary topbar-rename-action" :disabled="conversationState.renameSaving" @click="saveConversationRename">保存</button>
+              <button class="button-link topbar-rename-action" :disabled="conversationState.renameSaving" @click="cancelRenameConversation">取消</button>
+            </template>
+            <template v-else>
+              <span class="topbar-conversation-title">{{ currentConversationTitle }}</span>
+              <button class="button-link topbar-rename-button" :disabled="!conversationState.current" @click="startRenameConversation">重命名</button>
+            </template>
+            <span v-if="conversationState.renameError" class="topbar-conversation-error">{{ conversationState.renameError }}</span>
+          </div>
           <button v-if="conversationState.activeRequest" class="button-danger" @click="stopActiveRequest">暂停</button>
         </div>
         <div class="workspace-topbar-actions">
@@ -4268,24 +4592,31 @@ async function removeUnavailableModels() {
           </aside>
 
           <div v-if="currentMessages.length" class="conversation-timeline">
-            <header class="conversation-header">
-              <div>
-                <p class="eyebrow">{{ activeCapability ? CAPABILITY_LABELS[activeCapability] : "Conversation" }}</p>
-                <h2>{{ conversationState.current?.title || "新对话" }}</h2>
-              </div>
-              <div class="conversation-header-actions">
-                <span class="badge">{{ currentMessages.length }} 条消息</span>
-                <span class="badge">{{ conversationState.current?.status || "active" }}</span>
-              </div>
-            </header>
-
             <article
               v-for="message in currentMessages"
               :key="message.id"
               :class="['message-card', `message-${message.role}`, `message-status-${message.status}`]"
             >
+              <div
+                :class="[
+                  'message-avatar',
+                  message.role === 'user' ? 'message-avatar-user' : 'message-avatar-ai',
+                  messageAvatarUrl(message) ? 'message-avatar-has-image' : '',
+                ]"
+                :title="messageAuthorLabel(message)"
+              >
+                <img
+                  v-if="messageAvatarUrl(message)"
+                  :src="messageAvatarUrl(message)"
+                  :alt="messageAuthorLabel(message)"
+                  loading="lazy"
+                  @error="hideBrokenModelIcon"
+                />
+                <span v-else>{{ messageAvatarLabel(message) }}</span>
+              </div>
+              <div class="message-bubble">
               <div class="message-meta">
-                <span>{{ message.role === "user" ? "你" : "模型" }}</span>
+                <span>{{ messageAuthorLabel(message) }}</span>
                 <span>{{ messageStatusLabel(message) }}</span>
                 <span>{{ formatConversationTime(message.createdAt) }}</span>
               </div>
@@ -4299,9 +4630,23 @@ async function removeUnavailableModels() {
                 v-html="markdownPreview(previewMessageContent(message))"
               />
               <p v-else-if="message.content" class="message-content">{{ message.content }}</p>
-              <div v-if="message.status === 'processing'" class="long-loading">
-                <span class="loader-dot" />
-                <span>{{ message.capability === "video" ? "视频任务运行中，可以稍后重新进入历史记录继续查询。" : "模型正在生成，请保持当前会话打开。" }}</span>
+              <div v-if="message.status === 'processing'" class="long-loading ai-thinking-panel" aria-live="polite" aria-label="AI 正在思考">
+                <div class="ai-thinking-visual" aria-hidden="true">
+                  <span class="ai-thinking-ring"></span>
+                  <span class="ai-thinking-scan"></span>
+                  <span class="ai-thinking-orb ai-thinking-orb-main"></span>
+                  <span class="ai-thinking-orb ai-thinking-orb-left"></span>
+                  <span class="ai-thinking-orb ai-thinking-orb-right"></span>
+                </div>
+                <div class="ai-thinking-copy">
+                  <strong>AI Thinking</strong>
+                  <span>{{ aiThinkingCaption(message) }}</span>
+                  <i>
+                    <span class="ai-thinking-dot"></span>
+                    <span class="ai-thinking-dot"></span>
+                    <span class="ai-thinking-dot"></span>
+                  </i>
+                </div>
                 <button v-if="message.capability === 'video'" class="button-secondary" @click="() => handleVideoQuery(message.content)">查询进度</button>
               </div>
               <div v-if="message.assets.length" class="message-assets">
@@ -4318,6 +4663,7 @@ async function removeUnavailableModels() {
                     <a class="button-secondary" :href="asset.url" download target="_blank" rel="noreferrer">保存</a>
                   </div>
                 </article>
+              </div>
               </div>
             </article>
           </div>
@@ -4401,7 +4747,7 @@ async function removeUnavailableModels() {
           <div v-if="view === 'text'" class="composer-surface">
             <div class="prompt-input-wrap">
               <textarea v-model="textState.prompt" class="composer-input" :placeholder="textComposerPlaceholder" />
-              <button class="prompt-ai-button" :disabled="textState.loading || textState.optimizing || !textState.prompt.trim()" title="优化提示词" @click="handlePromptOptimize('text')">
+              <button class="prompt-ai-button" :disabled="textState.loading || textState.optimizing || !textState.prompt.trim()" title="优化提示词（Ctrl+I）" @click="handlePromptOptimize('text')">
                 {{ textState.optimizing ? "..." : "AI" }}
               </button>
             </div>
@@ -4411,7 +4757,7 @@ async function removeUnavailableModels() {
                 <label><span>温度</span><input v-model="textState.temperature" /></label>
                 <label><span>最大 Token</span><input v-model="textState.maxTokens" /></label>
               </div>
-              <button class="composer-submit-button" :disabled="textState.loading" @click="handleTextSubmit">发送</button>
+              <button class="composer-submit-button" :disabled="textState.loading" title="发送（Ctrl+Enter）" @click="handleTextSubmit">发送</button>
             </div>
             <details class="composer-details">
               <summary>系统提示词与高级 JSON</summary>
@@ -4440,7 +4786,7 @@ async function removeUnavailableModels() {
               </label>
               <div class="prompt-input-wrap">
                 <textarea v-model="imageState.prompt" class="composer-input" :placeholder="imageComposerPlaceholder" />
-                <button class="prompt-ai-button" :disabled="imageState.loading || imageState.optimizing || !imageState.prompt.trim()" title="优化提示词" @click="handlePromptOptimize('image')">
+                <button class="prompt-ai-button" :disabled="imageState.loading || imageState.optimizing || !imageState.prompt.trim()" title="优化提示词（Ctrl+I）" @click="handlePromptOptimize('image')">
                   {{ imageState.optimizing ? "..." : "AI" }}
                 </button>
               </div>
@@ -4553,7 +4899,7 @@ async function removeUnavailableModels() {
                 </div>
               </div>
               <div class="composer-action-group">
-                <button class="composer-submit-button" :disabled="imageState.loading" @click="handleImageSubmit">生成</button>
+                <button class="composer-submit-button" :disabled="imageState.loading" title="生成（Ctrl+Enter）" @click="handleImageSubmit">生成</button>
                 <button class="button-secondary composer-query-button" :disabled="imageState.loading || !imageTaskIdFromConversation()" @click="() => handleImageQuery()">查询</button>
               </div>
             </div>
@@ -4591,7 +4937,7 @@ async function removeUnavailableModels() {
               </div>
               <div class="prompt-input-wrap">
                 <textarea v-model="videoState.prompt" class="composer-input" :placeholder="videoComposerPlaceholder" />
-                <button class="prompt-ai-button" :disabled="videoState.loading || videoState.optimizing || !videoState.prompt.trim()" title="优化提示词" @click="handlePromptOptimize('video')">
+                <button class="prompt-ai-button" :disabled="videoState.loading || videoState.optimizing || !videoState.prompt.trim()" title="优化提示词（Ctrl+I）" @click="handlePromptOptimize('video')">
                   {{ videoState.optimizing ? "..." : "AI" }}
                 </button>
               </div>
@@ -4725,7 +5071,7 @@ async function removeUnavailableModels() {
                 </div>
               </div>
               <div class="composer-video-actions composer-action-group">
-                <button class="composer-submit-button" :disabled="videoState.loading" @click="handleVideoCreate">创建</button>
+                <button class="composer-submit-button" :disabled="videoState.loading" title="创建（Ctrl+Enter）" @click="handleVideoCreate">创建</button>
                 <button class="button-secondary composer-query-button" :disabled="videoState.querying || !videoState.createResult?.taskId" @click="() => handleVideoQuery()">查询</button>
               </div>
             </div>
@@ -5505,11 +5851,7 @@ async function removeUnavailableModels() {
                     <span>{{ user.lastSeenAt ? formatConversationTime(user.lastSeenAt) : formatConversationTime(user.updatedAt) }}</span>
                     <div class="admin-action-cell">
                       <button class="button-secondary" @click="adminState.selectedUserId = user.id">详情</button>
-                      <button class="button-secondary" @click="editAdminUser(user)">{{ adminState.editingUserId === user.id ? "收起" : "编辑" }}</button>
-                      <button class="button-secondary" :disabled="user.isAdmin" @click="setAdminUserStatus(user, 'enable')">启用</button>
-                      <button class="button-secondary" :disabled="user.isAdmin" @click="setAdminUserStatus(user, 'disable')">禁用</button>
-                      <button class="button-danger" :disabled="user.isAdmin" @click="setAdminUserStatus(user, 'delete')">删除</button>
-                      <button class="button-secondary" :disabled="user.isAdmin" @click="setAdminUserStatus(user, 'restore')">恢复</button>
+                      <button class="button-secondary admin-row-operation-button" @click="openAdminActionDrawer('user', user.id)">操作</button>
                     </div>
                     <div v-if="adminState.editingUserId === user.id" class="admin-row-editor admin-user-fields">
                       <label><span>昵称</span><input v-model="user.nickname" /></label>
@@ -5550,6 +5892,39 @@ async function removeUnavailableModels() {
                       </dl>
                     </template>
                     <p v-else class="admin-empty">点击用户行里的“详情”查看用户画像、会话和登录信息。</p>
+                  </aside>
+                </div>
+                <div v-if="adminActionDrawerOpen" class="admin-action-drawer-backdrop" role="dialog" aria-modal="true" aria-label="行操作" @click.self="closeAdminActionDrawer">
+                  <aside class="admin-action-drawer">
+                    <div class="admin-action-drawer-head">
+                      <div>
+                        <span>行操作</span>
+                        <strong>{{ adminActionDrawerUser ? adminUserLabel(adminActionDrawerUser) : "请选择对象" }}</strong>
+                      </div>
+                      <button class="button-secondary" @click="closeAdminActionDrawer">关闭</button>
+                    </div>
+                    <template v-if="adminActionDrawerUser">
+                      <div class="admin-action-target-card">
+                        <div class="admin-user-avatar">{{ (adminActionDrawerUser.nickname || adminActionDrawerUser.email || "U").slice(0, 1) }}</div>
+                        <div>
+                          <strong>{{ adminUserLabel(adminActionDrawerUser) }}</strong>
+                          <span>{{ adminActionDrawerUser.email || "未填写邮箱" }}</span>
+                          <small>ID {{ adminActionDrawerUser.id }}</small>
+                        </div>
+                      </div>
+                      <div class="admin-action-drawer-buttons">
+                        <button class="button-secondary" @click="adminState.selectedUserId = adminActionDrawerUser.id">查看详情</button>
+                        <button class="button-secondary" @click="editAdminUser(adminActionDrawerUser)">
+                          {{ adminState.editingUserId === adminActionDrawerUser.id ? "收起编辑" : "编辑资料" }}
+                        </button>
+                        <button class="button-secondary" :disabled="adminActionDrawerUser.isAdmin || adminState.saving === `${adminActionDrawerUser.id}:enable`" @click="setAdminUserStatus(adminActionDrawerUser, 'enable')">启用用户</button>
+                        <button class="button-secondary" :disabled="adminActionDrawerUser.isAdmin || adminState.saving === `${adminActionDrawerUser.id}:disable`" @click="setAdminUserStatus(adminActionDrawerUser, 'disable')">禁用用户</button>
+                        <button class="button-secondary" :disabled="adminActionDrawerUser.isAdmin || adminState.saving === `${adminActionDrawerUser.id}:restore`" @click="setAdminUserStatus(adminActionDrawerUser, 'restore')">恢复用户</button>
+                        <button class="button-danger" :disabled="adminActionDrawerUser.isAdmin || adminState.saving === `${adminActionDrawerUser.id}:delete`" @click="setAdminUserStatus(adminActionDrawerUser, 'delete')">删除用户</button>
+                      </div>
+                      <p v-if="adminActionDrawerUser.isAdmin" class="admin-drawer-note">管理员账号不可在这里禁用、删除或恢复。</p>
+                    </template>
+                    <p v-else class="admin-empty">当前对象不存在或已被刷新，请重新选择列表行。</p>
                   </aside>
                 </div>
               </template>

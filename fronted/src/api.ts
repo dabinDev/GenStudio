@@ -390,6 +390,11 @@ export async function fetchConversation(conversationId: string): Promise<Convers
   return payload.conversation;
 }
 
+export async function updateConversationTitle(conversationId: string, title: string): Promise<ConversationDefinition> {
+  const payload = await postApi<{ conversation: ConversationDefinition }>(`/api/conversations/${conversationId}/rename`, { title });
+  return payload.conversation;
+}
+
 export async function createServerModel(body: Record<string, unknown>): Promise<ServerModelDefinition> {
   const payload = await postApi<{ model: ServerModelDefinition }>("/api/models", body);
   return payload.model;

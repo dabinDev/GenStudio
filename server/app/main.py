@@ -68,6 +68,7 @@ from app.conversation_service import (
     reload_conversation,
     serialize_conversation,
     serialize_message,
+    update_conversation_title,
 )
 from app.catalog_service import (
     fetch_kkyi_catalog_details,
@@ -125,6 +126,7 @@ from app.schemas import (
     AdminModelUpdate,
     AdminUserUpdate,
     ConversationCreate,
+    ConversationUpdate,
     DevLoginRequest,
     LoginRequest,
     KkyiCatalogSyncRequest,
@@ -2276,6 +2278,30 @@ async def conversation_detail(
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     conversation = get_conversation(db, current_user, conversation_id)
+    return {"conversation": serialize_conversation(conversation).model_dump()}
+
+
+@app.put("/api/conversations/{conversation_id}")
+async def update_conversation_route(
+    conversation_id: str,
+    payload: ConversationUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    conversation = update_conversation_title(db, current_user, conversation_id, payload.title)
+    return {"conversation": serialize_conversation(conversation).model_dump()}
+
+
+@app.post("/api/conversations/{conversation_id}/rename")
+async def rename_conversation_route(
+    conversation_id: str,
+    payload: ConversationUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    conversation = update_conversation_title(db, current_user, conversation_id, payload.title)
     return {"conversation": serialize_conversation(conversation).model_dump()}
 
 

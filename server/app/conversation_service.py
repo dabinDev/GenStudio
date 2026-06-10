@@ -138,6 +138,15 @@ def create_conversation(db: Session, user: User, payload: ConversationCreate) ->
     return get_conversation(db, user, conversation.id)
 
 
+def update_conversation_title(db: Session, user: User, conversation_id: str, title: str) -> Conversation:
+    conversation = get_conversation(db, user, conversation_id)
+    conversation.title = make_title(title)
+    conversation.updated_at = utcnow()
+    db.add(conversation)
+    db.commit()
+    return get_conversation(db, user, conversation.id)
+
+
 def ensure_conversation(
     db: Session,
     user: User,

@@ -9,7 +9,9 @@ import {
   updateLocalConversationTaskMessage,
   markConversationMessageFailed,
   catalogOptionMaxCount,
+  composerShortcutFromKeyboardEvent,
   generatedAssetReferenceFileName,
+  latestConversationForModel,
   findPromptBeforeMessage,
   getModelIdentifierError,
   getMissingModelMessage,
@@ -88,6 +90,22 @@ describe("reference upload helpers", () => {
     ];
 
     expect(filterReferenceImageFiles(files).map((file) => file.name)).toEqual(["scene.png", "car.JPG", "texture.webp"]);
+  });
+});
+
+describe("composer keyboard shortcuts", () => {
+  it("maps Ctrl+I to prompt optimization and Ctrl+Enter to submit", () => {
+    expect(composerShortcutFromKeyboardEvent({ ctrlKey: true, key: "i" })).toBe("optimize");
+    expect(composerShortcutFromKeyboardEvent({ ctrlKey: true, key: "I" })).toBe("optimize");
+    expect(composerShortcutFromKeyboardEvent({ ctrlKey: true, key: "Enter" })).toBe("submit");
+  });
+
+  it("ignores repeated, composing, and modified shortcuts", () => {
+    expect(composerShortcutFromKeyboardEvent({ ctrlKey: true, key: "i", repeat: true })).toBeNull();
+    expect(composerShortcutFromKeyboardEvent({ ctrlKey: true, key: "i", isComposing: true })).toBeNull();
+    expect(composerShortcutFromKeyboardEvent({ ctrlKey: true, altKey: true, key: "i" })).toBeNull();
+    expect(composerShortcutFromKeyboardEvent({ metaKey: true, key: "i" })).toBeNull();
+    expect(composerShortcutFromKeyboardEvent({ ctrlKey: false, key: "Enter" })).toBeNull();
   });
 });
 
@@ -1382,6 +1400,54 @@ describe("conversation helpers", () => {
     expect(shouldResetConversationForModelSwitch({ capability: "video", modelGroupId: "mdl-veo" }, { capability: "video", modelGroupId: "mdl-happyhorse" })).toBe(true);
     expect(shouldResetConversationForModelSwitch({ capability: "image", subModelId: "sub-image" }, { capability: "image", subModelId: "sub-image" })).toBe(false);
     expect(shouldResetConversationForModelSwitch(null, { capability: "text" })).toBe(false);
+  });
+
+  it("finds the newest conversation for the selected model context", () => {
+    const conversations = [
+      conversation({
+        id: "old-image",
+        capability: "image",
+        modelGroupId: "mdl-image",
+        subModelId: "sub-image",
+        updatedAt: "2026-06-01T10:00:00Z",
+      }),
+      conversation({
+        id: "new-image",
+        capability: "image",
+        modelGroupId: "mdl-image",
+        subModelId: "sub-image",
+        updatedAt: "2026-06-02T10:00:00Z",
+      }),
+      conversation({
+        id: "other-submodel",
+        capability: "image",
+        modelGroupId: "mdl-image",
+        subModelId: "sub-other",
+        updatedAt: "2026-06-03T10:00:00Z",
+      }),
+      conversation({
+        id: "video",
+        capability: "video",
+        modelGroupId: "mdl-image",
+        subModelId: "sub-image",
+        updatedAt: "2026-06-04T10:00:00Z",
+      }),
+    ];
+
+    expect(
+      latestConversationForModel(conversations, {
+        capability: "image",
+        modelGroupId: "mdl-image",
+        subModelId: "sub-image",
+      })?.id,
+    ).toBe("new-image");
+    expect(
+      latestConversationForModel(conversations, {
+        capability: "image",
+        modelGroupId: "mdl-image",
+        subModelId: "",
+      })?.id,
+    ).toBe("other-submodel");
   });
 
   it("hides the current conversation when it belongs to another active creation type", () => {

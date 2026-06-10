@@ -157,6 +157,39 @@ def test_conversations_are_isolated_per_user() -> None:
     assert bob_list.json()["conversations"] == []
 
 
+def test_conversation_title_can_be_renamed_by_owner_only() -> None:
+    alice = TestClient(app)
+    bob = TestClient(app)
+    login(alice, "alice")
+    login(bob, "bob")
+
+    created = alice.post(
+        "/api/conversations",
+        headers=csrf_headers(alice),
+        json={"title": "Alice chat", "capability": "text"},
+    )
+    assert created.status_code == 200
+    conversation_id = created.json()["conversation"]["id"]
+
+    renamed = alice.post(
+        f"/api/conversations/{conversation_id}/rename",
+        headers=csrf_headers(alice),
+        json={"title": "新标题"},
+    )
+    assert renamed.status_code == 200
+    assert renamed.json()["conversation"]["title"] == "新标题"
+
+    detail = alice.get(f"/api/conversations/{conversation_id}")
+    assert detail.json()["conversation"]["title"] == "新标题"
+
+    blocked = bob.post(
+        f"/api/conversations/{conversation_id}/rename",
+        headers=csrf_headers(bob),
+        json={"title": "Bob title"},
+    )
+    assert blocked.status_code == 404
+
+
 def test_text_proxy_records_successful_conversation_message(monkeypatch) -> None:
     async def fake_forward_json(method, url, api_key, body=None):
         return (

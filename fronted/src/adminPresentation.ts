@@ -94,7 +94,7 @@ export const ADMIN_PAGE_SUGGESTIONS: Record<AdminTab, string[]> = {
   ],
   audit: [
     "高风险操作醒目标记。",
-    "按目标对象筛选。",
-    "支持日志导出。",
+    "按目标对象快速筛选。",
+    "支持审计日志导出。",
   ],
 };

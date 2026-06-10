@@ -372,6 +372,10 @@ class ConversationCreate(BaseModel):
     subModelId: str | None = None
 
 
+class ConversationUpdate(BaseModel):
+    title: str
+
+
 class GeneratedAssetOut(BaseModel):
     id: str
     capability: str

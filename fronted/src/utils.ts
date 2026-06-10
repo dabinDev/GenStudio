@@ -35,6 +35,20 @@ export function toggleThemeMode(value: ThemeMode): ThemeMode {
   return value === "light" ? "dark" : "light";
 }
 
+export type ComposerShortcutAction = "optimize" | "submit";
+
+export function composerShortcutFromKeyboardEvent(
+  event: Partial<Pick<KeyboardEvent, "altKey" | "ctrlKey" | "isComposing" | "key" | "metaKey" | "repeat" | "shiftKey">>,
+): ComposerShortcutAction | null {
+  if (!event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || event.repeat || event.isComposing) {
+    return null;
+  }
+  const key = String(event.key || "").toLowerCase();
+  if (key === "i") return "optimize";
+  if (key === "enter") return "submit";
+  return null;
+}
+
 export function safeJsonParse<T>(value: string | null, fallback: T): T {
   if (!value) return fallback;
   try {
@@ -818,6 +832,26 @@ export function shouldResetConversationForModelSwitch(
   if (conversation.subModelId && nextModel.subModelId && conversation.subModelId !== nextModel.subModelId) return true;
   if (conversation.modelGroupId && nextModel.modelGroupId && conversation.modelGroupId !== nextModel.modelGroupId) return true;
   return false;
+}
+
+export function latestConversationForModel(
+  conversations: ConversationDefinition[],
+  model: { capability: Capability; modelGroupId?: string | null; subModelId?: string | null },
+): ConversationDefinition | null {
+  const modelGroupId = model.modelGroupId || "";
+  const subModelId = model.subModelId || "";
+  const matches = conversations.filter((conversation) => {
+    if (conversation.capability !== model.capability) return false;
+    if (modelGroupId && conversation.modelGroupId !== modelGroupId) return false;
+    if (subModelId && conversation.subModelId && conversation.subModelId !== subModelId) return false;
+    return true;
+  });
+  matches.sort((left, right) => {
+    const rightTime = new Date(right.updatedAt || right.createdAt).getTime() || 0;
+    const leftTime = new Date(left.updatedAt || left.createdAt).getTime() || 0;
+    return rightTime - leftTime;
+  });
+  return matches[0] || null;
 }
 
 export function visibleConversationMessages(

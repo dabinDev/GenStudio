@@ -17,6 +17,13 @@ from app.schemas import LoginRequest, ProfileUpdateRequest, RegisterRequest, Use
 from app.security import create_csrf_token, create_session_token, hash_password, hash_token, verify_password
 
 
+def client_ip_from_request(request: Request) -> str:
+    forwarded_for = request.headers.get("x-forwarded-for", "")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()[:64]
+    return (request.client.host if request.client else "unknown")[:64]
+
+
 def is_admin_user(user: User | None, settings: Settings | None = None) -> bool:
     return resolve_admin_role(user, settings) != "none"
 
@@ -86,11 +93,18 @@ def upsert_user(
     return user
 
 
-def create_session(db: Session, response: Response, user: User) -> str:
+def create_session(db: Session, response: Response, user: User, client_ip: str = "") -> str:
     settings = get_settings()
     token = create_session_token()
     expires_at = utcnow() + timedelta(days=settings.session_ttl_days)
-    db.add(SessionRecord(user_id=user.id, token_hash=hash_token(token), expires_at=expires_at))
+    db.add(
+        SessionRecord(
+            user_id=user.id,
+            token_hash=hash_token(token),
+            client_ip=(client_ip or "")[:64],
+            expires_at=expires_at,
+        )
+    )
     cookie_kwargs: dict[str, Any] = {}
     if settings.cookie_domain:
         cookie_kwargs["domain"] = settings.cookie_domain

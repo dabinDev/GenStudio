@@ -32,6 +32,9 @@ export interface ModelDefinition {
   publicTags?: string[];
   promptOptimizeEnabled?: boolean;
   defaultParameters?: Record<string, unknown>;
+  creditPrice?: number;
+  creditPriceSource?: string;
+  creditPricingEnabled?: boolean;
 }
 
 export interface ModelSetting {
@@ -49,84 +52,54 @@ export interface UserProfile {
   nickname: string;
   avatarUrl: string;
   isAdmin?: boolean;
+  credits?: CreditAccount | null;
 }
 
-export interface AdminOverview {
-  totalCalls: number;
-  successCalls: number;
-  failedCalls: number;
-  failureRate: number;
-  averageDurationMs: number;
-  publicModelCalls: number;
-  privateModelCalls: number;
-  quotaUnits?: number;
-  averageQueueMs?: number;
-  timeoutCalls?: number;
-  timeoutRate?: number;
-  trend?: Record<"day" | "week" | "month", AdminTrendPoint[]>;
-  failedModels?: AdminFailedModel[];
-}
-
-export interface AdminTrendPoint {
-  label: string;
-  totalCalls: number;
-  successCalls: number;
-  failedCalls: number;
-  quotaUnits: number;
-  averageDurationMs: number;
-}
-
-export interface AdminFailedModel {
-  modelGroupId: string;
-  modelName: string;
-  capability: Capability | "";
-  failedCalls: number;
-  totalCalls: number;
-  failureRate: number;
-  lastError: string;
-}
-
-export interface AdminOverviewUserRow {
-  user: AdminUserDefinition;
-  totalCalls: number;
-  publicModelCalls: number;
-  privateModelCalls: number;
-  failedCalls: number;
-  successCalls?: number;
-  averageDurationMs?: number;
-}
-
-export interface AdminOverviewModelRow {
-  model: ServerModelDefinition;
-  totalCalls: number;
-  successCalls: number;
-  failedCalls: number;
-  averageDurationMs: number;
-  failureRate?: number;
-  timeoutCalls?: number;
-  quotaUnits?: number;
-}
-
-export interface AdminUserDefinition extends UserProfile {
-  status: string;
+export interface CreditAccount {
+  id: string;
+  userId: string;
+  balance: number;
+  reservedBalance: number;
+  totalRecharged: number;
+  totalSpent: number;
+  totalRefunded: number;
   createdAt: string;
   updatedAt: string;
-  sessionCount?: number;
-  lastSeenAt?: string | null;
-  recentLoginIp?: string;
 }
 
-export interface PromptTemplateDefinition {
+export interface CreditTransaction {
   id: string;
+  userId: string;
+  type: string;
+  amount: number;
+  balanceAfter: number;
+  reservedAfter: number;
+  capability: Capability | "";
+  modelGroupId: string;
+  subModelId: string;
+  conversationId: string;
+  messageId: string;
+  taskId: string;
+  relatedTransactionId: string;
+  status: string;
+  reason: string;
+  operatorUserId: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface CreditPricingEstimate {
+  enabled: boolean;
+  price: number;
+  source: string;
   capability: Capability;
   modelGroupId: string;
-  templateType: string;
-  name: string;
-  content: string;
-  enabled: boolean;
-  updatedBy: string;
-  createdAt: string;
-  updatedAt: string;
+  subModelId: string;
+}
+
+export interface CreditBundle {
+  account: CreditAccount | null;
+  transactions: CreditTransaction[];
 }
 
 export interface SubModelDefinition {
@@ -164,6 +137,9 @@ export interface ServerModelDefinition {
   publicTags?: string[];
   promptOptimizeEnabled?: boolean;
   defaultParameters?: Record<string, unknown>;
+  creditPrice?: number;
+  creditPriceSource?: string;
+  creditPricingEnabled?: boolean;
 }
 
 export interface CatalogParameterOptionDefinition {
@@ -272,36 +248,6 @@ export interface ConversationDefinition {
   createdAt: string;
   updatedAt: string;
   messages: ConversationMessage[];
-}
-
-export interface AdminCreationRecord {
-  id: string;
-  user: AdminUserDefinition | null;
-  modelName: string;
-  capability: Capability;
-  role?: string;
-  status: string;
-  prompt: string;
-  response: string;
-  createdAt: string;
-  durationMs?: number;
-  taskId?: string;
-  assets?: Array<{ type: string; url: string; thumbnailUrl?: string }>;
-  requestParams?: Record<string, unknown>;
-  responseSummary?: Record<string, unknown>;
-  errorMessage?: string;
-}
-
-export interface AdminAuditLog {
-  id: string;
-  adminUserId: string | null;
-  action: string;
-  targetType: string;
-  targetId: string;
-  status: string;
-  riskLevel?: "normal" | "medium" | "high" | string;
-  summary: Record<string, unknown>;
-  createdAt: string;
 }
 
 export interface HistoryEntry {

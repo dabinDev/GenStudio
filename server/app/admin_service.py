@@ -1,25 +1,33 @@
 from __future__ import annotations
 
 import json
+import csv
+import io
 import re
 from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, selectinload
 
 from app.auth import is_admin_user
 from app.config import Settings, get_settings
+from app.credit_service import get_or_create_credit_account, serialize_credit_account
 from app.db_models import (
     AdminOperationLog,
+    AdminRoleAssignment,
     CallLog,
     Conversation,
     ConversationMessage,
+    CreditTransaction,
     GeneratedAsset,
     ModelGroup,
+    ModelHealthCheck,
     PromptTemplate,
+    PromptTemplateVersion,
     SessionRecord,
+    TaskEvent,
     User,
 )
 from app.model_service import catalog_loader_options
@@ -35,6 +43,10 @@ def parse_json_object(value: str, fallback: Any) -> Any:
         return json.loads(value or "")
     except Exception:
         return fallback
+
+
+def hidden_raw_json_payload() -> dict[str, Any]:
+    return {"hidden": True, "reason": "record:raw_json required"}
 
 
 def write_admin_log(
@@ -59,6 +71,40 @@ def write_admin_log(
     db.commit()
     db.refresh(item)
     return item
+
+
+def set_admin_user_role(
+    db: Session,
+    admin: User,
+    user_id: str,
+    role: str,
+    *,
+    note: str = "",
+) -> AdminRoleAssignment:
+    user = get_admin_user(db, user_id)
+    normalized_role = role.strip()
+    if normalized_role not in {"admin", "operator", "viewer"}:
+        raise HTTPException(status_code=400, detail={"message": "后台角色无效。"})
+    if user.id == admin.id:
+        raise HTTPException(status_code=400, detail={"message": "不能修改自己的后台角色。"})
+    assignment = db.query(AdminRoleAssignment).filter(AdminRoleAssignment.user_id == user.id).first()
+    if not assignment:
+        assignment = AdminRoleAssignment(user_id=user.id)
+        db.add(assignment)
+    assignment.role = normalized_role
+    assignment.assigned_by = admin.id
+    assignment.note = note.strip()[:512]
+    db.commit()
+    db.refresh(assignment)
+    write_admin_log(
+        db,
+        admin,
+        action="update_admin_role",
+        target_type="user",
+        target_id=user.id,
+        summary={"role": normalized_role, "note": assignment.note},
+    )
+    return assignment
 
 
 def list_admin_models(
@@ -145,6 +191,75 @@ def unpublish_model(db: Session, admin: User, model_id: str) -> ModelGroup:
     return get_admin_model(db, model.id)
 
 
+def record_model_health_check(
+    db: Session,
+    *,
+    admin: User,
+    model: ModelGroup,
+    status: str,
+    duration_ms: int,
+    message: str = "",
+    raw: dict[str, Any] | None = None,
+    sub_model_id: str = "",
+) -> ModelHealthCheck:
+    clean_status = status.strip() or "unknown"
+    clean_message = message.strip()[:512]
+    item = ModelHealthCheck(
+        model_group_id=model.id,
+        sub_model_id=sub_model_id.strip(),
+        admin_user_id=admin.id,
+        status=clean_status,
+        duration_ms=max(int(duration_ms or 0), 0),
+        message=clean_message,
+        raw_json=json_dumps_safe(raw or {}),
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    write_admin_log(
+        db,
+        admin,
+        action="model_health_check",
+        target_type="model",
+        target_id=model.id,
+        status="success" if clean_status == "success" else "error",
+        summary={"status": clean_status, "durationMs": item.duration_ms, "message": clean_message},
+    )
+    return item
+
+
+def serialize_model_health_check(item: ModelHealthCheck, *, include_raw_json: bool = True) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "modelGroupId": item.model_group_id,
+        "subModelId": item.sub_model_id,
+        "adminUserId": item.admin_user_id,
+        "status": item.status,
+        "durationMs": item.duration_ms,
+        "message": item.message,
+        "raw": parse_json_object(item.raw_json, {}) if include_raw_json else hidden_raw_json_payload(),
+        "createdAt": item.created_at,
+    }
+
+
+def get_model_health(db: Session, model_id: str, *, include_raw_json: bool = True) -> dict[str, Any]:
+    rows = (
+        db.query(ModelHealthCheck)
+        .filter(ModelHealthCheck.model_group_id == model_id)
+        .order_by(ModelHealthCheck.created_at.desc(), ModelHealthCheck.id.desc())
+        .limit(20)
+        .all()
+    )
+    recent = [serialize_model_health_check(item, include_raw_json=include_raw_json) for item in rows]
+    failures = len([item for item in rows if item.status != "success"])
+    return {
+        "modelGroupId": model_id,
+        "latest": recent[0] if recent else None,
+        "recent": recent,
+        "failureRate": failures / len(rows) if rows else 0,
+    }
+
+
 def list_prompt_templates(db: Session, *, capability: str = "all") -> list[PromptTemplate]:
     query = db.query(PromptTemplate)
     if capability in {"text", "image", "video"}:
@@ -177,10 +292,38 @@ def upsert_prompt_template(db: Session, admin: User, payload: PromptTemplateUpda
     if payload.enabled is not None:
         item.enabled = payload.enabled
     item.updated_by = admin.id
+    db.flush()
+    next_version = (
+        db.query(func.max(PromptTemplateVersion.version))
+        .filter(PromptTemplateVersion.template_id == item.id)
+        .scalar()
+        or 0
+    ) + 1
+    db.add(
+        PromptTemplateVersion(
+            template_id=item.id,
+            version=next_version,
+            name=item.name,
+            content=item.content,
+            enabled=item.enabled,
+            updated_by=admin.id,
+        )
+    )
     db.commit()
     db.refresh(item)
     write_admin_log(db, admin, action="save_prompt_template", target_type="prompt_template", target_id=item.id)
     return item
+
+
+def list_prompt_template_versions(db: Session, template_id: str, *, limit: int = 20) -> list[dict[str, Any]]:
+    rows = (
+        db.query(PromptTemplateVersion)
+        .filter(PromptTemplateVersion.template_id == template_id.strip())
+        .order_by(PromptTemplateVersion.version.desc(), PromptTemplateVersion.created_at.desc())
+        .limit(max(1, min(limit, 100)))
+        .all()
+    )
+    return [serialize_prompt_template_version(item) for item in rows]
 
 
 def get_prompt_template_for_scope(
@@ -226,7 +369,89 @@ def render_prompt_template(template: str, values: dict[str, Any]) -> str:
     return rendered
 
 
-def list_admin_users(db: Session, *, search: str = "") -> list[User]:
+def render_prompt_template_samples(
+    template: str,
+    *,
+    capability: str,
+    prompts: list[str],
+) -> list[dict[str, str]]:
+    results = []
+    for prompt in prompts:
+        clean_prompt = str(prompt or "").strip()
+        if not clean_prompt:
+            continue
+        results.append(
+            {
+                "prompt": clean_prompt,
+                "rendered": render_prompt_template(
+                    template,
+                    {"prompt": clean_prompt, "capability": capability or "text"},
+                ),
+            }
+        )
+    return results
+
+
+def prompt_template_model_status_overview(db: Session, *, capability: str = "all") -> list[dict[str, Any]]:
+    clean_capability = capability.strip().lower()
+    query = db.query(ModelGroup)
+    if clean_capability in {"text", "image", "video"}:
+        query = query.filter(ModelGroup.capability == clean_capability)
+    models = query.order_by(ModelGroup.capability.asc(), ModelGroup.name.asc()).limit(500).all()
+    template_rows = db.query(PromptTemplate).all()
+    templates_by_scope = {
+        (item.capability, item.model_group_id, item.template_type): item
+        for item in template_rows
+        if item.template_type == "prompt_optimize"
+    }
+    rows: list[dict[str, Any]] = []
+    for model in models:
+        default_template = templates_by_scope.get((model.capability, "", "prompt_optimize"))
+        model_template = templates_by_scope.get((model.capability, model.id, "prompt_optimize"))
+        rows.append(
+            {
+                "modelGroupId": model.id,
+                "modelName": model.public_display_name or model.name,
+                "capability": model.capability,
+                "promptOptimizeEnabled": bool(model.prompt_optimize_enabled),
+                "usesDefault": bool(default_template and default_template.enabled),
+                "defaultTemplateId": default_template.id if default_template else "",
+                "defaultTemplateEnabled": bool(default_template.enabled) if default_template else False,
+                "hasModelTemplate": model_template is not None,
+                "modelTemplateId": model_template.id if model_template else "",
+                "modelTemplateEnabled": bool(model_template.enabled) if model_template else False,
+            }
+        )
+    return rows
+
+
+def _config_admin_filter(settings: Settings | None):
+    if not settings:
+        return None
+    filters = []
+    config_admin_emails = {item.strip().lower() for item in settings.admin_emails if item.strip()}
+    config_admin_identifiers = {item.strip().lower() for item in settings.admin_identifiers if item.strip()}
+    if config_admin_emails:
+        filters.append(func.lower(func.trim(User.email)).in_(config_admin_emails))
+    if config_admin_identifiers:
+        filters.extend(
+            [
+                func.lower(func.trim(User.external_user_id)).in_(config_admin_identifiers),
+                func.lower(func.trim(User.phone)).in_(config_admin_identifiers),
+                func.lower(func.trim(User.nickname)).in_(config_admin_identifiers),
+            ]
+        )
+    return or_(*filters) if filters else None
+
+
+def list_admin_users(
+    db: Session,
+    *,
+    search: str = "",
+    role: str = "",
+    status: str = "",
+    settings: Settings | None = None,
+) -> list[User]:
     query = db.query(User)
     clean_search = search.strip()
     if clean_search:
@@ -240,7 +465,113 @@ def list_admin_users(db: Session, *, search: str = "") -> list[User]:
                 User.external_user_id.ilike(like),
             )
         )
+    clean_status = status.strip().lower()
+    if clean_status and clean_status != "all":
+        query = query.filter(User.status == clean_status)
+    clean_role = role.strip().lower()
+    if clean_role and clean_role != "all":
+        if clean_role == "user":
+            admin_ids = [item[0] for item in db.query(AdminRoleAssignment.user_id).all()]
+            config_filter = _config_admin_filter(settings)
+            if config_filter is not None:
+                config_admins = db.query(User.id).filter(config_filter)
+                admin_ids.extend(item[0] for item in config_admins.all())
+            if admin_ids:
+                query = query.filter(~User.id.in_(set(admin_ids)))
+        elif clean_role == "admin" and settings:
+            role_filters = [AdminRoleAssignment.role == clean_role]
+            config_filter = _config_admin_filter(settings)
+            if config_filter is not None:
+                role_filters.append(config_filter)
+            query = query.outerjoin(AdminRoleAssignment).filter(or_(*role_filters))
+        else:
+            query = query.join(AdminRoleAssignment).filter(AdminRoleAssignment.role == clean_role)
     return query.order_by(User.created_at.desc()).limit(200).all()
+
+
+def _admin_user_identity(user: User) -> str:
+    email = (user.email or "").strip().lower()
+    if email:
+        return f"email:{email}"
+    phone = (user.phone or "").strip()
+    if phone:
+        return f"phone:{phone}"
+    return ""
+
+
+def admin_duplicate_identity_map(db: Session) -> dict[str, dict[str, Any]]:
+    grouped: dict[str, list[User]] = {}
+    for user in db.query(User).order_by(User.created_at.asc(), User.id.asc()).all():
+        identity = _admin_user_identity(user)
+        if not identity:
+            continue
+        grouped.setdefault(identity, []).append(user)
+    duplicate_map: dict[str, dict[str, Any]] = {}
+    for identity, users in grouped.items():
+        if len(users) <= 1:
+            continue
+        target = users[0]
+        user_ids = [item.id for item in users]
+        payload = {
+            "identity": identity,
+            "duplicateCount": len(users),
+            "targetUserId": target.id,
+            "userIds": user_ids,
+        }
+        for item in users:
+            duplicate_map[item.id] = payload
+    return duplicate_map
+
+
+def build_admin_users_csv(users: list[User], settings: Settings | None = None) -> str:
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(
+        [
+            "用户ID",
+            "外部用户ID",
+            "邮箱",
+            "昵称",
+            "手机号",
+            "后台角色",
+            "角色来源",
+            "状态",
+            "可用积分",
+            "冻结积分",
+            "累计充值",
+            "累计消耗",
+            "累计退回",
+            "会话数",
+            "最近登录IP",
+            "最近活跃",
+            "创建时间",
+        ]
+    )
+    for user in users:
+        row = serialize_admin_user(user, settings)
+        credits = row.get("credits") or {}
+        writer.writerow(
+            [
+                row.get("id", ""),
+                row.get("externalUserId", ""),
+                row.get("email", ""),
+                row.get("nickname", ""),
+                row.get("phone", ""),
+                row.get("adminRole", "") or ("admin" if row.get("isAdmin") else "user"),
+                row.get("adminRoleSource", ""),
+                row.get("status", ""),
+                credits.get("balance", 0),
+                credits.get("reservedBalance", 0),
+                credits.get("totalRecharged", 0),
+                credits.get("totalSpent", 0),
+                credits.get("totalRefunded", 0),
+                row.get("sessionCount", 0),
+                row.get("recentLoginIp", ""),
+                row.get("lastSeenAt", ""),
+                row.get("createdAt", ""),
+            ]
+        )
+    return output.getvalue().strip("\r\n")
 
 
 def get_admin_user(db: Session, user_id: str) -> User:
@@ -449,6 +780,7 @@ def _trend_buckets(logs: list[CallLog], *, period: str, count: int) -> list[dict
         bucket = [item for item in logs if start <= item.created_at < end]
         total = len(bucket)
         failed = len([item for item in bucket if item.status != "success"])
+        timeout = len([item for item in bucket if _is_timeout_log(item)])
         duration_total = sum(item.duration_ms for item in bucket)
         rows.append(
             {
@@ -456,11 +788,204 @@ def _trend_buckets(logs: list[CallLog], *, period: str, count: int) -> list[dict
                 "totalCalls": total,
                 "successCalls": total - failed,
                 "failedCalls": failed,
+                "timeoutCalls": timeout,
                 "quotaUnits": round(sum(_usage_units(item) for item in bucket), 2),
                 "averageDurationMs": int(duration_total / total) if total else 0,
             }
         )
     return rows
+
+
+def _metrics_range_start(range_key: str) -> datetime:
+    days = {"7d": 7, "30d": 30, "90d": 90}.get((range_key or "").strip().lower(), 30)
+    return datetime.utcnow() - timedelta(days=days)
+
+
+def _metrics_trend_counts(range_key: str) -> dict[str, int]:
+    days = {"7d": 7, "30d": 30, "90d": 90}.get((range_key or "").strip().lower(), 30)
+    return {
+        "day": days,
+        "week": max(1, (days + 6) // 7),
+        "month": max(1, (days + 29) // 30),
+    }
+
+
+def _model_label(model: ModelGroup | None, fallback: str = "") -> str:
+    if not model:
+        return fallback
+    return model.public_display_name or model.name or fallback
+
+
+def _user_label(user: User | None, fallback: str = "") -> str:
+    if not user:
+        return fallback
+    return user.email or user.nickname or user.id or fallback
+
+
+def _failure_rate(failed: int, total: int) -> float:
+    return failed / total if total else 0
+
+
+def admin_dashboard_metrics(db: Session, *, range_key: str = "30d") -> dict[str, Any]:
+    start_at = _metrics_range_start(range_key)
+    trend_counts = _metrics_trend_counts(range_key)
+    logs = db.query(CallLog).filter(CallLog.created_at >= start_at).all()
+    transactions = db.query(CreditTransaction).filter(CreditTransaction.created_at >= start_at).all()
+
+    total = len(logs)
+    failed = len([item for item in logs if item.status != "success"])
+    success = total - failed
+    timeout_calls = len([item for item in logs if _is_timeout_log(item)])
+    public_calls = len([item for item in logs if item.is_public_model])
+    duration_total = sum(item.duration_ms for item in logs)
+    queue_values = [_queue_time_ms(item) for item in logs]
+    queue_samples = [item for item in queue_values if item > 0]
+
+    capability_rows: list[dict[str, Any]] = []
+    by_capability: dict[str, list[CallLog]] = {}
+    for item in logs:
+        key = item.capability or "unknown"
+        by_capability.setdefault(key, []).append(item)
+    for capability, rows in by_capability.items():
+        row_total = len(rows)
+        row_failed = len([item for item in rows if item.status != "success"])
+        capability_rows.append(
+            {
+                "capability": capability,
+                "key": capability,
+                "label": capability,
+                "totalCalls": row_total,
+                "successCalls": row_total - row_failed,
+                "failedCalls": row_failed,
+                "failureRate": _failure_rate(row_failed, row_total),
+            }
+        )
+    capability_rows.sort(key=lambda item: (item["totalCalls"], item["capability"]), reverse=True)
+
+    ownership_rows = []
+    for ownership, owned_logs in (
+        ("public", [item for item in logs if item.is_public_model]),
+        ("private", [item for item in logs if not item.is_public_model]),
+    ):
+        row_total = len(owned_logs)
+        row_failed = len([item for item in owned_logs if item.status != "success"])
+        ownership_rows.append(
+            {
+                "ownership": ownership,
+                "key": ownership,
+                "label": "Public" if ownership == "public" else "Private",
+                "totalCalls": row_total,
+                "successCalls": row_total - row_failed,
+                "failedCalls": row_failed,
+                "failureRate": _failure_rate(row_failed, row_total),
+            }
+        )
+
+    credit_summary = {
+        "reserved": 0,
+        "spent": 0,
+        "refunded": 0,
+        "adminAdjusted": 0,
+    }
+    transactions_by_id = {item.id: item for item in transactions}
+    for item in transactions:
+        if item.type == "generation_reserve":
+            if item.status not in {"captured", "refunded"}:
+                credit_summary["reserved"] += abs(item.amount) if item.amount < 0 else item.reserved_after
+        elif item.type in {"generation_capture", "generation_spend"}:
+            amount = abs(item.amount)
+            if item.type == "generation_capture" and amount == 0 and item.related_transaction_id:
+                reserve = transactions_by_id.get(item.related_transaction_id) or db.get(
+                    CreditTransaction,
+                    item.related_transaction_id,
+                )
+                if reserve and reserve.type == "generation_reserve":
+                    amount = abs(reserve.amount)
+            credit_summary["spent"] += amount
+        elif item.type in {"generation_refund", "refund"}:
+            credit_summary["refunded"] += abs(item.amount)
+        elif item.type == "admin_adjustment":
+            credit_summary["adminAdjusted"] += item.amount
+
+    by_model: dict[str, list[CallLog]] = {}
+    for item in logs:
+        if item.model_group_id:
+            by_model.setdefault(item.model_group_id, []).append(item)
+
+    failed_models: list[dict[str, Any]] = []
+    slow_models: list[dict[str, Any]] = []
+    for model_id, model_logs in by_model.items():
+        model = db.get(ModelGroup, model_id)
+        model_failed = [item for item in model_logs if item.status != "success"]
+        if model_failed:
+            failed_models.append(
+                {
+                    "modelGroupId": model_id,
+                    "modelName": _model_label(model, model_id),
+                    "capability": model.capability if model else (model_logs[0].capability if model_logs else ""),
+                    "failedCalls": len(model_failed),
+                    "totalCalls": len(model_logs),
+                    "failureRate": _failure_rate(len(model_failed), len(model_logs)),
+                    "lastError": model_failed[-1].error_message,
+                }
+            )
+        slow_models.append(
+            {
+                "modelGroupId": model_id,
+                "modelName": _model_label(model, model_id),
+                "capability": model.capability if model else (model_logs[0].capability if model_logs else ""),
+                "totalCalls": len(model_logs),
+                "averageDurationMs": int(sum(item.duration_ms for item in model_logs) / len(model_logs)) if model_logs else 0,
+            }
+        )
+    failed_models.sort(key=lambda item: (item["failedCalls"], item["failureRate"]), reverse=True)
+    slow_models.sort(key=lambda item: item["averageDurationMs"], reverse=True)
+
+    by_user: dict[str, list[CallLog]] = {}
+    for item in logs:
+        if item.user_id:
+            by_user.setdefault(item.user_id, []).append(item)
+    active_users: list[dict[str, Any]] = []
+    for user_id, user_logs in by_user.items():
+        user = db.get(User, user_id)
+        public_user_calls = len([item for item in user_logs if item.is_public_model])
+        active_users.append(
+            {
+                "userId": user_id,
+                "label": _user_label(user, user_id),
+                "totalCalls": len(user_logs),
+                "publicModelCalls": public_user_calls,
+                "privateModelCalls": len(user_logs) - public_user_calls,
+            }
+        )
+    active_users.sort(key=lambda item: item["totalCalls"], reverse=True)
+
+    return {
+        "totals": {
+            "totalCalls": total,
+            "successCalls": success,
+            "failedCalls": failed,
+            "timeoutCalls": timeout_calls,
+            "failureRate": _failure_rate(failed, total),
+            "timeoutRate": _failure_rate(timeout_calls, total),
+            "averageDurationMs": int(duration_total / total) if total else 0,
+            "averageQueueMs": int(sum(queue_samples) / len(queue_samples)) if queue_samples else 0,
+            "quotaUnits": round(sum(_usage_units(item) for item in logs), 2),
+            "publicModelCalls": public_calls,
+            "privateModelCalls": total - public_calls,
+        },
+        "trends": {
+            "day": _trend_buckets(logs, period="day", count=trend_counts["day"]),
+            "week": _trend_buckets(logs, period="week", count=trend_counts["week"]),
+            "month": _trend_buckets(logs, period="month", count=trend_counts["month"]),
+        },
+        "capabilityBreakdown": capability_rows,
+        "ownershipBreakdown": ownership_rows,
+        "creditSummary": credit_summary,
+        "failedModels": failed_models[:10],
+        "slowModels": slow_models[:10],
+        "activeUsers": active_users[:10],
+    }
 
 
 def admin_overview(db: Session) -> dict[str, Any]:
@@ -540,10 +1065,12 @@ def _is_broken_history_text(value: str) -> bool:
         return True
     if len(compact) >= 2 and question_marks / len(compact) > 0.2:
         return True
-    mojibake_chars = len(re.findall(r"[锟�鐢瑙鍥閸缂闈瑕鐞绠妯鍚彴鎿浣濉殕荤]", text))
+    mojibake_markers = "闁跨噦鎷烽柣銏㈡喆搞儵鏌涚紓鍌炴閻熸洟鎮剁紒鐘参熼柛姘叡规寧呭┑澶嬬暦閼筋槂"
+    mojibake_chars = sum(1 for char in text if char in mojibake_markers)
     if len(text) >= 12 and mojibake_chars / len(text) > 0.28:
         return True
-    latin_mojibake_chars = len(re.findall(r"[ÃÂåæçèéêïð¤¥¦§¨©ª«¬®¯°±²³´µ¶·¸¹º»¼½¾¿-]", text))
+    latin_mojibake_markers = "鑴欒剹姘撳繖鑾界尗鑼呴敋鑼傚啋闄囨ゼ濞勬悅绡撴紡闄嬭姦鍗㈠簮鐐夋幊鍗よ檹椴侀簱纰岄湶璺祩楣挎綖绂勫綍闄嗘埉椹磋仚鑱糫"
+    latin_mojibake_chars = sum(1 for char in text if char in latin_mojibake_markers)
     return len(text) >= 6 and latin_mojibake_chars / len(text) > 0.18
 
 
@@ -674,6 +1201,17 @@ def _record_matches_filters(
     return True
 
 
+def _task_id_from_payload(*payloads: Any) -> str:
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            continue
+        for key, value in payload.items():
+            normalized_key = str(key).strip().lower()
+            if normalized_key in TASK_ID_KEYS and str(value).strip():
+                return str(value).strip()
+    return ""
+
+
 def _previous_user_message_for_record(db: Session, message: ConversationMessage, capability: str) -> ConversationMessage | None:
     same_conversation = (
         db.query(ConversationMessage)
@@ -744,6 +1282,7 @@ def list_admin_creation_records(
     resolution: str = "",
     mode: str = "",
     limit: int = 100,
+    include_raw_json: bool = True,
 ) -> list[dict[str, Any]]:
     query = (
         db.query(ConversationMessage)
@@ -765,7 +1304,9 @@ def list_admin_creation_records(
         )
     if model_group_id:
         query = query.filter(ConversationMessage.model_group_id == model_group_id)
-    if status:
+    if status == "non_success":
+        query = query.filter(ConversationMessage.status != "success")
+    elif status:
         query = query.filter(ConversationMessage.status == status)
     max_limit = min(max(limit, 1), 200)
     messages = query.order_by(ConversationMessage.created_at.desc()).limit(max_limit * 4).all()
@@ -810,6 +1351,8 @@ def list_admin_creation_records(
             mode=mode,
         ):
             continue
+        visible_request_params = request_params if include_raw_json else hidden_raw_json_payload()
+        visible_response_summary = response_summary if include_raw_json else hidden_raw_json_payload()
         records.append(
             {
                 "id": message.id,
@@ -822,13 +1365,13 @@ def list_admin_creation_records(
                 "response": response,
                 "createdAt": message.created_at,
                 "durationMs": call_log.duration_ms if call_log else 0,
-                "taskId": response_summary.get("taskId", "") if isinstance(response_summary, dict) else "",
+                "taskId": _task_id_from_payload(response_summary, request_params),
                 "assets": [
                     {"type": asset.asset_type, "url": asset.url, "thumbnailUrl": asset.thumbnail_url}
                     for asset in message.assets
                 ],
-                "requestParams": request_params,
-                "responseSummary": response_summary,
+                "requestParams": visible_request_params,
+                "responseSummary": visible_response_summary,
                 "errorMessage": error_message,
             }
         )
@@ -837,9 +1380,264 @@ def list_admin_creation_records(
     return records
 
 
-def serialize_admin_user(user: User, settings: Settings | None = None) -> dict[str, Any]:
+def build_admin_creation_records_csv(records: list[dict[str, Any]]) -> str:
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(
+        [
+            "消息ID",
+            "用户",
+            "类型",
+            "模型",
+            "状态",
+            "提示词",
+            "响应",
+            "错误信息",
+            "资源数",
+            "任务ID",
+            "耗时ms",
+            "创建时间",
+        ]
+    )
+    for record in records:
+        user = record.get("user") if isinstance(record.get("user"), dict) else {}
+        writer.writerow(
+            [
+                record.get("id", ""),
+                user.get("email") or user.get("nickname") or user.get("id") or "",
+                record.get("capability", ""),
+                record.get("modelName", ""),
+                record.get("status", ""),
+                record.get("prompt", ""),
+                record.get("response", ""),
+                record.get("errorMessage", ""),
+                len(record.get("assets") or []),
+                record.get("taskId", ""),
+                record.get("durationMs", 0),
+                record.get("createdAt", ""),
+            ]
+        )
+    return output.getvalue()
+
+
+TASK_ID_KEYS = {"taskid", "task_id", "localtaskid", "providertaskid"}
+
+
+def _json_mentions_task_id(value: Any, task_id: str) -> bool:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            normalized_key = str(key).strip().lower()
+            if normalized_key in TASK_ID_KEYS and str(item).strip() == task_id:
+                return True
+            if isinstance(item, (dict, list)) and _json_mentions_task_id(item, task_id):
+                return True
+    if isinstance(value, list):
+        return any(_json_mentions_task_id(item, task_id) for item in value)
+    return False
+
+
+def _call_log_mentions_task(item: CallLog, task_id: str) -> bool:
+    clean_task_id = task_id.strip()
+    if not clean_task_id:
+        return False
+    request_params = parse_json_object(item.request_params_json, {})
+    response_summary = parse_json_object(item.response_summary_json, {})
+    return _json_mentions_task_id(request_params, clean_task_id) or _json_mentions_task_id(response_summary, clean_task_id)
+
+
+def _timeline_row(item: CallLog, *, include_raw_json: bool = True) -> dict[str, Any]:
+    response_summary = parse_json_object(item.response_summary_json, {})
+    if not isinstance(response_summary, dict):
+        response_summary = {}
+    row = {
+        "id": item.id,
+        "source": "call_log",
+        "eventType": "call",
+        "endpoint": item.endpoint,
+        "status": item.status,
+        "durationMs": item.duration_ms,
+        "errorMessage": _clean_history_value(item.error_message),
+        "createdAt": item.created_at,
+    }
+    if include_raw_json:
+        row["responseSummary"] = _clean_history_value(response_summary)
+    return row
+
+
+def record_task_event(
+    db: Session,
+    *,
+    task_id: str,
+    event_type: str,
+    status: str = "",
+    user_id: str | None = None,
+    model_group_id: str | None = None,
+    sub_model_id: str | None = None,
+    capability: str = "",
+    endpoint: str = "",
+    conversation_id: str = "",
+    message_id: str = "",
+    duration_ms: int = 0,
+    message: str = "",
+    payload: dict[str, Any] | None = None,
+) -> TaskEvent:
+    clean_task_id = task_id.strip()
+    if not clean_task_id:
+        raise HTTPException(status_code=400, detail={"message": "缺少任务 ID。"})
+    item = TaskEvent(
+        task_id=clean_task_id,
+        event_type=event_type.strip() or "event",
+        status=status.strip(),
+        user_id=user_id or None,
+        model_group_id=model_group_id or None,
+        sub_model_id=sub_model_id or None,
+        capability=capability.strip(),
+        endpoint=endpoint.strip(),
+        conversation_id=conversation_id.strip(),
+        message_id=message_id.strip(),
+        duration_ms=max(int(duration_ms or 0), 0),
+        message=message.strip()[:512],
+        payload_json=json_dumps_safe(payload or {}),
+    )
+    db.add(item)
+    db.flush()
+    return item
+
+
+def _task_event_row(item: TaskEvent, *, include_raw_json: bool = True) -> dict[str, Any]:
+    row = {
+        "id": item.id,
+        "source": "task_event",
+        "eventType": item.event_type,
+        "endpoint": item.endpoint,
+        "status": item.status,
+        "durationMs": item.duration_ms,
+        "errorMessage": "",
+        "message": _clean_history_value(item.message),
+        "createdAt": item.created_at,
+    }
+    if include_raw_json:
+        row["payload"] = _clean_history_value(parse_json_object(item.payload_json, {}))
+    return row
+
+
+TASK_EVENT_SORT_ORDER = {
+    "submitted": 10,
+    "queued": 20,
+    "started": 30,
+    "query": 40,
+    "updated": 50,
+    "completed": 90,
+    "failed": 90,
+}
+
+
+def _timeline_sort_key(item: dict[str, Any]) -> tuple[Any, int, str]:
+    order = TASK_EVENT_SORT_ORDER.get(str(item.get("eventType") or ""), 60)
+    return item.get("createdAt"), order, str(item.get("id") or "")
+
+
+def admin_record_detail(db: Session, message_id: str, *, include_raw_json: bool = True) -> dict[str, Any]:
+    message = (
+        db.query(ConversationMessage)
+        .options(selectinload(ConversationMessage.assets))
+        .filter(ConversationMessage.id == message_id)
+        .first()
+    )
+    if not message:
+        raise HTTPException(status_code=404, detail={"message": "消息不存在。"})
+    conversation = db.get(Conversation, message.conversation_id)
+    user = db.get(User, message.user_id)
+    request_params = _clean_history_value(_load_json(message.request_json, {}))
+    response_summary = _clean_history_value(_load_json(message.response_json, {}))
+    timeline = (
+        db.query(CallLog)
+        .filter(or_(CallLog.message_id == message.id, CallLog.conversation_id == message.conversation_id))
+        .order_by(CallLog.created_at.asc())
+        .all()
+    )
+    task_events = (
+        db.query(TaskEvent)
+        .filter(or_(TaskEvent.message_id == message.id, TaskEvent.conversation_id == message.conversation_id))
+        .order_by(TaskEvent.created_at.asc())
+        .all()
+    )
+    if timeline:
+        latest = timeline[-1]
+        request_params = request_params or _clean_history_value(_load_json(latest.request_params_json, {}))
+        response_summary = response_summary or _clean_history_value(_load_json(latest.response_summary_json, {}))
+    visible_request_params = request_params if include_raw_json else hidden_raw_json_payload()
+    visible_response_summary = response_summary if include_raw_json else hidden_raw_json_payload()
+    return {
+        "id": message.id,
+        "conversationId": message.conversation_id,
+        "conversationTitle": conversation.title if conversation else "",
+        "user": serialize_admin_user(user) if user else None,
+        "role": message.role,
+        "capability": message.capability,
+        "status": message.status,
+        "content": _clean_history_value(message.content),
+        "request": visible_request_params,
+        "response": visible_response_summary,
+        "errorMessage": _clean_history_value(message.error_message),
+        "assets": [
+            {"type": asset.asset_type, "url": asset.url, "thumbnailUrl": asset.thumbnail_url}
+            for asset in message.assets
+        ],
+        "timeline": sorted(
+            [_timeline_row(item, include_raw_json=include_raw_json) for item in timeline]
+            + [_task_event_row(item, include_raw_json=include_raw_json) for item in task_events],
+            key=_timeline_sort_key,
+        ),
+        "createdAt": message.created_at,
+    }
+
+
+def admin_task_timeline(db: Session, task_id: str, *, include_raw_json: bool = True) -> dict[str, Any]:
+    clean_task_id = task_id.strip()
+    if not clean_task_id:
+        raise HTTPException(status_code=400, detail={"message": "缺少任务 ID。"})
+    task_events = (
+        db.query(TaskEvent)
+        .filter(TaskEvent.task_id == clean_task_id)
+        .order_by(TaskEvent.created_at.asc(), TaskEvent.id.asc())
+        .all()
+    )
+    logs = db.query(CallLog).order_by(CallLog.created_at.asc()).all()
+    return {
+        "taskId": clean_task_id,
+        "events": sorted(
+            [_task_event_row(item, include_raw_json=include_raw_json) for item in task_events]
+            + [
+                _timeline_row(item, include_raw_json=include_raw_json)
+                for item in logs
+                if _call_log_mentions_task(item, clean_task_id)
+            ],
+            key=_timeline_sort_key,
+        ),
+    }
+
+
+def serialize_admin_user(
+    user: User,
+    settings: Settings | None = None,
+    duplicate_identity: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     active_sessions = [item for item in getattr(user, "sessions", []) if item.expires_at > datetime.utcnow()]
     last_seen = max((item.last_seen_at for item in getattr(user, "sessions", [])), default=None)
+    recent_session = max(
+        getattr(user, "sessions", []),
+        key=lambda item: item.last_seen_at or item.created_at or datetime.min,
+        default=None,
+    )
+    recent_login_ip = getattr(recent_session, "client_ip", "") if recent_session else ""
+    account = None
+    try:
+        session = getattr(user, "_sa_instance_state").session
+        if session:
+            account = get_or_create_credit_account(session, user.id)
+    except Exception:
+        account = None
     return {
         "id": user.id,
         "externalUserId": user.external_user_id,
@@ -848,13 +1646,29 @@ def serialize_admin_user(user: User, settings: Settings | None = None) -> dict[s
         "nickname": user.nickname,
         "avatarUrl": user.avatar_url,
         "status": user.status,
+        "adminRole": getattr(getattr(user, "admin_role_assignment", None), "role", ""),
+        "adminRoleSource": "database" if getattr(user, "admin_role_assignment", None) else "config" if is_admin_user(user, settings) else "",
         "isAdmin": is_admin_user(user, settings),
         "createdAt": user.created_at,
         "updatedAt": user.updated_at,
         "sessionCount": len(active_sessions),
         "lastSeenAt": last_seen,
-        "recentLoginIp": "未记录",
+        "recentLoginIp": recent_login_ip,
+        "credits": serialize_credit_account(account),
+        "duplicateIdentity": duplicate_identity,
     }
+
+
+def serialize_admin_user_with_duplicate_identity(
+    db: Session,
+    user: User,
+    settings: Settings | None = None,
+) -> dict[str, Any]:
+    return serialize_admin_user(
+        user,
+        settings,
+        duplicate_identity=admin_duplicate_identity_map(db).get(user.id),
+    )
 
 
 def serialize_prompt_template(item: PromptTemplate) -> dict[str, Any]:
@@ -872,14 +1686,35 @@ def serialize_prompt_template(item: PromptTemplate) -> dict[str, Any]:
     }
 
 
+def serialize_prompt_template_version(item: PromptTemplateVersion) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "templateId": item.template_id,
+        "version": item.version,
+        "name": item.name,
+        "content": item.content,
+        "enabled": item.enabled,
+        "updatedBy": item.updated_by,
+        "createdAt": item.created_at,
+    }
+
+
 HIGH_RISK_ADMIN_ACTIONS = {
     "delete_user",
     "disable_user",
-    "restore_user",
+    "update_admin_role",
+    "merge_duplicate_users",
     "unpublish_model",
+    "delete_model",
+}
+
+MEDIUM_RISK_ADMIN_ACTIONS = {
+    "restore_user",
     "publish_model",
     "update_model",
     "save_prompt_template",
+    "adjust_credits",
+    "update_credit_settings",
 }
 
 
@@ -887,8 +1722,25 @@ def _audit_risk_level(item: AdminOperationLog) -> str:
     if item.status == "error":
         return "high"
     if item.action in HIGH_RISK_ADMIN_ACTIONS:
-        return "high" if item.action in {"delete_user", "disable_user", "unpublish_model"} else "medium"
+        return "high"
+    if item.action in MEDIUM_RISK_ADMIN_ACTIONS:
+        return "medium"
     return "normal"
+
+
+def _parse_audit_datetime(value: str) -> datetime | None:
+    clean = value.strip()
+    if not clean:
+        return None
+    if clean.endswith("Z"):
+        clean = f"{clean[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(clean)
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone().replace(tzinfo=None)
+    return parsed
 
 
 def list_admin_audit_logs(
@@ -898,7 +1750,10 @@ def list_admin_audit_logs(
     admin_user_id: str = "",
     target_type: str = "",
     target_id: str = "",
+    status: str = "",
     risk: str = "",
+    start_at: str = "",
+    end_at: str = "",
     limit: int = 100,
 ) -> list[dict[str, Any]]:
     query = db.query(AdminOperationLog)
@@ -910,10 +1765,21 @@ def list_admin_audit_logs(
         query = query.filter(AdminOperationLog.target_type == target_type)
     if target_id:
         query = query.filter(AdminOperationLog.target_id.ilike(f"%{target_id}%"))
-    logs = query.order_by(AdminOperationLog.created_at.desc()).limit(min(max(limit, 1), 300)).all()
+    if status:
+        query = query.filter(AdminOperationLog.status == status)
+    parsed_start = _parse_audit_datetime(start_at)
+    if parsed_start:
+        query = query.filter(AdminOperationLog.created_at >= parsed_start)
+    parsed_end = _parse_audit_datetime(end_at)
+    if parsed_end:
+        query = query.filter(AdminOperationLog.created_at <= parsed_end)
+    max_limit = min(max(limit, 1), 300)
     clean_risk = risk.strip().lower()
+    ordered_query = query.order_by(AdminOperationLog.created_at.desc())
+    logs = ordered_query.all() if clean_risk else ordered_query.limit(max_limit).all()
     if clean_risk:
         logs = [item for item in logs if _audit_risk_level(item) == clean_risk]
+    logs = logs[:max_limit]
     return [
         {
             "id": item.id,
@@ -928,3 +1794,24 @@ def list_admin_audit_logs(
         }
         for item in logs
     ]
+
+
+def build_admin_audit_logs_csv(rows: list[dict[str, Any]]) -> str:
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["日志ID", "管理员", "操作", "目标类型", "目标ID", "风险等级", "状态", "摘要", "创建时间"])
+    for item in rows:
+        writer.writerow(
+            [
+                item.get("id") or "",
+                item.get("adminUserId") or "",
+                item.get("action") or "",
+                item.get("targetType") or "",
+                item.get("targetId") or "",
+                item.get("riskLevel") or "normal",
+                item.get("status") or "",
+                json_dumps_safe(item.get("summary") or {}),
+                item.get("createdAt") or "",
+            ]
+        )
+    return output.getvalue()

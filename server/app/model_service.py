@@ -10,6 +10,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session, selectinload
 
 from app.catalog_service import find_catalog_model_by_name, get_catalog_model_by_external_id, serialize_catalog_model
+from app.credit_service import estimate_credit_price
 from app.db_models import ApiKey, CallLog, CatalogModel, CatalogModelParameter, ModelGroup, SubModel, User
 from app.proxy_utils import filter_model_ids_for_capability, parse_model_ids
 from app.schemas import ApiKeyOut, CallLogOut, ModelCreate, ModelOut, ModelUpdate, SubModelOut, SyncModelsResult
@@ -146,6 +147,26 @@ def serialize_model(model: ModelGroup, user: User | None = None, *, is_admin: bo
         input_hint = readable_text(primary.catalog_model.input_hint)
     if not input_hint and model.catalog_model:
         input_hint = readable_text(model.catalog_model.input_hint)
+    credit_price = 0
+    credit_price_source = "private_model"
+    credit_pricing_enabled = False
+    try:
+        session = getattr(model, "_sa_instance_state").session
+        if session:
+            estimate = estimate_credit_price(
+                session,
+                user=user,
+                capability=model.capability,
+                model_group=model,
+                sub_model=primary,
+            )
+            credit_price = estimate.price
+            credit_price_source = estimate.source
+            credit_pricing_enabled = estimate.enabled
+    except Exception:
+        credit_price = 0
+        credit_price_source = "private_model"
+        credit_pricing_enabled = False
     return ModelOut(
         id=model.id,
         name=readable_model_group_name(model, primary),
@@ -169,6 +190,9 @@ def serialize_model(model: ModelGroup, user: User | None = None, *, is_admin: bo
         publicTags=parse_model_json(model.public_tags_json, []),
         promptOptimizeEnabled=bool(model.prompt_optimize_enabled),
         defaultParameters=parse_model_json(model.default_parameters_json, {}),
+        creditPrice=credit_price,
+        creditPriceSource=credit_price_source,
+        creditPricingEnabled=credit_pricing_enabled,
     )
 
 

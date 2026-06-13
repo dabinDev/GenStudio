@@ -6,6 +6,48 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
+class CreditAccountOut(BaseModel):
+    id: str
+    userId: str
+    balance: int
+    reservedBalance: int
+    totalRecharged: int
+    totalSpent: int
+    totalRefunded: int
+    createdAt: datetime
+    updatedAt: datetime
+
+
+class CreditTransactionOut(BaseModel):
+    id: str
+    userId: str
+    type: str
+    amount: int
+    balanceAfter: int
+    reservedAfter: int
+    capability: str
+    modelGroupId: str
+    subModelId: str
+    conversationId: str
+    messageId: str
+    taskId: str
+    relatedTransactionId: str
+    status: str
+    reason: str
+    operatorUserId: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    createdAt: datetime
+
+
+class CreditPricingEstimateOut(BaseModel):
+    enabled: bool
+    price: int
+    source: str
+    capability: str
+    modelGroupId: str = ""
+    subModelId: str = ""
+
+
 class UserOut(BaseModel):
     id: str
     externalUserId: str
@@ -14,6 +56,7 @@ class UserOut(BaseModel):
     nickname: str
     avatarUrl: str
     isAdmin: bool = False
+    credits: CreditAccountOut | None = None
 
 
 class DevLoginRequest(BaseModel):
@@ -210,6 +253,9 @@ class ModelOut(BaseModel):
     publicTags: list[str] = Field(default_factory=list)
     promptOptimizeEnabled: bool = True
     defaultParameters: dict[str, Any] = Field(default_factory=dict)
+    creditPrice: int = 0
+    creditPriceSource: str = "private_model"
+    creditPricingEnabled: bool = False
 
 
 class AdminModelUpdate(BaseModel):
@@ -221,6 +267,24 @@ class AdminModelUpdate(BaseModel):
     promptOptimizeEnabled: bool | None = None
     defaultParameters: dict[str, Any] | None = None
     isPublic: bool | None = None
+
+
+class AdminModelBatchRequest(BaseModel):
+    modelIds: list[str] = Field(default_factory=list)
+
+    @field_validator("modelIds")
+    @classmethod
+    def normalize_model_ids(cls, value: list[str]) -> list[str]:
+        ids: list[str] = []
+        for raw_id in value:
+            clean_id = str(raw_id or "").strip()
+            if clean_id and clean_id not in ids:
+                ids.append(clean_id)
+        if not ids:
+            raise ValueError("modelIds is required")
+        if len(ids) > 100:
+            raise ValueError("modelIds cannot contain more than 100 items")
+        return ids
 
 
 class PromptTemplateOut(BaseModel):
@@ -254,8 +318,11 @@ class AdminUserOut(BaseModel):
     avatarUrl: str
     status: str
     isAdmin: bool
+    adminRole: str = ""
+    adminRoleSource: str = ""
     createdAt: datetime
     updatedAt: datetime
+    credits: CreditAccountOut | None = None
 
 
 class AdminUserUpdate(BaseModel):
@@ -266,9 +333,45 @@ class AdminUserUpdate(BaseModel):
     status: str | None = None
 
 
+class AdminUserRoleUpdate(BaseModel):
+    role: str
+    note: str = ""
+
+
 class AdminPermissionOut(BaseModel):
     role: str
     permissions: list[str] = Field(default_factory=list)
+
+
+class AdminUserMergeRequest(BaseModel):
+    apply: bool = False
+    identityFilter: str = ""
+
+    @field_validator("identityFilter")
+    @classmethod
+    def trim_identity_filter(cls, value: str) -> str:
+        return value.strip()
+
+
+class AdminCreditSettingsUpdate(BaseModel):
+    defaults: dict[str, int] | None = None
+    signupBonusEnabled: bool | None = None
+    signupBonusAmount: int | None = None
+
+
+class AdminCreditAdjustRequest(BaseModel):
+    amount: int
+    reason: str
+
+    @field_validator("reason")
+    @classmethod
+    def trim_reason(cls, value: str) -> str:
+        return value.strip()
+
+
+class AdminModelCreditPricingUpdate(BaseModel):
+    price: int | None = None
+    useDefault: bool = False
 
 
 class AdminOverviewOut(BaseModel):
@@ -279,6 +382,41 @@ class AdminOverviewOut(BaseModel):
     averageDurationMs: int
     publicModelCalls: int
     privateModelCalls: int
+
+
+class AdminDashboardTotalsOut(BaseModel):
+    totalCalls: int = 0
+    successCalls: int = 0
+    failedCalls: int = 0
+    timeoutCalls: int = 0
+    failureRate: float = 0
+    timeoutRate: float = 0
+    averageDurationMs: int = 0
+    averageQueueMs: int = 0
+    quotaUnits: float = 0
+    publicModelCalls: int = 0
+    privateModelCalls: int = 0
+
+
+class AdminDashboardBucketOut(BaseModel):
+    label: str
+    totalCalls: int = 0
+    successCalls: int = 0
+    failedCalls: int = 0
+    timeoutCalls: int = 0
+    quotaUnits: float = 0
+    averageDurationMs: int = 0
+
+
+class AdminDashboardMetricOut(BaseModel):
+    totals: AdminDashboardTotalsOut
+    trends: dict[str, list[AdminDashboardBucketOut]] = Field(default_factory=dict)
+    capabilityBreakdown: list[dict[str, Any]] = Field(default_factory=list)
+    ownershipBreakdown: list[dict[str, Any]] = Field(default_factory=list)
+    creditSummary: dict[str, int] = Field(default_factory=dict)
+    failedModels: list[dict[str, Any]] = Field(default_factory=list)
+    slowModels: list[dict[str, Any]] = Field(default_factory=list)
+    activeUsers: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class AdminCreationAssetOut(BaseModel):

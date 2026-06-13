@@ -32,6 +32,11 @@ class User(Base):
 
     sessions: Mapped[list[SessionRecord]] = relationship(back_populates="user", cascade="all, delete-orphan")
     credentials: Mapped[list[UserCredential]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    admin_role_assignment: Mapped[AdminRoleAssignment | None] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
 
 
 class SessionRecord(Base):
@@ -40,6 +45,7 @@ class SessionRecord(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id("ses"))
     user_id: Mapped[str] = mapped_column(String(64), ForeignKey("users.id", ondelete="CASCADE"), index=True)
     token_hash: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    client_ip: Mapped[str] = mapped_column(String(64), default="")
     expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
@@ -78,6 +84,72 @@ class UserCredential(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
     user: Mapped[User] = relationship(back_populates="credentials")
+
+
+class UserCreditAccount(Base):
+    __tablename__ = "user_credit_accounts"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id("credacct"))
+    user_id: Mapped[str] = mapped_column(String(64), ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True)
+    balance: Mapped[int] = mapped_column(Integer, default=0)
+    reserved_balance: Mapped[int] = mapped_column(Integer, default=0)
+    total_recharged: Mapped[int] = mapped_column(Integer, default=0)
+    total_spent: Mapped[int] = mapped_column(Integer, default=0)
+    total_refunded: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class CreditTransaction(Base):
+    __tablename__ = "credit_transactions"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id("ctxn"))
+    user_id: Mapped[str] = mapped_column(String(64), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    type: Mapped[str] = mapped_column(String(64), index=True)
+    amount: Mapped[int] = mapped_column(Integer, default=0)
+    balance_after: Mapped[int] = mapped_column(Integer, default=0)
+    reserved_after: Mapped[int] = mapped_column(Integer, default=0)
+    capability: Mapped[str] = mapped_column(String(32), default="", index=True)
+    model_group_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    sub_model_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    conversation_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    message_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    task_id: Mapped[str] = mapped_column(String(128), default="", index=True)
+    related_transaction_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    status: Mapped[str] = mapped_column(String(32), default="succeeded", index=True)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    operator_user_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
+class CreditPricingRule(Base):
+    __tablename__ = "credit_pricing_rules"
+    __table_args__ = (
+        UniqueConstraint("scope", "capability", "model_group_id", "sub_model_id", name="uq_credit_pricing_scope"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id("cprice"))
+    scope: Mapped[str] = mapped_column(String(64), index=True)
+    capability: Mapped[str] = mapped_column(String(32), default="", index=True)
+    model_group_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    sub_model_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    price: Mapped[int] = mapped_column(Integer, default=0)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by: Mapped[str] = mapped_column(String(64), default="", index=True)
+    updated_by: Mapped[str] = mapped_column(String(64), default="", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class SystemSetting(Base):
+    __tablename__ = "system_settings"
+
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, default="")
+    updated_by: Mapped[str] = mapped_column(String(64), default="", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
 
 class ApiKey(Base):
@@ -264,6 +336,19 @@ class PromptTemplate(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
 
+class PromptTemplateVersion(Base):
+    __tablename__ = "prompt_template_versions"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id("ptv"))
+    template_id: Mapped[str] = mapped_column(String(64), ForeignKey("prompt_templates.id", ondelete="CASCADE"), index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    name: Mapped[str] = mapped_column(String(128), default="")
+    content: Mapped[str] = mapped_column(Text, default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    updated_by: Mapped[str] = mapped_column(String(64), default="", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
 class AdminOperationLog(Base):
     __tablename__ = "admin_operation_logs"
 
@@ -275,6 +360,54 @@ class AdminOperationLog(Base):
     status: Mapped[str] = mapped_column(String(32), default="success", index=True)
     summary_json: Mapped[str] = mapped_column(Text, default="{}")
     ip_hash: Mapped[str] = mapped_column(String(128), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
+class AdminRoleAssignment(Base):
+    __tablename__ = "admin_role_assignments"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id("arole"))
+    user_id: Mapped[str] = mapped_column(String(64), ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True)
+    role: Mapped[str] = mapped_column(String(32), default="viewer", index=True)
+    assigned_by: Mapped[str] = mapped_column(String(64), default="", index=True)
+    note: Mapped[str] = mapped_column(String(512), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+    user: Mapped[User] = relationship(back_populates="admin_role_assignment")
+
+
+class ModelHealthCheck(Base):
+    __tablename__ = "model_health_checks"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id("mhc"))
+    model_group_id: Mapped[str] = mapped_column(String(64), ForeignKey("models.id", ondelete="CASCADE"), index=True)
+    sub_model_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    admin_user_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    message: Mapped[str] = mapped_column(String(512), default="")
+    raw_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
+class TaskEvent(Base):
+    __tablename__ = "task_events"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id("tevt"))
+    task_id: Mapped[str] = mapped_column(String(128), index=True)
+    event_type: Mapped[str] = mapped_column(String(64), default="event", index=True)
+    status: Mapped[str] = mapped_column(String(32), default="", index=True)
+    capability: Mapped[str] = mapped_column(String(32), default="", index=True)
+    endpoint: Mapped[str] = mapped_column(String(128), default="")
+    user_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    model_group_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("models.id", ondelete="SET NULL"), nullable=True, index=True)
+    sub_model_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("sub_models.id", ondelete="SET NULL"), nullable=True, index=True)
+    conversation_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    message_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    message: Mapped[str] = mapped_column(String(512), default="")
+    payload_json: Mapped[str] = mapped_column(Text, default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
 
 

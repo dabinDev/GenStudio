@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { ModelDefinition, ModelSetting } from "./types";
 import {
   appendLocalConversationMessages,
+  authCodeCallbackNextPath,
   buildImageGenerationRequestBody,
   buildVideoMediaFields,
   updateLocalConversationMessage,
@@ -23,6 +24,7 @@ import {
   mediaPreviewActionLabels,
   nextMediaPreviewTransform,
   normalizeThemeMode,
+  resolveAdminConsoleHref,
   toggleThemeMode,
   unavailableTestedModels,
   filterSettingsModels,
@@ -44,6 +46,7 @@ import {
   modelDisplayNameForModel,
   modelParameterSourceLabel,
   publicShareTargetModels,
+  resolvePostAuthTarget,
   resolveSidebarFilter,
   renderMarkdownPreview,
   resolveAuthRedirect,
@@ -52,6 +55,7 @@ import {
   shouldResetConversationForModelSwitch,
   shouldContinuePollingTask,
   conversationAssetsFromImageQueryResult,
+  mergeImageQueryAssets,
   conversationAssetFromVideoQueryResult,
   supportsCatalogParameter,
   testResultSummary,
@@ -226,18 +230,37 @@ describe("model selection helpers", () => {
     expect(capabilityFilterForView("profile")).toBe("all");
   });
 
-  it("treats settings, profile, admin, and history as private login-gated actions", () => {
+  it("treats only creative workspace account pages as private login-gated actions", () => {
     expect(isPrivateView("settings")).toBe(true);
     expect(isPrivateView("profile")).toBe(true);
-    expect(isPrivateView("admin")).toBe(true);
+    expect(isPrivateView("admin")).toBe(false);
     expect(isPrivateView("images")).toBe(false);
     expect(loginRedirectForView("settings")).toBe("/auth?redirect=%2Fsettings");
     expect(loginRedirectForView("profile")).toBe("/auth?redirect=%2Fprofile");
-    expect(loginRedirectForView("admin")).toBe("/auth?redirect=%2Fadmin");
     expect(resolveAuthRedirect("#/auth?redirect=%2Fsettings")).toBe("settings");
     expect(resolveAuthRedirect("#/auth?redirect=%2Fprofile")).toBe("profile");
     expect(resolveAuthRedirect("#/auth?redirect=%2Fadmin")).toBe("admin");
+    expect(resolveAuthRedirect("#/auth?redirect=%2Fadmin%2F")).toBe("admin");
     expect(resolveAuthRedirect("#/auth?redirect=https%3A%2F%2Fevil.example")).toBe("images");
+  });
+
+  it("separates post-auth admin redirects from creative workspace views", () => {
+    expect(resolvePostAuthTarget("#/auth?redirect=%2Fadmin%2F", "http://127.0.0.1:5173")).toEqual({
+      type: "external",
+      href: "http://127.0.0.1:5174/admin/",
+    });
+    expect(resolvePostAuthTarget("#/auth?redirect=%2Fsettings", "http://127.0.0.1:5173")).toEqual({
+      type: "view",
+      view: "settings",
+    });
+    expect(authCodeCallbackNextPath("#/auth?redirect=%2Fadmin%2F")).toBe("/admin/");
+    expect(authCodeCallbackNextPath("#/auth?redirect=%2Fsettings")).toBe("/#/settings");
+  });
+
+  it("opens the independent admin dev server from local creative workspace ports", () => {
+    expect(resolveAdminConsoleHref("http://127.0.0.1:5175")).toBe("http://127.0.0.1:5174/admin/");
+    expect(resolveAdminConsoleHref("http://localhost:5173")).toBe("http://localhost:5174/admin/");
+    expect(resolveAdminConsoleHref("https://studio.cylonai.cn")).toBe("/admin/");
   });
 
   it("does not expose upstream endpoints in model list summaries", () => {
@@ -1825,6 +1848,163 @@ describe("conversation helpers", () => {
         },
       },
     ]);
+  });
+
+  it("merges every backend assistant asset with image query results for four-image batches", () => {
+    const merged = mergeImageQueryAssets({
+      taskId: "local-image-task-four",
+      status: "completed",
+      progress: "4/4",
+      images: [
+        { src: "https://cdn.example.com/one.png" },
+        { src: "https://cdn.example.com/two.png" },
+        { src: "https://cdn.example.com/three.png" },
+        { src: "https://cdn.example.com/four.png" },
+      ],
+      assistantAssets: [
+        {
+          id: "server-asset-one",
+          capability: "image",
+          assetType: "image",
+          url: "https://cdn.example.com/one.png",
+          thumbnailUrl: "",
+          metadata: { batchIndex: 1 },
+          createdAt: "2026-06-14T01:00:00.000Z",
+        },
+        {
+          id: "server-asset-two",
+          capability: "image",
+          assetType: "image",
+          url: "https://cdn.example.com/two.png",
+          thumbnailUrl: "",
+          metadata: { batchIndex: 2 },
+          createdAt: "2026-06-14T01:00:01.000Z",
+        },
+        {
+          id: "server-asset-three",
+          capability: "image",
+          assetType: "image",
+          url: "https://cdn.example.com/three.png",
+          thumbnailUrl: "",
+          metadata: { batchIndex: 3 },
+          createdAt: "2026-06-14T01:00:02.000Z",
+        },
+        {
+          id: "server-asset-four",
+          capability: "image",
+          assetType: "image",
+          url: "https://cdn.example.com/four.png",
+          thumbnailUrl: "",
+          metadata: { batchIndex: 4 },
+          createdAt: "2026-06-14T01:00:03.000Z",
+        },
+      ],
+      now: "2026-06-14T01:00:04.000Z",
+    });
+
+    expect(merged).toHaveLength(4);
+    expect(merged.map((asset) => asset.url)).toEqual([
+      "https://cdn.example.com/one.png",
+      "https://cdn.example.com/two.png",
+      "https://cdn.example.com/three.png",
+      "https://cdn.example.com/four.png",
+    ]);
+    expect(merged[3]).toMatchObject({
+      id: "server-asset-four",
+      metadata: { batchIndex: 4 },
+    });
+  });
+
+  it("keeps image query assets scoped to the current task id", () => {
+    const merged = mergeImageQueryAssets({
+      taskId: "local-image-task-second",
+      status: "completed",
+      progress: "2/2",
+      images: [],
+      assistantAssets: [
+        {
+          id: "server-asset-first-one",
+          capability: "image",
+          assetType: "image",
+          url: "https://cdn.example.com/first-one.png",
+          thumbnailUrl: "",
+          metadata: { taskId: "local-image-task-first", batchIndex: 1 },
+          createdAt: "2026-06-14T01:00:00.000Z",
+        },
+        {
+          id: "server-asset-second-one",
+          capability: "image",
+          assetType: "image",
+          url: "https://cdn.example.com/second-one.png",
+          thumbnailUrl: "",
+          metadata: { taskId: "local-image-task-second", batchIndex: 1 },
+          createdAt: "2026-06-14T01:02:00.000Z",
+        },
+        {
+          id: "server-asset-second-two",
+          capability: "image",
+          assetType: "image",
+          url: "https://cdn.example.com/second-two.png",
+          thumbnailUrl: "",
+          metadata: { taskId: "local-image-task-second", batchIndex: 2 },
+          createdAt: "2026-06-14T01:02:01.000Z",
+        },
+      ],
+      now: "2026-06-14T01:02:02.000Z",
+    });
+
+    expect(merged.map((asset) => asset.url)).toEqual([
+      "https://cdn.example.com/second-one.png",
+      "https://cdn.example.com/second-two.png",
+    ]);
+  });
+
+  it("updates image task messages by metadata when content no longer equals the task id", () => {
+    const pending = appendLocalConversationMessages(null, {
+      capability: "image",
+      titleSeed: "batch images",
+      modelGroupId: "image-model",
+      subModelId: "sub-image",
+      now: "2026-06-14T01:05:00.000Z",
+      messages: [
+        { role: "user", content: "batch images" },
+        {
+          role: "assistant",
+          content: "completed",
+          status: "processing",
+          assets: [
+            {
+              assetType: "image",
+              url: "https://cdn.example.com/one.png",
+              metadata: { taskId: "local-image-task-four" },
+            },
+          ],
+        },
+      ],
+    });
+
+    const completed = updateLocalConversationTaskMessage(pending, "local-image-task-four", {
+      content: "completed",
+      status: "success",
+      assets: [
+        {
+          id: "asset-four",
+          capability: "image",
+          assetType: "image",
+          url: "https://cdn.example.com/four.png",
+          thumbnailUrl: "",
+          metadata: { taskId: "local-image-task-four" },
+          createdAt: "2026-06-14T01:06:00.000Z",
+        },
+      ],
+    });
+
+    expect(completed?.messages).toHaveLength(2);
+    expect(completed?.messages[1]).toMatchObject({
+      role: "assistant",
+      status: "success",
+      assets: [expect.objectContaining({ url: "https://cdn.example.com/four.png" })],
+    });
   });
 
   it("keeps the local request visible when an image proxy error has no server conversation", () => {

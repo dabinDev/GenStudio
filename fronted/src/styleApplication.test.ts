@@ -18,10 +18,10 @@ describe("workbench style application", () => {
     const overrideIndex = source.indexOf("Creative Workshop effective workbench surfaces v12");
 
     expect(overrideIndex).toBeGreaterThan(-1);
-    expect(source.indexOf(".shell:not(.shell-admin) .conversation-timeline", overrideIndex)).toBeGreaterThan(overrideIndex);
-    expect(source.indexOf(".shell:not(.shell-admin) .message-card", overrideIndex)).toBeGreaterThan(overrideIndex);
-    expect(source.indexOf(".shell:not(.shell-admin) .composer-card", overrideIndex)).toBeGreaterThan(overrideIndex);
-    expect(source.indexOf(".shell:not(.shell-admin) .composer-surface", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(source.indexOf(".shell .conversation-timeline", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(source.indexOf(".shell .message-card", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(source.indexOf(".shell .composer-card", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(source.indexOf(".shell .composer-surface", overrideIndex)).toBeGreaterThan(overrideIndex);
   });
 
   it("uses wide rails for chat history and composer content", () => {
@@ -29,11 +29,11 @@ describe("workbench style application", () => {
     const overrideIndex = source.indexOf("Creative Workshop wide conversation rails v13");
 
     expect(overrideIndex).toBeGreaterThan(-1);
-    expect(source.indexOf(".shell:not(.shell-admin) .conversation-timeline", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(source.indexOf(".shell .conversation-timeline", overrideIndex)).toBeGreaterThan(overrideIndex);
     expect(source.indexOf("max-width: none !important", overrideIndex)).toBeGreaterThan(overrideIndex);
-    expect(source.indexOf(".shell:not(.shell-admin) .message-user", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(source.indexOf(".shell .message-user", overrideIndex)).toBeGreaterThan(overrideIndex);
     expect(source.indexOf("margin-left: auto !important", overrideIndex)).toBeGreaterThan(overrideIndex);
-    expect(source.indexOf(".shell:not(.shell-admin) .composer-card", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(source.indexOf(".shell .composer-card", overrideIndex)).toBeGreaterThan(overrideIndex);
     expect(source.indexOf("1480px", overrideIndex)).toBeGreaterThan(overrideIndex);
   });
 
@@ -42,13 +42,13 @@ describe("workbench style application", () => {
     const overrideIndex = source.indexOf("Creative Workshop composer action alignment v15");
 
     expect(overrideIndex).toBeGreaterThan(-1);
-    expect(source.indexOf(".shell:not(.shell-admin) .composer-footer-bar", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(source.indexOf(".shell .composer-footer-bar", overrideIndex)).toBeGreaterThan(overrideIndex);
     expect(source.indexOf("grid-template-columns: minmax(0, 1fr) auto !important", overrideIndex)).toBeGreaterThan(overrideIndex);
-    expect(source.indexOf(".shell:not(.shell-admin) .composer-action-group", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(source.indexOf(".shell .composer-action-group", overrideIndex)).toBeGreaterThan(overrideIndex);
     expect(source.indexOf("justify-self: end !important", overrideIndex)).toBeGreaterThan(overrideIndex);
     expect(source.indexOf("margin-left: auto !important", overrideIndex)).toBeGreaterThan(overrideIndex);
     expect(source.indexOf("min-width: max-content !important", overrideIndex)).toBeGreaterThan(overrideIndex);
-    expect(source.indexOf(".shell:not(.shell-admin) .composer-submit-button", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(source.indexOf(".shell .composer-submit-button", overrideIndex)).toBeGreaterThan(overrideIndex);
     expect(source.indexOf("height: 40px !important", overrideIndex)).toBeGreaterThan(overrideIndex);
     expect(source.indexOf("border-radius: 10px !important", overrideIndex)).toBeGreaterThan(overrideIndex);
     expect(source.indexOf("white-space: nowrap !important", overrideIndex)).toBeGreaterThan(overrideIndex);
@@ -91,9 +91,260 @@ describe("workbench style application", () => {
     expect(source).not.toContain("class=\"loader-dot\"");
 
     expect(overrideIndex).toBeGreaterThan(-1);
-    expect(styles.indexOf(".shell:not(.shell-admin) .composer-card", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell .composer-card", overrideIndex)).toBeGreaterThan(overrideIndex);
     expect(styles.indexOf("background: transparent !important", overrideIndex)).toBeGreaterThan(overrideIndex);
-    expect(styles.indexOf(".shell:not(.shell-admin) .message-avatar", overrideIndex)).toBeGreaterThan(overrideIndex);
-    expect(styles.indexOf(".shell:not(.shell-admin) .ai-thinking-panel", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell .message-avatar", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell .ai-thinking-panel", overrideIndex)).toBeGreaterThan(overrideIndex);
+  });
+
+  it("uses theme-specific GSAP ambient backgrounds without the old light-mode blue grid", () => {
+    const source = appVue();
+    const styles = stylesCss();
+    const overrideIndex = styles.indexOf("Creative Workshop theme ambient background v18");
+
+    expect(source).toContain("setupStudioAmbientAnimation");
+    expect(source).toContain("teardownStudioAmbientAnimation");
+    expect(source).toContain("studio-ambient");
+    expect(source).toContain("studio-ambient-drift");
+    expect(source).toContain("studio-ambient-line");
+    expect(source).toContain("onUnmounted(() =>");
+    expect(source).toContain("teardownStudioAmbientAnimation();");
+    expect(source.indexOf("watch(\n  themeMode")).toBeGreaterThan(-1);
+    expect(source.indexOf("setupStudioAmbientAnimation();", source.indexOf("watch(\n  themeMode"))).toBeGreaterThan(-1);
+    expect(overrideIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf(".shell::before", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf("animation: none !important", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .studio-ambient", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"dark\"] .studio-ambient", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf("pointer-events: none", styles.indexOf(".studio-ambient", overrideIndex))).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf("z-index: 0", styles.indexOf(".studio-ambient", overrideIndex))).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".sidebar,\n.main", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf("z-index: 1", styles.indexOf(".sidebar,\n.main", overrideIndex))).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf("#f8fbfc", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf("#050b13", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .studio-canvas", overrideIndex)).toBeGreaterThan(overrideIndex);
+
+    const lightThemeIndex = styles.indexOf(".shell[data-theme=\"light\"] {", overrideIndex);
+    const darkThemeIndex = styles.indexOf(".shell[data-theme=\"dark\"] {", overrideIndex);
+    const lightAmbientBlock = styles.slice(lightThemeIndex, darkThemeIndex);
+    expect(lightAmbientBlock).not.toContain("46px 46px");
+    expect(lightAmbientBlock).not.toContain("#07101d");
+    expect(lightAmbientBlock).not.toContain("#050b13");
+
+    const finalLightCanvasIndex = styles.indexOf(".shell[data-theme=\"light\"] .studio-canvas", overrideIndex);
+    const finalDarkThemeIndex = styles.indexOf(".shell[data-theme=\"dark\"] {", finalLightCanvasIndex);
+    const finalLightCanvasBlock = styles.slice(finalLightCanvasIndex, finalDarkThemeIndex);
+    expect(finalLightCanvasBlock).not.toContain("36px 36px");
+    expect(finalLightCanvasBlock).not.toContain("linear-gradient(90deg");
+    expect(finalLightCanvasBlock).not.toContain("1px, transparent 1px");
+  });
+
+  it("removes legacy grid backgrounds from every chat canvas rule", () => {
+    const styles = stylesCss();
+    const canvasBlocks = Array.from(
+      styles.matchAll(/[^{]*\.studio-canvas(?!::)[^{]*\{[^}]*\}/g),
+      (match) => match[0],
+    );
+
+    expect(canvasBlocks.length).toBeGreaterThan(0);
+    canvasBlocks.forEach((block) => {
+      expect(block).not.toContain("36px 36px");
+      expect(block).not.toContain("34px 34px");
+      expect(block).not.toContain("38px 38px");
+      expect(block).not.toContain("42px 42px");
+      expect(block).not.toContain("1px, transparent 1px");
+    });
+  });
+
+  it("keeps the settings page background theme-specific without the blue grid in light mode", () => {
+    const styles = stylesCss();
+    const themeOverrideIndex = styles.indexOf("Creative Workshop theme ambient background v18");
+
+    expect(themeOverrideIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .settings-page", themeOverrideIndex)).toBeGreaterThan(themeOverrideIndex);
+
+    const rawSettingsBlocks = Array.from(
+      styles.matchAll(/(?<!\[data-theme="light"\]\s)(?<!\[data-theme="dark"\]\s)(?<!\.shell\[data-theme="light"\]\s)(?<!\.shell\[data-theme="dark"\]\s)\.settings-page\s*\{[^}]*\}/g),
+      (match) => match[0],
+    );
+    expect(rawSettingsBlocks.length).toBeGreaterThan(0);
+    rawSettingsBlocks.forEach((block) => {
+      expect(block).not.toContain("linear-gradient(90deg");
+      expect(block).not.toContain("1px, transparent 1px");
+      expect(block).not.toContain("background-size: 40px 40px");
+      expect(block).not.toContain("rgba(8, 20, 34");
+    });
+  });
+
+  it("uses a dedicated soft-ink treatment for light mode settings model names", () => {
+    const styles = stylesCss();
+    const overrideIndex = styles.indexOf("Creative Workshop settings light model names v19");
+
+    expect(overrideIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .settings-model-main strong", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .settings-primary-model strong", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf("color: #173f3f !important", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf("letter-spacing: 0 !important", overrideIndex)).toBeGreaterThan(overrideIndex);
+  });
+
+  it("keeps light mode badges and action buttons on explicit readable colors", () => {
+    const styles = stylesCss();
+    const overrideIndex = styles.indexOf("Creative Workshop light contrast guard v20");
+
+    expect(overrideIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .tag-text", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf("color: #075b78 !important", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .tag-image", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf("color: #075f59 !important", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .tag-video", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf("color: #7a4a06 !important", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .button-secondary", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf("color: #0c5260 !important", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .button-primary", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf("background: linear-gradient(135deg, #0a8f86, #0e67b7) !important", overrideIndex)).toBeGreaterThan(overrideIndex);
+  });
+
+  it("keeps the add-model dialog fully light themed in light mode", () => {
+    const styles = stylesCss();
+    const overrideIndex = styles.indexOf("Creative Workshop settings dialog light surface v21");
+
+    expect(overrideIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .settings-dialog", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .settings-dialog-workspace .wizard-step", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .settings-dialog-section", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .settings-dialog-actions", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .model-pick-panel", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .dialog-test-result", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .model-select-dialog .model-select-menu", overrideIndex)).toBeGreaterThan(overrideIndex);
+
+    const block = styles.slice(overrideIndex);
+    expect(block).not.toContain("#101113");
+    expect(block).not.toContain("rgba(8, 16, 28");
+    expect(block).not.toContain("rgba(8, 18, 31");
+    expect(block).not.toContain("rgba(3, 9, 16");
+  });
+
+  it("uses polished theme-specific colors for the primary model select menu", () => {
+    const styles = stylesCss();
+    const overrideIndex = styles.indexOf("Creative Workshop model select menu polish v22");
+
+    expect(overrideIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .model-select-dialog .model-select-menu", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .model-select-dialog .model-select-trigger", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .model-select-dialog .model-select-search", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .model-select-dialog .model-select-option", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .model-select-dialog .model-select-option-active", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"dark\"] .model-select-dialog .model-select-menu", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"dark\"] .model-select-dialog .model-select-trigger", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"dark\"] .model-select-dialog .model-select-search", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"dark\"] .model-select-dialog .model-select-option", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"dark\"] .model-select-dialog .model-select-option-active", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell .model-select-dialog .model-select-check", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf("max-height: min(42vh, 360px) !important", overrideIndex)).toBeGreaterThan(overrideIndex);
+
+    const nextOverrideIndex = styles.indexOf("Creative Workshop refined media gallery v23", overrideIndex);
+    const block = styles.slice(overrideIndex, nextOverrideIndex > -1 ? nextOverrideIndex : undefined);
+    expect(block).not.toContain("rgba(255, 255, 255, 0.055)");
+    expect(block).not.toContain("#111416");
+  });
+
+  it("uses the refined media gallery and fullscreen preview controls", () => {
+    const source = appVue();
+    const styles = stylesCss();
+    const overrideIndex = styles.indexOf("Creative Workshop refined media gallery v23");
+
+    expect(source).toContain("setupMediaPreviewAnimation");
+    expect(source).toContain("media-preview-toolbar");
+    expect(source).toContain("asset-action-toolbar");
+    expect(source).toContain("asset-action-button");
+    expect(overrideIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf(".shell .message-assets", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell .message-assets-multiple .message-asset-card", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell .asset-action-toolbar", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell .asset-action-button", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".media-preview-toolbar", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".media-preview-zoom-pill", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(
+      styles.indexOf(".media-preview-backdrop .media-preview-panel .media-preview-actions.media-preview-toolbar", overrideIndex),
+    ).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf("grid-template-columns: repeat(4, minmax(168px, 1fr)) !important", overrideIndex)).toBeGreaterThan(overrideIndex);
+  });
+
+  it("uses themed surfaces for the settings model configuration list", () => {
+    const styles = stylesCss();
+    const overrideIndex = styles.indexOf("Creative Workshop settings model config list v24");
+
+    expect(overrideIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .settings-list-panel", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .settings-model-board", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .settings-board-head", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .settings-model-row", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .settings-search-box", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .settings-model-board .settings-action-button", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .settings-empty-state", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"dark\"] .settings-list-panel", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"dark\"] .settings-model-board", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"dark\"] .settings-board-head", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"dark\"] .settings-model-row", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"dark\"] .settings-search-box", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"dark\"] .settings-model-board .settings-action-button", overrideIndex)).toBeGreaterThan(overrideIndex);
+  });
+
+  it("keeps inline primary model picker from falling back to large blue active blocks", () => {
+    const styles = stylesCss();
+    const overrideIndex = styles.indexOf("Creative Workshop inline primary model picker v25");
+
+    expect(overrideIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf(".shell .inline-model-select .model-select-menu", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell .inline-model-select .model-select-option", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell .model-select-scrim", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .inline-model-select .model-select-option-active", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"dark\"] .inline-model-select .model-select-option-active", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf("rgba(218, 249, 244, 0.74)", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf("background: transparent !important", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf("linear-gradient(135deg, rgb(15, 159, 150), rgb(31, 111, 235))", overrideIndex)).toBe(-1);
+  });
+
+  it("keeps settings primary model menus above the model list without clipping", () => {
+    const styles = stylesCss();
+    const overrideIndex = styles.indexOf("Creative Workshop settings model picker layer v26");
+
+    expect(overrideIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf(".shell .settings-list-panel", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell .settings-model-board", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf("overflow: visible !important", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell .settings-model-row-select-open", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell .settings-model-row-select-open .model-select-menu", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell .settings-model-row-select-open .model-select-scrim", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf("z-index: 120 !important", overrideIndex)).toBeGreaterThan(overrideIndex);
+  });
+
+  it("uses the redesigned dark navigation palette for sidebar models and topbar controls", () => {
+    const styles = stylesCss();
+    const overrideIndex = styles.indexOf("Creative Workshop dark navigation palette v26");
+
+    expect(overrideIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf(".shell[data-theme=\"dark\"] .sidebar", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"dark\"] .sidebar-logo", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"dark\"] .primary-item", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"dark\"] .primary-item-active", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"dark\"] .secondary-item-active", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"dark\"] .sidebar-model-item", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"dark\"] .sidebar-model-active", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"dark\"] .workspace-topbar button", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"dark\"] .topbar-icon-button", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf("#0a141f", overrideIndex)).toBeGreaterThan(overrideIndex);
+  });
+
+  it("does not keep the old embedded admin shell in the creative workspace", () => {
+    const source = appVue();
+    const styles = stylesCss();
+
+    expect(source).not.toContain('"admin"');
+    expect(source).not.toContain("shell-admin");
+    expect(styles).not.toContain(".shell-admin");
+    expect(styles).not.toContain("legacy-admin-removed");
+    expect(styles).not.toMatch(/\.admin-/);
+    expect(styles).not.toMatch(/--admin/);
   });
 });

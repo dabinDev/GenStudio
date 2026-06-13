@@ -3,6 +3,7 @@
 CreativePannel 现在按 `Python + Vue` 结构运行：
 
 - `fronted/`：Vue 3 + Vite 前端工作台。
+- `admin/`：Vue 3 + Vite + Element Plus 独立管理后台。
 - `server/`：FastAPI 后端代理服务。
 
 旧 Next.js 代码暂时保留在仓库中作为迁移参照，当前新项目入口以 `fronted` 和 `server` 为准。
@@ -65,10 +66,46 @@ http://127.0.0.1:5173
 
 Vite 已把 `/api` 代理到 `http://127.0.0.1:8000`。
 
+## 管理后台启动
+
+```bash
+cd admin
+npm install
+npm run dev
+```
+
+默认访问：
+
+```text
+http://127.0.0.1:5174/admin/
+```
+
+管理后台复用同一套登录、Cookie 和 `/api/admin/*` 后端接口。创作端顶部后台入口会跳转到 `/admin/`，旧的 `#/admin` 嵌入式后台已移除。
+
+## 静态预览
+
+前台和后台都完成构建后，可以用 Docker Compose 预览同域静态路由：
+
+```bash
+docker compose --profile app up -d web
+```
+
+默认访问：
+
+```text
+http://127.0.0.1:8080/
+http://127.0.0.1:8080/admin/
+```
+
 ## 构建验证
 
 ```bash
 cd fronted
+npm run build
+```
+
+```bash
+cd admin
 npm run build
 ```
 

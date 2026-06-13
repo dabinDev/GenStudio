@@ -22,6 +22,7 @@ MODEL_PERMISSIONS = {
 }
 USER_CREDIT_PERMISSIONS = {
     "user:view",
+    "user:export",
     "user:update",
     "user:disable",
     "user:delete",
@@ -48,6 +49,7 @@ ADMIN_PERMISSIONS = frozenset(
     | RECORD_AUDIT_PERMISSIONS
     | {
         "user:view",
+        "user:export",
         "user:update",
         "user:disable",
         "user:restore",
@@ -97,6 +99,10 @@ def resolve_admin_role(user: User | None, settings: Settings | None = None) -> s
     email = (user.email or "").strip().lower()
     if email and email in _normalized_set(resolved_settings.admin_emails):
         return ROLE_SUPER_ADMIN
+
+    assigned_role = getattr(getattr(user, "admin_role_assignment", None), "role", "")
+    if assigned_role in PERMISSIONS_BY_ROLE:
+        return assigned_role
 
     identities = {
         (user.external_user_id or "").strip().lower(),

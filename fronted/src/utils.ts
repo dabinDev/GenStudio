@@ -89,7 +89,7 @@ export function capabilityFilterForView(viewName: string): Capability | "all" {
 }
 
 export function isPrivateView(viewName: string): boolean {
-  return viewName === "settings" || viewName === "profile" || viewName === "admin";
+  return viewName === "settings" || viewName === "profile";
 }
 
 export function loginRedirectForView(viewName: string): string {
@@ -101,8 +101,37 @@ export function resolveAuthRedirect(hash: string, fallback = "images"): string {
   const query = hash.split("?", 2)[1] || "";
   const redirect = new URLSearchParams(query).get("redirect") || "";
   if (!redirect.startsWith("/") || redirect.startsWith("//")) return fallback;
-  const route = redirect.replace(/^\/+/, "").split("?", 1)[0];
+  const route = redirect.replace(/^\/+/, "").split("?", 1)[0].replace(/\/+$/, "");
   return ["text", "images", "videos", "settings", "profile", "admin"].includes(route) ? route : fallback;
+}
+
+export function resolveAdminConsoleHref(origin: string): string {
+  const normalized = origin.trim();
+  const match = normalized.match(/^(https?:\/\/(?:127\.0\.0\.1|localhost)):(?:5173|5175)$/i);
+  if (match) {
+    return `${match[1]}:5174/admin/`;
+  }
+  return "/admin/";
+}
+
+export type PostAuthView = "text" | "images" | "videos" | "settings" | "profile";
+
+export type PostAuthTarget =
+  | { type: "view"; view: PostAuthView }
+  | { type: "external"; href: string };
+
+export function resolvePostAuthTarget(hash: string, origin: string): PostAuthTarget {
+  const route = resolveAuthRedirect(hash);
+  if (route === "admin") {
+    return { type: "external", href: resolveAdminConsoleHref(origin) };
+  }
+  return { type: "view", view: route as PostAuthView };
+}
+
+export function authCodeCallbackNextPath(hash: string): string {
+  const target = resolvePostAuthTarget(hash, "");
+  if (target.type === "external") return target.href;
+  return `/#/${target.view}`;
 }
 
 export function canEditModel(model: Pick<ModelDefinition, "serverManaged" | "isPublic" | "canEdit">): boolean {
@@ -752,7 +781,11 @@ export function updateLocalConversationTaskMessage(
   if (!conversation || !taskId) return conversation;
   const target = [...conversation.messages]
     .reverse()
-    .find((message) => message.role === "assistant" && message.content.trim() === taskId);
+    .find((message) => {
+      if (message.role !== "assistant") return false;
+      if (message.content.trim() === taskId) return true;
+      return message.assets.some((asset) => String(asset.metadata?.taskId || "") === taskId);
+    });
   if (!target) return conversation;
   return updateLocalConversationMessage(conversation, target.id, patch);
 }
@@ -821,6 +854,60 @@ export function conversationAssetsFromImageQueryResult(input: {
         revisedPrompt: image.revisedPrompt || "",
       },
     }));
+}
+
+export function mergeImageQueryAssets(input: {
+  taskId: string;
+  status?: string | null;
+  progress?: number | string | null;
+  images?: Array<{ src: string; revisedPrompt?: string | null }>;
+  assistantAssets?: ConversationAsset[];
+  now?: string;
+}): Array<Partial<ConversationAsset> & { assetType: string; url: string }> {
+  const seen = new Set<string>();
+  const merged: Array<Partial<ConversationAsset> & { assetType: string; url: string }> = [];
+  const createdAt = input.now || new Date().toISOString();
+  const assistantAssets = input.assistantAssets || [];
+  const hasTaskScopedAssistantAssets = assistantAssets.some(
+    (asset) => String(asset.metadata?.taskId || "") === input.taskId,
+  );
+
+  for (const asset of assistantAssets) {
+    if (asset.assetType !== "image" || !asset.url || seen.has(asset.url)) continue;
+    const assetTaskId = String(asset.metadata?.taskId || "");
+    if (input.taskId && assetTaskId && assetTaskId !== input.taskId) continue;
+    if (input.taskId && !assetTaskId && hasTaskScopedAssistantAssets) continue;
+    seen.add(asset.url);
+    merged.push({
+      ...asset,
+      assetType: "image",
+      url: asset.url,
+      thumbnailUrl: asset.thumbnailUrl || "",
+      metadata: {
+        taskId: input.taskId,
+        status: input.status || "",
+        progress: input.progress ?? null,
+        ...(asset.metadata || {}),
+      },
+      createdAt: asset.createdAt || createdAt,
+    });
+  }
+
+  for (const asset of conversationAssetsFromImageQueryResult({
+    taskId: input.taskId,
+    status: input.status,
+    progress: input.progress,
+    images: input.images || [],
+  })) {
+    if (!asset.url || seen.has(asset.url)) continue;
+    seen.add(asset.url);
+    merged.push({
+      ...asset,
+      createdAt,
+    });
+  }
+
+  return merged;
 }
 
 export function shouldResetConversationForModelSwitch(

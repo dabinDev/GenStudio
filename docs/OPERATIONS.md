@@ -96,8 +96,13 @@ server {
     proxy_set_header X-Forwarded-Proto https;
   }
 
+  location /admin/ {
+    alias /opt/nginx/html/genstudio-admin/;
+    try_files $uri $uri/ /admin/index.html;
+  }
+
   location / {
-    root /srv/genstudio/fronted/dist;
+    root /opt/nginx/html/genstudio;
     try_files $uri $uri/ /index.html;
   }
 }
@@ -150,10 +155,12 @@ Deployment verification:
 - SSH command shape: `ssh -F NUL -i G:/my-linux/guangzhou.pem root@175.178.189.234`.
 - Backend/project path: `/opt/genstudio`.
 - Frontend static path: `/opt/nginx/html/genstudio`.
+- Admin static path: `/opt/nginx/html/genstudio-admin`.
 - Backend container: `genstudio-api`, mapped as `127.0.0.1:18082 -> 8000`.
 - Database container: `genstudio-mysql`.
 - Reverse proxy container: `nginx`.
-- Remote deploy helper: `.deploy-stage/remote-brand-deploy.sh`.
+- Remote deploy helper: `deploy/remote-brand-deploy.sh`.
+- The helper refuses to reload Nginx if `/admin/` routing is missing; install the Nginx shape above before publishing the independent admin app.
 
 Local preflight:
 
@@ -163,7 +170,20 @@ git log -1 --oneline
 cd fronted
 npm run build
 cd ..
+cd admin
+npm run build
+cd ..
 ```
+
+Optional local static preview after both builds:
+
+```powershell
+docker compose --profile app up -d web
+curl.exe -fsS http://127.0.0.1:8080/
+curl.exe -fsS http://127.0.0.1:8080/admin/
+```
+
+`deploy/nginx.conf` is optimized for this local/static preview and proxies API traffic to `host.docker.internal:8000`. Production Nginx can keep the existing backend upstream, such as `http://127.0.0.1:18082`, as long as the `/admin/` alias and fallback are present.
 
 Optional full verification before a larger release:
 
@@ -172,10 +192,14 @@ cd fronted
 npm test
 npm run build
 cd ..
+cd admin
+npm test
+npm run build
+cd ..
 python -m pytest server/tests/test_conversations.py
 ```
 
-Package the release from the project root after `fronted/dist` is fresh:
+Package the release from the project root after `fronted/dist` and `admin/dist` are fresh:
 
 ```powershell
 $stageRoot = Join-Path (Resolve-Path '.deploy-stage').Path 'genstudio-release'
@@ -189,6 +213,8 @@ Copy-Item -LiteralPath 'docs' -Destination (Join-Path $stageRoot 'docs') -Recurs
 Copy-Item -LiteralPath '.dockerignore' -Destination (Join-Path $stageRoot '.dockerignore')
 New-Item -ItemType Directory -Path (Join-Path $stageRoot 'fronted') | Out-Null
 Copy-Item -LiteralPath 'fronted\dist' -Destination (Join-Path $stageRoot 'fronted\dist') -Recurse
+New-Item -ItemType Directory -Path (Join-Path $stageRoot 'admin') | Out-Null
+Copy-Item -LiteralPath 'admin\dist' -Destination (Join-Path $stageRoot 'admin\dist') -Recurse
 if (Test-Path -LiteralPath $pkg) { Remove-Item -LiteralPath $pkg -Force }
 tar -czf $pkg -C $stageRoot .
 ```
@@ -197,19 +223,20 @@ Upload and execute the deployment:
 
 ```powershell
 scp -F NUL -i G:/my-linux/guangzhou.pem .deploy-stage/genstudio-brand-release.tar.gz root@175.178.189.234:/tmp/genstudio-brand-release.tar.gz
-scp -F NUL -i G:/my-linux/guangzhou.pem .deploy-stage/remote-brand-deploy.sh root@175.178.189.234:/tmp/genstudio-remote-deploy.sh
+scp -F NUL -i G:/my-linux/guangzhou.pem deploy/remote-brand-deploy.sh root@175.178.189.234:/tmp/genstudio-remote-deploy.sh
 ssh -F NUL -i G:/my-linux/guangzhou.pem root@175.178.189.234 "bash /tmp/genstudio-remote-deploy.sh"
 ```
 
 The remote deploy helper should:
 
 - unpack `/tmp/genstudio-brand-release.tar.gz`;
-- back up `/opt/genstudio/server` and `/opt/nginx/html/genstudio` under `/opt/genstudio_backups`;
-- `rsync --delete` the new `server`, `docs`, `.dockerignore`, and `fronted/dist`;
+- back up `/opt/genstudio/server`, `/opt/nginx/html/genstudio`, and `/opt/nginx/html/genstudio-admin` under `/opt/genstudio_backups`;
+- `rsync --delete` the new `server`, `docs`, `.dockerignore`, `fronted/dist`, and `admin/dist`;
+- publish the independent admin console to `/opt/nginx/html/genstudio-admin` and ensure Nginx has a `/admin/` history fallback;
 - keep `/opt/genstudio/deploy/.env` in place and ensure `GENSTUDIO_ADMIN_IDENTIFIERS` contains `cylonai`;
 - run `docker compose build genstudio-api`;
 - run `docker compose up -d genstudio-api`;
-- run `docker exec nginx nginx -s reload`;
+- run `docker exec nginx nginx -t` and `docker exec nginx nginx -s reload`;
 - verify `curl -fsS http://127.0.0.1:18082/api/health`.
 
 Post-deploy checks:
@@ -218,6 +245,7 @@ Post-deploy checks:
 ssh -F NUL -i G:/my-linux/guangzhou.pem root@175.178.189.234 "curl -fsS http://127.0.0.1:18082/api/health && docker ps --format '{{.Names}} {{.Status}} {{.Ports}}' | grep -E 'genstudio|nginx'"
 curl.exe -fsS --resolve studio.cylonai.cn:443:175.178.189.234 https://studio.cylonai.cn/api/health
 curl.exe -fsS --resolve studio.cylonai.cn:443:175.178.189.234 https://studio.cylonai.cn/
+curl.exe -fsS --resolve studio.cylonai.cn:443:175.178.189.234 https://studio.cylonai.cn/admin/
 ```
 
 Expected health response:

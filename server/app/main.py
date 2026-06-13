@@ -13,6 +13,7 @@ from urllib.parse import quote, urlparse
 
 import httpx
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from sqlalchemy import text
@@ -21,6 +22,7 @@ from sqlalchemy.orm import Session
 from app.auth import (
     authenticate_local_user,
     clear_session,
+    client_ip_from_request,
     create_session,
     exchange_official_code,
     get_current_user,
@@ -35,27 +37,43 @@ from app.auth import (
     upsert_user,
 )
 from app.admin_service import (
+    admin_dashboard_metrics,
     admin_delete_user,
     admin_disable_user,
+    admin_duplicate_identity_map,
     admin_enable_user,
     admin_overview,
+    admin_record_detail,
     admin_restore_user,
+    admin_task_timeline,
+    build_admin_audit_logs_csv,
+    build_admin_creation_records_csv,
+    build_admin_users_csv,
+    get_model_health,
     get_prompt_template_for_scope,
+    list_prompt_template_versions,
     list_admin_audit_logs,
     list_admin_creation_records,
     list_admin_models,
     list_admin_users,
     list_prompt_templates,
+    prompt_template_model_status_overview,
     publish_model,
+    record_model_health_check,
+    record_task_event,
+    render_prompt_template_samples,
     render_prompt_template,
     serialize_admin_user,
+    serialize_admin_user_with_duplicate_identity,
     serialize_prompt_template,
+    set_admin_user_role,
     unpublish_model,
     update_admin_model,
     update_admin_user,
     upsert_prompt_template,
+    write_admin_log,
 )
-from app.admin_permissions import permissions_for_role, resolve_admin_role
+from app.admin_permissions import can, permissions_for_role, resolve_admin_role
 from app.config import Settings, get_settings
 from app.conversation_service import (
     add_asset,
@@ -78,8 +96,27 @@ from app.catalog_service import (
     serialize_catalog_model,
     sync_catalog_details,
 )
+from app.credit_service import (
+    admin_adjust_credits,
+    clear_model_price,
+    estimate_credit_price,
+    grant_signup_bonus,
+    get_credit_settings,
+    get_or_create_credit_account,
+    capture_generation_credits,
+    find_reserved_transaction,
+    list_credit_transactions,
+    refund_generation_credits,
+    reserve_generation_credits,
+    serialize_credit_account,
+    serialize_credit_transaction,
+    serialize_price_estimate,
+    set_model_price,
+    update_reserved_transaction_refs,
+    update_credit_settings,
+)
 from app.database import SessionLocal, get_db, init_db
-from app.db_models import CallLog, Conversation, ConversationMessage, GeneratedAsset, User, utcnow
+from app.db_models import CallLog, Conversation, ConversationMessage, GeneratedAsset, ModelGroup, SubModel, User, utcnow
 from app.model_service import (
     create_model_group,
     delete_model_group,
@@ -125,8 +162,15 @@ from app.proxy_utils import (
 )
 from app.rate_limit import InMemoryRateLimiter, check_rate_limit
 from app.schemas import (
+    AdminCreditAdjustRequest,
+    AdminCreditSettingsUpdate,
+    AdminDashboardMetricOut,
+    AdminModelBatchRequest,
+    AdminModelCreditPricingUpdate,
     AdminModelUpdate,
     AdminPermissionOut,
+    AdminUserMergeRequest,
+    AdminUserRoleUpdate,
     AdminUserUpdate,
     ConversationCreate,
     ConversationUpdate,
@@ -142,6 +186,7 @@ from app.schemas import (
 )
 from app.security import decrypt_secret
 from app.storage import create_presigned_put_url
+from app.user_maintenance import merge_duplicate_users_by_identity
 
 app = FastAPI(title="创意工坊 Server")
 GENERATED_ASSET_DIR = Path(__file__).resolve().parents[2] / "generated_assets"
@@ -149,10 +194,11 @@ GENERATED_ASSET_DIR.mkdir(parents=True, exist_ok=True)
 LOCAL_UPLOAD_DIR = Path(__file__).resolve().parents[2] / "uploaded_assets"
 LOCAL_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 MAX_INLINE_REFERENCE_LENGTH = 10 * 1024 * 1024
-FRONTEND_ROUTES = {"auth", "auth-error", "text", "images", "videos", "settings", "profile", "admin"}
+FRONTEND_ROUTES = {"auth", "auth-error", "text", "images", "videos", "settings", "profile"}
 rate_limiter = InMemoryRateLimiter()
 TEXT_LONG_TASK_PREFIX = "text-task-"
 IMAGE_LONG_TASK_PREFIX = "local-image-task-"
+IMAGE_BATCH_MAX_COUNT = 10
 GENERATION_FAILED_MESSAGE = "生成失败，请稍后重试。"
 GENERATION_POLICY_MESSAGE = "内容未通过安全审核，请调整提示词或参考图后重试。"
 GENERATION_REFERENCE_INVALID_MESSAGE = "参考图无法识别或格式不支持，请重新上传清晰图片后再试。"
@@ -409,8 +455,28 @@ def safe_frontend_hash_path(value: str, fallback: str = "#/settings") -> str:
     return candidate
 
 
-def frontend_redirect_url(settings: Settings, hash_path: str = "#/settings") -> str:
-    return f"{settings.frontend_url.rstrip('/')}/{safe_frontend_hash_path(hash_path)}"
+def safe_frontend_path(value: str, fallback: str = "#/settings") -> str:
+    candidate = (value or "").strip()
+    if not candidate:
+        return fallback
+    parsed = urlparse(candidate)
+    if parsed.scheme or parsed.netloc or candidate.startswith("//"):
+        return fallback
+    clean = candidate if candidate.startswith(("#/", "/#/", "/")) else f"/{candidate.lstrip('/')}"
+    if clean.rstrip("/") == "/admin":
+        return "/admin/"
+    return safe_frontend_hash_path(candidate, fallback)
+
+
+def frontend_redirect_url(settings: Settings, path: str = "#/settings") -> str:
+    safe_path = safe_frontend_path(path)
+    separator = "" if safe_path.startswith("/") else "/"
+    return f"{settings.frontend_url.rstrip('/')}{separator}{safe_path}"
+
+
+def require_admin_permission(admin: User, permission: str, settings: Settings) -> None:
+    if not can(admin, permission, settings):
+        raise HTTPException(status_code=403, detail={"message": "当前账号没有执行该后台操作的权限。"})
 
 
 def auth_error_redirect_url(settings: Settings, message: str) -> str:
@@ -712,7 +778,10 @@ def delete_duplicate_image_task_messages(db: Session, conversation: Conversation
     for message in list(conversation.messages):
         if message.id == keep_message.id:
             continue
-        if message.role == "assistant" and message.capability == "image" and message.content in {task_id, "completed"}:
+        if message.role != "assistant" or message.capability != "image":
+            continue
+        response = load_message_response(message)
+        if message.content == task_id or response_matches_task(response, task_id) or pick_nested_task_id(response) == task_id:
             db.delete(message)
 
 
@@ -825,14 +894,20 @@ def serialize_local_image_task_result(conversation: Conversation, message: Conve
     status = "completed" if message.status == "success" else "failed" if message.status == "error" else "processing"
     raw = load_message_response(message) or {"taskId": task_id, "status": status}
     next_task_id = message.content if message.status == "processing" and message.content and message.content != task_id else task_id
-    images = [
-        {
-            "src": asset.url,
-            "revisedPrompt": load_message_response(message).get("revisedPrompt", ""),
-        }
-        for asset in message.assets
-        if asset.asset_type == "image" and asset.url
-    ]
+    images = []
+    for asset in message.assets:
+        if asset.asset_type != "image" or not asset.url:
+            continue
+        try:
+            metadata = json.loads(asset.metadata_json or "{}")
+        except ValueError:
+            metadata = {}
+        images.append(
+            {
+                "src": asset.url,
+                "revisedPrompt": metadata.get("revisedPrompt") or raw.get("revisedPrompt", ""),
+            }
+        )
     result = {
         "taskId": next_task_id,
         "status": status,
@@ -844,6 +919,147 @@ def serialize_local_image_task_result(conversation: Conversation, message: Conve
     if status != "failed":
         result["raw"] = raw
     return result
+
+
+def credit_payload(db: Session, user: User) -> dict[str, Any]:
+    return {"account": serialize_credit_account(get_or_create_credit_account(db, user.id))}
+
+
+def attach_credit_payload(result: dict[str, Any], db: Session, user: User | None) -> dict[str, Any]:
+    if user:
+        result["credits"] = credit_payload(db, user)
+    return result
+
+
+def summarize_task_payload(raw: Any, *, task_id: str, status: str = "", video_url: str = "", images: list[Any] | None = None) -> dict[str, Any]:
+    payload: dict[str, Any] = {"taskId": task_id}
+    if status:
+        payload["status"] = status
+    if video_url:
+        payload["videoUrl"] = video_url
+    if images:
+        payload["images"] = images[:3]
+    if isinstance(raw, dict):
+        for key in ("id", "task_id", "status", "code", "message", "progress"):
+            if key in raw and key not in payload:
+                payload[key] = raw[key]
+    return payload
+
+
+def record_generation_task_event(
+    db: Session,
+    *,
+    task_id: str,
+    event_type: str,
+    status: str,
+    user: User | None,
+    model_group: Any | None,
+    sub_model: Any | None,
+    capability: str,
+    endpoint: str,
+    conversation_id: str = "",
+    message_id: str = "",
+    duration_ms: int = 0,
+    message: str = "",
+    payload: dict[str, Any] | None = None,
+) -> None:
+    if not task_id:
+        return
+    record_task_event(
+        db,
+        task_id=task_id,
+        event_type=event_type,
+        status=status,
+        user_id=user.id if user else None,
+        model_group_id=getattr(model_group, "id", None) if model_group else None,
+        sub_model_id=getattr(sub_model, "id", None) if sub_model else None,
+        capability=capability,
+        endpoint=endpoint,
+        conversation_id=conversation_id,
+        message_id=message_id,
+        duration_ms=duration_ms,
+        message=message,
+        payload=payload or {},
+    )
+
+
+def prepare_generation_credit(
+    db: Session,
+    *,
+    user: User | None,
+    capability: str,
+    model_group: Any | None,
+    sub_model: Any | None,
+    conversation_id: str = "",
+    message_id: str = "",
+    task_id: str = "",
+    quantity: int = 1,
+) -> Any | None:
+    estimate = estimate_credit_price(
+        db,
+        user=user,
+        capability=capability,
+        model_group=model_group,
+        sub_model=sub_model,
+    )
+    if not estimate.enabled or estimate.price <= 0:
+        return None
+    if not user:
+        raise HTTPException(status_code=401, detail={"message": "请先登录后再使用该模型。"})
+    return reserve_generation_credits(
+        db,
+        user=user,
+        capability=capability,
+        price=estimate.price * max(1, int(quantity or 1)),
+        model_group_id=getattr(model_group, "id", "") if model_group else "",
+        sub_model_id=getattr(sub_model, "id", "") if sub_model else "",
+        conversation_id=conversation_id,
+        message_id=message_id,
+        task_id=task_id,
+        metadata={"priceSource": estimate.source, "unitPrice": estimate.price, "quantity": max(1, int(quantity or 1))},
+    )
+
+
+def reserve_id_from_message(message: ConversationMessage | None) -> str:
+    if not message:
+        return ""
+    return str(load_message_response(message).get("creditReserveId") or "")
+
+
+def find_credit_reserve_for_task(
+    db: Session,
+    *,
+    message: ConversationMessage | None = None,
+    task_id: str = "",
+    conversation_id: str = "",
+) -> Any | None:
+    reserve_id = reserve_id_from_message(message)
+    return find_reserved_transaction(
+        db,
+        transaction_id=reserve_id,
+        task_id=task_id,
+        conversation_id=conversation_id,
+        message_id=message.id if message else "",
+    )
+
+
+def capture_credit_for_message(db: Session, message: ConversationMessage | None, *, task_id: str = "", conversation_id: str = "") -> None:
+    reserve = find_credit_reserve_for_task(db, message=message, task_id=task_id, conversation_id=conversation_id)
+    if reserve:
+        capture_generation_credits(db, reserve.id)
+
+
+def refund_credit_for_message(
+    db: Session,
+    message: ConversationMessage | None,
+    *,
+    task_id: str = "",
+    conversation_id: str = "",
+    reason: str = "生成失败自动退款",
+) -> None:
+    reserve = find_credit_reserve_for_task(db, message=message, task_id=task_id, conversation_id=conversation_id)
+    if reserve:
+        refund_generation_credits(db, reserve.id, reason=reason)
 
 
 async def wait_for_forward_or_handoff(
@@ -919,7 +1135,24 @@ def fail_async_message_after_exception(
             fallback=f"{capability} request failed.",
             public_message=GENERATION_FAILED_MESSAGE,
         )
+        refund_credit_for_message(db, message, task_id=task_id, conversation_id=conversation_id)
         message.request_json = dumps_for_storage(request_payload)
+        record_task_event(
+            db,
+            task_id=task_id,
+            event_type="failed",
+            status="error",
+            user_id=user.id,
+            model_group_id=model_group_id,
+            sub_model_id=sub_model_id,
+            capability=capability,
+            endpoint=endpoint,
+            conversation_id=conversation_id,
+            message_id=message_id,
+            duration_ms=elapsed_ms(started_at),
+            message=error_message,
+            payload=raw,
+        )
         if model_group_id and sub_model_id:
             record_call_log(
                 db,
@@ -977,6 +1210,7 @@ async def complete_text_long_task(
                 fallback="文案请求失败。",
                 public_message=GENERATION_FAILED_MESSAGE,
             )
+            refund_credit_for_message(db, message, task_id=task_id, conversation_id=conversation_id)
             record_call_log(
                 db,
                 user=user,
@@ -998,6 +1232,7 @@ async def complete_text_long_task(
         message.can_retry = False
         message.request_json = dumps_for_storage(body)
         message.response_json = dumps_for_storage({"taskId": task_id, "status": "completed", **raw})
+        capture_credit_for_message(db, message, task_id=task_id, conversation_id=conversation_id)
         conversation.updated_at = utcnow()
         db.flush()
         record_call_log(
@@ -1077,6 +1312,23 @@ async def complete_image_long_task(
                 fallback="图片请求失败。",
                 public_message=public_message,
             )
+            refund_credit_for_message(db, message, task_id=task_id, conversation_id=conversation_id)
+            record_task_event(
+                db,
+                task_id=task_id,
+                event_type="failed",
+                status="error",
+                user_id=user.id,
+                model_group_id=model_group_id,
+                sub_model_id=sub_model_id,
+                capability="image",
+                endpoint="/api/proxy/image",
+                conversation_id=conversation_id,
+                message_id=message_id,
+                duration_ms=duration_ms,
+                message=error_message,
+                payload=failure_raw,
+            )
             if model_group_id and sub_model_id:
                 record_call_log(
                     db,
@@ -1119,6 +1371,10 @@ async def complete_image_long_task(
             message.error_message = "" if images else "图片请求没有返回有效图片。"
             message.can_retry = not images
             message.response_json = dumps_for_storage({"taskId": task_id, "status": "completed" if images else "failed", "upstream": safe_raw})
+            if images:
+                capture_credit_for_message(db, message, task_id=task_id, conversation_id=conversation_id)
+            else:
+                refund_credit_for_message(db, message, task_id=task_id, conversation_id=conversation_id)
             db.query(GeneratedAsset).filter(GeneratedAsset.message_id == message.id).delete()
             for image in images:
                 add_asset(
@@ -1130,6 +1386,28 @@ async def complete_image_long_task(
                     url=image["src"],
                     metadata={"taskId": task_id, "revisedPrompt": image.get("revisedPrompt")},
                 )
+        event_type = "completed" if message.status == "success" else "failed" if message.status == "error" else "updated"
+        record_task_event(
+            db,
+            task_id=task_id,
+            event_type=event_type,
+            status=message.status if message.status != "error" else "error",
+            user_id=user.id,
+            model_group_id=model_group_id,
+            sub_model_id=sub_model_id,
+            capability="image",
+            endpoint="/api/proxy/image",
+            conversation_id=conversation_id,
+            message_id=message_id,
+            duration_ms=duration_ms,
+            message=message.error_message or message.status,
+            payload=summarize_task_payload(
+                safe_raw,
+                task_id=task_id,
+                status="completed" if message.status == "success" else "failed" if message.status == "error" else "processing",
+                images=images,
+            ),
+        )
         message.request_json = dumps_for_storage(body)
         conversation.updated_at = utcnow()
         db.flush()
@@ -1169,13 +1447,237 @@ async def complete_image_long_task(
         db.close()
 
 
+async def complete_image_batch_task(
+    *,
+    started_at: float,
+    user_id: str,
+    conversation_id: str,
+    message_id: str,
+    model_group_id: str | None,
+    sub_model_id: str | None,
+    body: dict[str, Any],
+    task_id: str,
+    requested_count: int,
+    base_url: str,
+    target_url: str,
+    api_key: str,
+    edit_references: list[dict[str, Any]],
+) -> None:
+    db = SessionLocal()
+    try:
+        user = db.get(User, user_id)
+        message = db.get(ConversationMessage, message_id)
+        conversation = db.get(Conversation, conversation_id)
+        if not user or not message or not conversation:
+            return
+        db.query(GeneratedAsset).filter(GeneratedAsset.message_id == message.id).delete()
+        images: list[dict[str, Any]] = []
+        failures: list[dict[str, Any]] = []
+        upstream_summaries: list[dict[str, Any]] = []
+
+        for index in range(max(1, requested_count)):
+            single_body = single_image_request_body(body)
+            try:
+                response, raw = await forward_image_request(
+                    base_url=base_url,
+                    target_url=target_url,
+                    api_key=api_key,
+                    body=single_body,
+                    edit_references=edit_references,
+                )
+            except httpx.TimeoutException:
+                response, raw = httpx.Response(504, text="504 Gateway Timeout"), "504 Gateway Timeout"
+            except httpx.HTTPError:
+                response, raw = httpx.Response(503, text="502 Bad Gateway"), "502 Bad Gateway"
+
+            call_images: list[dict[str, Any]] = []
+            safe_raw: Any = sanitize_error_raw(raw)
+            if response.is_success and isinstance(raw, dict):
+                extracted, safe_raw = extract_images_from_response(raw)
+                remaining = max(0, requested_count - len(images))
+                call_images = extracted[:remaining]
+                for image in call_images:
+                    images.append(image)
+                    add_asset(
+                        db,
+                        message,
+                        user,
+                        capability="image",
+                        asset_type="image",
+                        url=image["src"],
+                        metadata={
+                            "taskId": task_id,
+                            "batchIndex": len(images),
+                            "revisedPrompt": image.get("revisedPrompt"),
+                        },
+                    )
+                if not call_images:
+                    failures.append(
+                        {
+                            "index": index + 1,
+                            "message": NO_IMAGE_RETURNED_MESSAGE,
+                            "statusCode": response.status_code,
+                        }
+                    )
+            else:
+                failures.append(
+                    {
+                        "index": index + 1,
+                        "message": generation_public_error_message(raw, response.status_code),
+                        "statusCode": response.status_code,
+                    }
+                )
+
+            upstream_summaries.append(
+                {
+                    "index": index + 1,
+                    "statusCode": response.status_code,
+                    "success": bool(call_images),
+                    "imageCount": len(call_images),
+                    "raw": safe_raw if isinstance(safe_raw, dict) else sanitize_error_raw(safe_raw),
+                }
+            )
+            progress = f"{index + 1}/{requested_count}"
+            message.content = task_id
+            message.status = "processing"
+            message.error_message = ""
+            message.can_retry = False
+            message.response_json = dumps_for_storage(
+                {
+                    "taskId": task_id,
+                    "localTaskId": task_id,
+                    "status": "processing",
+                    "progress": progress,
+                    "batch": {
+                        "requestedCount": requested_count,
+                        "completedCount": index + 1,
+                        "successCount": len(images),
+                        "failedCount": len(failures),
+                    },
+                    "images": images,
+                    "upstream": upstream_summaries[-3:],
+                }
+            )
+            conversation.updated_at = utcnow()
+            db.commit()
+
+            if len(images) >= requested_count:
+                break
+
+        has_images = bool(images)
+        final_status = "completed" if has_images else "failed"
+        message.content = "completed" if has_images else ""
+        message.status = "success" if has_images else "error"
+        message.error_message = "" if has_images else (failures[0]["message"] if failures else NO_IMAGE_RETURNED_MESSAGE)
+        message.can_retry = not has_images
+        message.request_json = dumps_for_storage(body)
+        message.response_json = dumps_for_storage(
+            {
+                "taskId": task_id,
+                "localTaskId": task_id,
+                "status": final_status,
+                "progress": f"{min(requested_count, len(upstream_summaries))}/{requested_count}",
+                "batch": {
+                    "requestedCount": requested_count,
+                    "completedCount": min(requested_count, len(upstream_summaries)),
+                    "successCount": len(images),
+                    "failedCount": len(failures),
+                },
+                "images": images,
+                "failures": failures[:5],
+                "upstream": upstream_summaries[-5:],
+            }
+        )
+        conversation.updated_at = utcnow()
+        if has_images:
+            capture_credit_for_message(db, message, task_id=task_id, conversation_id=conversation_id)
+        else:
+            refund_credit_for_message(db, message, task_id=task_id, conversation_id=conversation_id)
+        duration_ms = elapsed_ms(started_at)
+        record_task_event(
+            db,
+            task_id=task_id,
+            event_type="completed" if has_images else "failed",
+            status="success" if has_images else "error",
+            user_id=user.id,
+            model_group_id=model_group_id,
+            sub_model_id=sub_model_id,
+            capability="image",
+            endpoint="/api/proxy/image",
+            conversation_id=conversation_id,
+            message_id=message_id,
+            duration_ms=duration_ms,
+            message=message.error_message or f"Batch image completed: {len(images)}/{requested_count}",
+            payload={
+                "taskId": task_id,
+                "status": final_status,
+                "requestedCount": requested_count,
+                "successCount": len(images),
+                "failedCount": len(failures),
+                "images": images,
+            },
+        )
+        db.flush()
+        if model_group_id and sub_model_id:
+            record_call_log(
+                db,
+                user=user,
+                model_group_id=model_group_id,
+                sub_model_id=sub_model_id,
+                capability="image",
+                endpoint="/api/proxy/image",
+                status="success" if has_images else "error",
+                duration_ms=duration_ms,
+                prompt_summary=str(body.get("prompt", ""))[:512],
+                usage=None,
+                request_params={"quantity": requested_count},
+                response_summary={
+                    "taskId": task_id,
+                    "successCount": len(images),
+                    "failedCount": len(failures),
+                },
+                conversation_id=conversation_id,
+                message_id=message_id,
+            )
+        else:
+            db.commit()
+    except Exception as exc:
+        fail_async_message_after_exception(
+            db,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            message_id=message_id,
+            capability="image",
+            endpoint="/api/proxy/image",
+            started_at=started_at,
+            model_group_id=model_group_id,
+            sub_model_id=sub_model_id,
+            request_payload=body,
+            task_id=task_id,
+            exc=exc,
+        )
+    finally:
+        db.close()
+
+
 def persist_generated_image_from_b64(value: str) -> str:
     try:
         image_bytes = base64.b64decode(value, validate=True)
     except (binascii.Error, ValueError):
-        return f"data:image/png;base64,{value}"
+        return persist_generated_image_data_url(value) if value.startswith("data:") else f"data:image/png;base64,{value}"
     file_name = f"{uuid4().hex}.png"
     (GENERATED_ASSET_DIR / file_name).write_bytes(image_bytes)
+    return f"/api/assets/generated/{file_name}"
+
+
+def persist_generated_image_data_url(value: str) -> str:
+    reference = data_url_file_reference(value, 0)
+    if not reference:
+        return value
+    suffix = Path(str(reference["filename"])).suffix.lower().lstrip(".") or "png"
+    safe_suffix = "".join(char for char in suffix if char.isalnum())[:12] or "png"
+    file_name = f"{uuid4().hex}.{safe_suffix}"
+    (GENERATED_ASSET_DIR / file_name).write_bytes(reference["content"])
     return f"/api/assets/generated/{file_name}"
 
 
@@ -1290,6 +1792,59 @@ def expand_local_image_references(body: dict[str, Any]) -> dict[str, Any]:
     return body
 
 
+IMAGE_COUNT_KEYS = ("quantity", "n", "count", "num_images", "numImages")
+
+
+def requested_image_count(body: dict[str, Any]) -> int:
+    for key in IMAGE_COUNT_KEYS:
+        value = body.get(key)
+        if isinstance(value, bool) or value in (None, ""):
+            continue
+        try:
+            count = int(value)
+        except (TypeError, ValueError):
+            continue
+        if count > 1:
+            return min(count, IMAGE_BATCH_MAX_COUNT)
+    return 1
+
+
+def single_image_request_body(body: dict[str, Any]) -> dict[str, Any]:
+    normalized = copy.deepcopy(body)
+    for key in IMAGE_COUNT_KEYS:
+        if key in normalized:
+            normalized[key] = 1
+    return normalized
+
+
+async def forward_image_request(
+    *,
+    base_url: str,
+    target_url: str,
+    api_key: str,
+    body: dict[str, Any],
+    edit_references: list[dict[str, Any]],
+) -> tuple[httpx.Response, dict[str, Any] | str]:
+    request_body = copy.deepcopy(body)
+    if edit_references:
+        edit_data = {
+            key: str(value)
+            for key, value in request_body.items()
+            if key != "image" and value is not None
+        }
+        edit_files = [
+            ("image", (reference["filename"], reference["content"], reference["content_type"]))
+            for reference in edit_references
+        ]
+        response, raw = await forward_multipart(target_url, api_key, data=edit_data, files=edit_files)
+        if (not response.is_success or not isinstance(raw, dict)) and is_non_json_upstream_error(raw):
+            generation_body = expand_local_image_references(copy.deepcopy(request_body))
+            generation_url = resolve_url(base_url, "/v1/images/generations")
+            response, raw = await forward_json("POST", generation_url, api_key, generation_body)
+        return response, raw
+    return await forward_json("POST", target_url, api_key, request_body)
+
+
 def expand_local_video_references(value: Any) -> Any:
     if isinstance(value, dict):
         expanded: dict[str, Any] = {}
@@ -1336,10 +1891,18 @@ def extract_images_from_response(raw: dict[str, Any]) -> tuple[list[dict[str, An
         if not isinstance(item, dict):
             continue
         src = ""
+        src_key = ""
         for key in ("url", "image_url", "imageUrl", "download_url"):
             if isinstance(item.get(key), str) and item[key].strip():
                 src = item[key].strip()
+                src_key = key
                 break
+        if src.startswith("data:") and ";base64," in src:
+            persisted_src = persist_generated_image_data_url(src)
+            if persisted_src != src:
+                src = persisted_src
+                item[src_key] = src
+                item["source"] = "data_url_saved"
         if not src and isinstance(item.get("b64_json"), str):
             src = persist_generated_image_from_b64(item["b64_json"])
             item.pop("b64_json", None)
@@ -1493,7 +2056,7 @@ async def clean_http_exception(_request: Request, exc: HTTPException) -> JSONRes
         else:
             clean_detail["raw"] = clean_raw
         detail = clean_detail
-    return JSONResponse(status_code=exc.status_code, content={"detail": detail}, headers=exc.headers)
+    return JSONResponse(status_code=exc.status_code, content=jsonable_encoder({"detail": detail}), headers=exc.headers)
 
 
 @app.on_event("startup")
@@ -1575,8 +2138,10 @@ async def local_upload(
 
 
 @app.get("/api/auth/me")
-async def auth_me(current_user: User = Depends(get_current_user)) -> dict[str, Any]:
-    return {"user": serialize_user(current_user).model_dump()}
+async def auth_me(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    user_payload = serialize_user(current_user).model_dump()
+    user_payload["credits"] = serialize_credit_account(get_or_create_credit_account(db, current_user.id))
+    return {"user": user_payload}
 
 
 @app.get("/api/auth/csrf")
@@ -1605,9 +2170,12 @@ async def auth_register(
     )
     user = register_local_user(db, payload)
     db.flush()
-    create_session(db, response, user)
+    grant_signup_bonus(db, user)
+    create_session(db, response, user, client_ip_from_request(request))
     db.commit()
-    return {"user": serialize_user(user).model_dump()}
+    user_payload = serialize_user(user).model_dump()
+    user_payload["credits"] = serialize_credit_account(get_or_create_credit_account(db, user.id))
+    return {"user": user_payload}
 
 
 @app.post("/api/auth/login")
@@ -1627,9 +2195,11 @@ async def auth_login(
     )
     user = authenticate_local_user(db, payload, settings)
     db.flush()
-    create_session(db, response, user)
+    create_session(db, response, user, client_ip_from_request(request))
     db.commit()
-    return {"user": serialize_user(user).model_dump()}
+    user_payload = serialize_user(user).model_dump()
+    user_payload["credits"] = serialize_credit_account(get_or_create_credit_account(db, user.id))
+    return {"user": user_payload}
 
 
 @app.get("/api/auth/callback")
@@ -1650,7 +2220,7 @@ async def auth_callback(
     profile = await exchange_official_code(code, settings)
     user = upsert_user(db, **profile)
     db.flush()
-    create_session(db, response, user)
+    create_session(db, response, user, client_ip_from_request(request))
     db.commit()
     return {"user": serialize_user(user).model_dump(), "redirectUrl": settings.frontend_url}
 
@@ -1671,13 +2241,13 @@ async def public_auth_callback(
         bucket="auth-callback",
         limit=settings.rate_limit_login_per_window,
     )
-    redirect_target = safe_frontend_hash_path(next_url or state or "#/settings")
+    redirect_target = safe_frontend_path(next_url or state or "#/settings")
     response = RedirectResponse(frontend_redirect_url(settings, redirect_target), status_code=307)
     try:
         profile = await exchange_official_code(code, settings)
         user = upsert_user(db, **profile)
         db.flush()
-        create_session(db, response, user)
+        create_session(db, response, user, client_ip_from_request(request))
         db.commit()
     except HTTPException as exc:
         db.rollback()
@@ -1713,7 +2283,7 @@ async def auth_dev_login(
         avatar_url=payload.avatarUrl,
     )
     db.flush()
-    create_session(db, response, user)
+    create_session(db, response, user, client_ip_from_request(request))
     db.commit()
     return {"user": serialize_user(user).model_dump()}
 
@@ -1741,6 +2311,39 @@ async def update_me(
     db.commit()
     db.refresh(current_user)
     return {"user": serialize_user(current_user).model_dump()}
+
+
+@app.get("/api/credits/me")
+async def my_credits(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    account = get_or_create_credit_account(db, current_user.id)
+    transactions = list_credit_transactions(db, user_id=current_user.id, limit=30)
+    return {
+        "account": serialize_credit_account(account),
+        "transactions": [serialize_credit_transaction(item) for item in transactions],
+    }
+
+
+@app.get("/api/credits/pricing/estimate")
+async def credit_pricing_estimate(
+    capability: str,
+    modelGroupId: str = "",
+    subModelId: str = "",
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_current_user),
+) -> dict[str, Any]:
+    model_group = db.get(ModelGroup, modelGroupId) if modelGroupId else None
+    sub_model = db.get(SubModel, subModelId) if subModelId else None
+    estimate = estimate_credit_price(
+        db,
+        user=current_user,
+        capability=capability,
+        model_group=model_group,
+        sub_model=sub_model,
+    )
+    return {"estimate": serialize_price_estimate(estimate)}
 
 
 @app.get("/api/api-keys")
@@ -1890,12 +2493,207 @@ async def admin_models(
     publicState: str = "all",
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
+    require_admin_permission(admin, "model:view", settings)
     return {
         "models": [
             serialize_model(item, admin, is_admin=True).model_dump()
             for item in list_admin_models(db, capability=capability, search=search, public_state=publicState)
         ]
+    }
+
+
+def _http_exception_message(exc: HTTPException) -> str:
+    detail = exc.detail
+    if isinstance(detail, dict):
+        message = detail.get("message")
+        if isinstance(message, str) and message.strip():
+            return message.strip()
+    if isinstance(detail, str) and detail.strip():
+        return detail.strip()
+    return str(exc.status_code)
+
+
+def _health_result_status(health: dict[str, Any]) -> str:
+    latest = health.get("latest")
+    if isinstance(latest, dict):
+        return str(latest.get("status") or "unknown")
+    return str(health.get("status") or "unknown")
+
+
+async def run_admin_model_health_check_for_model(
+    model_id: str,
+    request: Request,
+    db: Session,
+    admin: User,
+    settings: Settings,
+) -> dict[str, Any]:
+    check_rate_limit(
+        limiter=rate_limiter,
+        request=request,
+        settings=settings,
+        bucket=f"admin-model-health-check:{model_id}",
+        limit=settings.rate_limit_model_test_per_window,
+        user_id=admin.id,
+    )
+    model = db.get(ModelGroup, model_id)
+    if not model:
+        raise HTTPException(status_code=404, detail={"message": "模型不存在。"})
+    sub_model = None
+    if model.primary_sub_model_id:
+        sub_model = db.get(SubModel, model.primary_sub_model_id)
+    if not sub_model:
+        sub_model = next((item for item in model.sub_models if item.status == "active"), None)
+    if not sub_model:
+        raise HTTPException(status_code=400, detail={"message": "模型缺少可测试的子模型。"})
+
+    started_at = time.perf_counter()
+    try:
+        api_key = sub_model.api_key or model.api_key
+        if not api_key:
+            raise ValueError("API key configuration is missing")
+        adapter = sub_model.adapter or model.adapter
+        body = build_test_body(model.capability, sub_model.model_name, adapter)
+        target_path = resolve_test_path(model.capability, adapter)
+        if is_kkyi_video_model(sub_model, api_key.base_url):
+            target_path = "/v1/video/generations"
+            body = normalize_kkyi_video_body(body, sub_model.model_name, sub_model)
+        target_url = resolve_url(api_key.base_url, target_path)
+        response, raw = await forward_json("POST", target_url, decrypt_secret(api_key.api_key_ciphertext), body)
+        duration_ms = elapsed_ms(started_at)
+        status_value = "success" if response.is_success and isinstance(raw, dict) else "failed"
+        message = "连接正常。" if status_value == "success" else pick_error_message(raw, "模型测试失败。")
+        record_model_health_check(
+            db,
+            admin=admin,
+            model=model,
+            status=status_value,
+            duration_ms=duration_ms,
+            message=message,
+            raw={"statusCode": response.status_code, "body": raw if isinstance(raw, dict) else str(raw)[:500]},
+            sub_model_id=sub_model.id,
+        )
+    except Exception as exc:
+        duration_ms = elapsed_ms(started_at)
+        raw_error = {"error": exc.__class__.__name__}
+        if str(exc):
+            raw_error["message"] = str(exc)[:300]
+        record_model_health_check(
+            db,
+            admin=admin,
+            model=model,
+            status="failed",
+            duration_ms=duration_ms,
+            message="模型测试失败，请检查接口配置。",
+            raw=raw_error,
+            sub_model_id=sub_model.id,
+        )
+    health = get_model_health(db, model_id, include_raw_json=can(admin, "record:raw_json", settings))
+    return {"modelId": model_id, "status": _health_result_status(health), "health": health}
+
+
+def _model_batch_error_result(model_id: str, exc: HTTPException) -> dict[str, Any]:
+    return {
+        "modelId": model_id,
+        "status": "error",
+        "error": {"statusCode": exc.status_code, "message": _http_exception_message(exc)},
+    }
+
+
+@app.post("/api/admin/models/batch-health-check")
+async def admin_batch_model_health_check(
+    payload: AdminModelBatchRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    require_admin_permission(admin, "model:test", settings)
+    results: list[dict[str, Any]] = []
+    for model_id in payload.modelIds:
+        try:
+            results.append(await run_admin_model_health_check_for_model(model_id, request, db, admin, settings))
+        except HTTPException as exc:
+            results.append(_model_batch_error_result(model_id, exc))
+        except Exception as exc:
+            db.rollback()
+            results.append(
+                {
+                    "modelId": model_id,
+                    "status": "error",
+                    "error": {"statusCode": 500, "message": str(exc)[:300] or exc.__class__.__name__},
+                }
+            )
+    return {"results": results}
+
+
+@app.post("/api/admin/models/remove-unavailable")
+async def admin_remove_unavailable_models(
+    payload: AdminModelBatchRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    require_admin_permission(admin, "model:delete", settings)
+    removed_ids: list[str] = []
+    skipped: list[dict[str, Any]] = []
+    is_admin = is_admin_user(admin, settings)
+
+    for model_id in payload.modelIds:
+        model = db.get(ModelGroup, model_id)
+        if not model:
+            skipped.append({"modelId": model_id, "reason": "not_found"})
+            continue
+        health = get_model_health(db, model_id, include_raw_json=False)
+        latest = health.get("latest")
+        if not isinstance(latest, dict):
+            skipped.append({"modelId": model_id, "reason": "no_health_check"})
+            continue
+        latest_status = str(latest.get("status") or "").strip().lower()
+        if latest_status == "success":
+            skipped.append({"modelId": model_id, "reason": "latest_health_success"})
+            continue
+        if latest_status not in {"failed", "error"}:
+            skipped.append({"modelId": model_id, "reason": "latest_health_not_failed"})
+            continue
+        try:
+            delete_model_group(db, admin, model_id, is_admin=is_admin)
+            removed_ids.append(model_id)
+        except HTTPException as exc:
+            db.rollback()
+            skipped.append(
+                {
+                    "modelId": model_id,
+                    "reason": "delete_forbidden" if exc.status_code == 403 else "delete_failed",
+                    "statusCode": exc.status_code,
+                    "message": _http_exception_message(exc),
+                }
+            )
+        except Exception as exc:
+            db.rollback()
+            skipped.append(
+                {
+                    "modelId": model_id,
+                    "reason": "delete_failed",
+                    "message": str(exc)[:300] or exc.__class__.__name__,
+                }
+            )
+
+    write_admin_log(
+        db,
+        admin,
+        action="remove_unavailable_models",
+        target_type="model",
+        status="success",
+        summary={"requestedIds": payload.modelIds, "removedIds": removed_ids, "skipped": skipped},
+    )
+    return {
+        "removedIds": removed_ids,
+        "skipped": skipped,
+        "models": [serialize_model(item, admin, is_admin=True).model_dump() for item in list_admin_models(db)],
     }
 
 
@@ -1908,16 +2706,115 @@ async def admin_permissions_me(
     return AdminPermissionOut(role=role, permissions=permissions_for_role(role))
 
 
+@app.post("/api/admin/maintenance/user-merge")
+async def admin_user_merge_maintenance(
+    payload: AdminUserMergeRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    require_admin_permission(admin, "maintenance:user_merge", settings)
+    if payload.apply:
+        require_csrf(request, db, settings)
+    summary = merge_duplicate_users_by_identity(
+        db,
+        apply=payload.apply,
+        identity_filter=payload.identityFilter,
+    )
+    if payload.apply:
+        actor_user_id = admin.id
+        for group in summary.get("groups", []):
+            if admin.id == group.get("targetUserId"):
+                actor_user_id = admin.id
+                break
+            if admin.id in (group.get("sourceUserIds") or []):
+                actor_user_id = str(group.get("targetUserId") or admin.id)
+                break
+        audit_admin = db.get(User, actor_user_id) or admin
+        db.commit()
+        write_admin_log(
+            db,
+            audit_admin,
+            action="merge_duplicate_users",
+            target_type="maintenance",
+            summary={
+                "apply": payload.apply,
+                "identityFilter": payload.identityFilter,
+                "actorUserId": actor_user_id,
+                "groupCount": summary.get("groupCount", 0),
+                "mergedUsers": summary.get("mergedUsers", 0),
+                "movedRecords": summary.get("movedRecords", 0),
+                "roleConflictCount": summary.get("roleConflictCount", 0),
+                "roleConflicts": [
+                    conflict
+                    for group in summary.get("groups", [])
+                    for conflict in (group.get("roleConflicts") or [])
+                ],
+            },
+        )
+    return {"summary": summary}
+
+
 @app.put("/api/admin/models/{model_id}")
 async def admin_update_model(
     model_id: str,
     payload: AdminModelUpdate,
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
     _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
+    require_admin_permission(admin, "model:update", settings)
     model = update_admin_model(db, admin, model_id, payload)
     return {"model": serialize_model(model, admin, is_admin=True).model_dump()}
+
+
+@app.put("/api/admin/models/{model_id}/credit-pricing")
+async def admin_update_model_credit_pricing(
+    model_id: str,
+    payload: AdminModelCreditPricingUpdate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    require_admin_permission(admin, "model:pricing", settings)
+    if payload.useDefault:
+        clear_model_price(db, admin, model_id)
+    elif payload.price is not None:
+        set_model_price(db, admin, model_id, payload.price)
+    model = db.get(ModelGroup, model_id)
+    if not model:
+        raise HTTPException(status_code=404, detail={"message": "模型不存在。"})
+    return {"model": serialize_model(model, admin, is_admin=True).model_dump()}
+
+
+@app.get("/api/admin/models/{model_id}/health")
+async def admin_model_health(
+    model_id: str,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    require_admin_permission(admin, "model:view", settings)
+    if not db.get(ModelGroup, model_id):
+        raise HTTPException(status_code=404, detail={"message": "模型不存在。"})
+    return {"health": get_model_health(db, model_id, include_raw_json=can(admin, "record:raw_json", settings))}
+
+
+@app.post("/api/admin/models/{model_id}/health-check")
+async def admin_run_model_health_check(
+    model_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    require_admin_permission(admin, "model:test", settings)
+    result = await run_admin_model_health_check_for_model(model_id, request, db, admin, settings)
+    return {"health": result["health"]}
 
 
 @app.post("/api/admin/models/{model_id}/publish")
@@ -1925,8 +2822,10 @@ async def admin_publish_model(
     model_id: str,
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
     _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
+    require_admin_permission(admin, "model:publish", settings)
     model = publish_model(db, admin, model_id)
     return {"model": serialize_model(model, admin, is_admin=True).model_dump()}
 
@@ -1936,8 +2835,10 @@ async def admin_unpublish_model(
     model_id: str,
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
     _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
+    require_admin_permission(admin, "model:unpublish", settings)
     model = unpublish_model(db, admin, model_id)
     return {"model": serialize_model(model, admin, is_admin=True).model_dump()}
 
@@ -1945,16 +2846,72 @@ async def admin_unpublish_model(
 @app.get("/api/admin/overview")
 async def admin_overview_route(
     db: Session = Depends(get_db),
-    _admin: User = Depends(require_admin_user),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
+    require_admin_permission(admin, "record:view", settings)
     return admin_overview(db)
+
+
+@app.get("/api/admin/dashboard/metrics", response_model=AdminDashboardMetricOut)
+async def admin_dashboard_metrics_route(
+    range: str = Query("30d"),
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    require_admin_permission(admin, "record:view", settings)
+    return admin_dashboard_metrics(db, range_key=range)
+
+
+@app.get("/api/admin/credits/settings")
+async def admin_credit_settings(
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    require_admin_permission(admin, "credit:view", settings)
+    return {"settings": get_credit_settings(db)}
+
+
+@app.put("/api/admin/credits/settings")
+async def admin_update_credit_settings(
+    payload: AdminCreditSettingsUpdate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    require_admin_permission(admin, "credit:settings", settings)
+    updated_settings = update_credit_settings(
+        db,
+        admin,
+        defaults=payload.defaults,
+        signup_bonus_enabled=payload.signupBonusEnabled,
+        signup_bonus_amount=payload.signupBonusAmount,
+    )
+    return {"settings": updated_settings}
+
+
+@app.get("/api/admin/credits/transactions")
+async def admin_credit_transactions(
+    userId: str = "",
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    require_admin_permission(admin, "credit:view", settings)
+    transactions = list_credit_transactions(db, user_id=userId, limit=200)
+    return {"transactions": [serialize_credit_transaction(item) for item in transactions]}
 
 
 @app.get("/api/admin/overview/users")
 async def admin_overview_users_route(
     db: Session = Depends(get_db),
-    _admin: User = Depends(require_admin_user),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
+    require_admin_permission(admin, "user:view", settings)
     rows = []
     for user in list_admin_users(db):
         logs = db.query(CallLog).filter(CallLog.user_id == user.id).all()
@@ -1976,7 +2933,9 @@ async def admin_overview_users_route(
 async def admin_overview_models_route(
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
+    require_admin_permission(admin, "model:view", settings)
     rows = []
     for model in list_admin_models(db):
         logs = db.query(CallLog).filter(CallLog.model_group_id == model.id).all()
@@ -1996,8 +2955,10 @@ async def admin_overview_models_route(
 async def admin_prompt_templates(
     capability: str = "all",
     db: Session = Depends(get_db),
-    _admin: User = Depends(require_admin_user),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
+    require_admin_permission(admin, "settings:view", settings)
     return {"templates": [serialize_prompt_template(item) for item in list_prompt_templates(db, capability=capability)]}
 
 
@@ -2007,21 +2968,56 @@ async def admin_save_prompt_template(
     payload: PromptTemplateUpdate,
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
     _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
+    require_admin_permission(admin, "settings:update", settings)
     _ = template_id
     item = upsert_prompt_template(db, admin, payload)
     return {"template": serialize_prompt_template(item)}
 
 
+@app.get("/api/admin/prompt-templates/{template_id}/versions")
+async def admin_prompt_template_versions(
+    template_id: str,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    require_admin_permission(admin, "settings:view", settings)
+    return {"versions": list_prompt_template_versions(db, template_id)}
+
+
+@app.get("/api/admin/prompt-templates/model-status")
+async def admin_prompt_template_model_status(
+    capability: str = "all",
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    require_admin_permission(admin, "settings:view", settings)
+    return {"models": prompt_template_model_status_overview(db, capability=capability)}
+
+
 @app.post("/api/admin/prompt-templates/test")
 async def admin_test_prompt_template(
     payload: dict[str, Any],
-    _admin: User = Depends(require_admin_user),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
     _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
+    require_admin_permission(admin, "settings:view", settings)
     content = str(payload.get("content") or "")
     prompt = str(payload.get("prompt") or "")
+    prompts = payload.get("prompts")
+    if isinstance(prompts, list):
+        return {
+            "results": render_prompt_template_samples(
+                content,
+                capability=str(payload.get("capability") or "text"),
+                prompts=[str(item) for item in prompts],
+            )
+        }
     rendered = render_prompt_template(content, {"prompt": prompt, "capability": payload.get("capability") or "text"})
     return {"prompt": rendered}
 
@@ -2029,10 +3025,53 @@ async def admin_test_prompt_template(
 @app.get("/api/admin/users")
 async def admin_users(
     search: str = "",
+    role: str = "",
+    status: str = "",
     db: Session = Depends(get_db),
-    _admin: User = Depends(require_admin_user),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
-    return {"users": [serialize_admin_user(item) for item in list_admin_users(db, search=search)]}
+    require_admin_permission(admin, "user:view", settings)
+    duplicate_map = admin_duplicate_identity_map(db)
+    return {
+        "users": [
+            serialize_admin_user(item, settings, duplicate_identity=duplicate_map.get(item.id))
+            for item in list_admin_users(db, search=search, role=role, status=status, settings=settings)
+        ]
+    }
+
+
+@app.get("/api/admin/users/export")
+async def admin_users_export(
+    search: str = "",
+    role: str = "",
+    status: str = "",
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    require_admin_permission(admin, "user:export", settings)
+    users = list_admin_users(db, search=search, role=role, status=status, settings=settings)
+    write_admin_log(
+        db,
+        admin,
+        action="export_users",
+        target_type="user",
+        target_id="export",
+        summary={
+            "count": len(users),
+            "filters": {
+                "search": search,
+                "role": role,
+                "status": status,
+            },
+        },
+    )
+    return Response(
+        content="\ufeff" + build_admin_users_csv(users, settings),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="users.csv"'},
+    )
 
 
 @app.put("/api/admin/users/{user_id}")
@@ -2041,9 +3080,70 @@ async def admin_update_user_route(
     payload: AdminUserUpdate,
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
     _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
-    return {"user": serialize_admin_user(update_admin_user(db, admin, user_id, payload))}
+    require_admin_permission(admin, "user:update", settings)
+    user = update_admin_user(db, admin, user_id, payload)
+    return {"user": serialize_admin_user_with_duplicate_identity(db, user, settings)}
+
+
+@app.put("/api/admin/users/{user_id}/role")
+async def admin_update_user_role_route(
+    user_id: str,
+    payload: AdminUserRoleUpdate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    require_admin_permission(admin, "user:role:update", settings)
+    set_admin_user_role(db, admin, user_id, payload.role, note=payload.note)
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail={"message": "用户不存在。"})
+    return {"user": serialize_admin_user_with_duplicate_identity(db, user, settings)}
+
+
+@app.get("/api/admin/users/{user_id}/credits")
+async def admin_user_credits(
+    user_id: str,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    require_admin_permission(admin, "credit:view", settings)
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail={"message": "用户不存在。"})
+    account = get_or_create_credit_account(db, user.id)
+    transactions = list_credit_transactions(db, user_id=user.id, limit=100)
+    return {
+        "account": serialize_credit_account(account),
+        "transactions": [serialize_credit_transaction(item) for item in transactions],
+    }
+
+
+@app.post("/api/admin/users/{user_id}/credits/adjust")
+async def admin_adjust_user_credits(
+    user_id: str,
+    payload: AdminCreditAdjustRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    require_admin_permission(admin, "credit:adjust", settings)
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail={"message": "用户不存在。"})
+    transaction = admin_adjust_credits(db, admin=admin, target_user=user, amount=payload.amount, reason=payload.reason)
+    account = get_or_create_credit_account(db, user.id)
+    return {
+        "account": serialize_credit_account(account),
+        "transaction": serialize_credit_transaction(transaction),
+        "user": serialize_admin_user_with_duplicate_identity(db, user, settings),
+    }
 
 
 @app.post("/api/admin/users/{user_id}/disable")
@@ -2051,9 +3151,12 @@ async def admin_disable_user_route(
     user_id: str,
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
     _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
-    return {"user": serialize_admin_user(admin_disable_user(db, admin, user_id))}
+    require_admin_permission(admin, "user:disable", settings)
+    user = admin_disable_user(db, admin, user_id)
+    return {"user": serialize_admin_user_with_duplicate_identity(db, user, settings)}
 
 
 @app.post("/api/admin/users/{user_id}/enable")
@@ -2061,9 +3164,12 @@ async def admin_enable_user_route(
     user_id: str,
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
     _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
-    return {"user": serialize_admin_user(admin_enable_user(db, admin, user_id))}
+    require_admin_permission(admin, "user:update", settings)
+    user = admin_enable_user(db, admin, user_id)
+    return {"user": serialize_admin_user_with_duplicate_identity(db, user, settings)}
 
 
 @app.post("/api/admin/users/{user_id}/delete")
@@ -2071,9 +3177,12 @@ async def admin_delete_user_route(
     user_id: str,
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
     _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
-    return {"user": serialize_admin_user(admin_delete_user(db, admin, user_id))}
+    require_admin_permission(admin, "user:delete", settings)
+    user = admin_delete_user(db, admin, user_id)
+    return {"user": serialize_admin_user_with_duplicate_identity(db, user, settings)}
 
 
 @app.post("/api/admin/users/{user_id}/restore")
@@ -2081,9 +3190,12 @@ async def admin_restore_user_route(
     user_id: str,
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
     _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
-    return {"user": serialize_admin_user(admin_restore_user(db, admin, user_id))}
+    require_admin_permission(admin, "user:restore", settings)
+    user = admin_restore_user(db, admin, user_id)
+    return {"user": serialize_admin_user_with_duplicate_identity(db, user, settings)}
 
 
 @app.get("/api/admin/records/text")
@@ -2100,8 +3212,11 @@ async def admin_text_records(
     resolution: str = "",
     mode: str = "",
     db: Session = Depends(get_db),
-    _admin: User = Depends(require_admin_user),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
+    require_admin_permission(admin, "record:view", settings)
+    include_raw_json = can(admin, "record:raw_json", settings)
     return {
         "records": list_admin_creation_records(
             db,
@@ -2117,8 +3232,112 @@ async def admin_text_records(
             duration=duration,
             resolution=resolution,
             mode=mode,
+            include_raw_json=include_raw_json,
         )
     }
+
+
+def _export_admin_records_response(
+    db: Session,
+    admin: User,
+    *,
+    capability: str,
+    user_id: str = "",
+    user_search: str = "",
+    model_group_id: str = "",
+    status: str = "",
+    keyword: str = "",
+    size: str = "",
+    ratio: str = "",
+    ref_count: str = "",
+    duration: str = "",
+    resolution: str = "",
+    mode: str = "",
+    include_raw_json: bool = False,
+) -> Response:
+    records = list_admin_creation_records(
+        db,
+        capability=capability,
+        user_id=user_id,
+        user_search=user_search,
+        model_group_id=model_group_id,
+        status=status,
+        keyword=keyword,
+        size=size,
+        ratio=ratio,
+        ref_count=ref_count,
+        duration=duration,
+        resolution=resolution,
+        mode=mode,
+        limit=300,
+        include_raw_json=include_raw_json,
+    )
+    write_admin_log(
+        db,
+        admin,
+        action="export_records",
+        target_type="record",
+        target_id=capability,
+        summary={
+            "capability": capability,
+            "count": len(records),
+            "filters": {
+                "userId": user_id,
+                "userSearch": user_search,
+                "modelGroupId": model_group_id,
+                "status": status,
+                "keyword": keyword,
+                "size": size,
+                "ratio": ratio,
+                "refCount": ref_count,
+                "duration": duration,
+                "resolution": resolution,
+                "mode": mode,
+            },
+        },
+    )
+    return Response(
+        content="\ufeff" + build_admin_creation_records_csv(records),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="records-{capability}.csv"'},
+    )
+
+
+@app.get("/api/admin/records/text/export")
+async def admin_text_records_export(
+    userId: str = "",
+    userSearch: str = "",
+    modelGroupId: str = "",
+    status: str = "",
+    keyword: str = "",
+    size: str = "",
+    ratio: str = "",
+    refCount: str = "",
+    duration: str = "",
+    resolution: str = "",
+    mode: str = "",
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    require_admin_permission(admin, "record:export", settings)
+    return _export_admin_records_response(
+        db,
+        admin,
+        capability="text",
+        user_id=userId,
+        user_search=userSearch,
+        model_group_id=modelGroupId,
+        status=status,
+        keyword=keyword,
+        size=size,
+        ratio=ratio,
+        ref_count=refCount,
+        duration=duration,
+        resolution=resolution,
+        mode=mode,
+        include_raw_json=can(admin, "record:raw_json", settings),
+    )
 
 
 @app.get("/api/admin/records/images")
@@ -2135,8 +3354,11 @@ async def admin_image_records(
     resolution: str = "",
     mode: str = "",
     db: Session = Depends(get_db),
-    _admin: User = Depends(require_admin_user),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
+    require_admin_permission(admin, "record:view", settings)
+    include_raw_json = can(admin, "record:raw_json", settings)
     return {
         "records": list_admin_creation_records(
             db,
@@ -2152,8 +3374,46 @@ async def admin_image_records(
             duration=duration,
             resolution=resolution,
             mode=mode,
+            include_raw_json=include_raw_json,
         )
     }
+
+
+@app.get("/api/admin/records/images/export")
+async def admin_image_records_export(
+    userId: str = "",
+    userSearch: str = "",
+    modelGroupId: str = "",
+    status: str = "",
+    keyword: str = "",
+    size: str = "",
+    ratio: str = "",
+    refCount: str = "",
+    duration: str = "",
+    resolution: str = "",
+    mode: str = "",
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    require_admin_permission(admin, "record:export", settings)
+    return _export_admin_records_response(
+        db,
+        admin,
+        capability="image",
+        user_id=userId,
+        user_search=userSearch,
+        model_group_id=modelGroupId,
+        status=status,
+        keyword=keyword,
+        size=size,
+        ratio=ratio,
+        ref_count=refCount,
+        duration=duration,
+        resolution=resolution,
+        mode=mode,
+        include_raw_json=can(admin, "record:raw_json", settings),
+    )
 
 
 @app.get("/api/admin/records/videos")
@@ -2170,8 +3430,11 @@ async def admin_video_records(
     resolution: str = "",
     mode: str = "",
     db: Session = Depends(get_db),
-    _admin: User = Depends(require_admin_user),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
+    require_admin_permission(admin, "record:view", settings)
+    include_raw_json = can(admin, "record:raw_json", settings)
     return {
         "records": list_admin_creation_records(
             db,
@@ -2187,8 +3450,68 @@ async def admin_video_records(
             duration=duration,
             resolution=resolution,
             mode=mode,
+            include_raw_json=include_raw_json,
         )
     }
+
+
+@app.get("/api/admin/records/videos/export")
+async def admin_video_records_export(
+    userId: str = "",
+    userSearch: str = "",
+    modelGroupId: str = "",
+    status: str = "",
+    keyword: str = "",
+    size: str = "",
+    ratio: str = "",
+    refCount: str = "",
+    duration: str = "",
+    resolution: str = "",
+    mode: str = "",
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    require_admin_permission(admin, "record:export", settings)
+    return _export_admin_records_response(
+        db,
+        admin,
+        capability="video",
+        user_id=userId,
+        user_search=userSearch,
+        model_group_id=modelGroupId,
+        status=status,
+        keyword=keyword,
+        size=size,
+        ratio=ratio,
+        ref_count=refCount,
+        duration=duration,
+        resolution=resolution,
+        mode=mode,
+        include_raw_json=can(admin, "record:raw_json", settings),
+    )
+
+
+@app.get("/api/admin/records/detail/{message_id}")
+async def admin_record_detail_route(
+    message_id: str,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    require_admin_permission(admin, "record:view", settings)
+    return {"record": admin_record_detail(db, message_id, include_raw_json=can(admin, "record:raw_json", settings))}
+
+
+@app.get("/api/admin/tasks/{task_id}/timeline")
+async def admin_task_timeline_route(
+    task_id: str,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    require_admin_permission(admin, "record:view", settings)
+    return admin_task_timeline(db, task_id, include_raw_json=can(admin, "record:raw_json", settings))
 
 
 @app.get("/api/admin/audit-logs")
@@ -2197,10 +3520,16 @@ async def admin_audit_logs(
     adminUserId: str = "",
     targetType: str = "",
     targetId: str = "",
+    status: str = "",
     risk: str = "",
+    startAt: str = "",
+    endAt: str = "",
+    limit: int = 100,
     db: Session = Depends(get_db),
-    _admin: User = Depends(require_admin_user),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
+    require_admin_permission(admin, "audit:view", settings)
     return {
         "logs": list_admin_audit_logs(
             db,
@@ -2208,9 +3537,48 @@ async def admin_audit_logs(
             admin_user_id=adminUserId,
             target_type=targetType,
             target_id=targetId,
+            status=status,
             risk=risk,
+            start_at=startAt,
+            end_at=endAt,
+            limit=limit,
         )
     }
+
+
+@app.get("/api/admin/audit-logs/export")
+async def admin_audit_logs_export(
+    action: str = "",
+    adminUserId: str = "",
+    targetType: str = "",
+    targetId: str = "",
+    status: str = "",
+    risk: str = "",
+    startAt: str = "",
+    endAt: str = "",
+    limit: int = 300,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    require_admin_permission(admin, "audit:export", settings)
+    rows = list_admin_audit_logs(
+        db,
+        action=action,
+        admin_user_id=adminUserId,
+        target_type=targetType,
+        target_id=targetId,
+        status=status,
+        risk=risk,
+        start_at=startAt,
+        end_at=endAt,
+        limit=limit,
+    )
+    return Response(
+        content="\ufeff" + build_admin_audit_logs_csv(rows),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="audit-logs.csv"'},
+    )
 
 
 @app.get("/api/calls")
@@ -2480,6 +3848,7 @@ async def proxy_text(
     )
     model_group = sub_model = None
     conversation = None
+    credit_reserve = None
     user_prompt = ""
     if payload.get("subModelId"):
         model_group, sub_model, api_key_record, api_key = get_sub_model_for_user(db, current_user, str(payload["subModelId"]))
@@ -2493,6 +3862,14 @@ async def proxy_text(
 
     target_url = resolve_url(base_url, "/v1/chat/completions")
     body = {"model": model, **(payload.get("requestBody") or {})}
+    if model_group and sub_model:
+        credit_reserve = prepare_generation_credit(
+            db,
+            user=current_user,
+            capability="text",
+            model_group=model_group,
+            sub_model=sub_model,
+        )
     messages = body.get("messages") if isinstance(body.get("messages"), list) else []
     for item in reversed(messages):
         if isinstance(item, dict) and item.get("role") == "user" and isinstance(item.get("content"), str):
@@ -2537,7 +3914,18 @@ async def proxy_text(
                 model_group_id=model_group.id,
                 sub_model_id=sub_model.id,
                 request=body,
-                response={"taskId": task_id, "status": "processing"},
+                response={
+                    "taskId": task_id,
+                    "status": "processing",
+                    **({"creditReserveId": credit_reserve.id} if credit_reserve else {}),
+                },
+            )
+            update_reserved_transaction_refs(
+                db,
+                credit_reserve,
+                conversation_id=conversation.id,
+                message_id=assistant_message.id,
+                task_id=task_id,
             )
             db.commit()
             refreshed = reload_conversation(db, current_user, conversation.id)
@@ -2554,21 +3942,27 @@ async def proxy_text(
                     task_id=task_id,
                 )
             )
-            return {
+            return attach_credit_payload({
                 "content": "",
                 "taskId": task_id,
                 "status": "processing",
                 "usage": None,
-                "raw": {"taskId": task_id, "status": "processing"},
+                "raw": {
+                    "taskId": task_id,
+                    "status": "processing",
+                    **({"creditReserveId": credit_reserve.id} if credit_reserve else {}),
+                },
                 "conversation": serialize_conversation(refreshed).model_dump(),
                 "assistantMessage": serialize_message(assistant_message).model_dump(),
-            }
+            }, db, current_user)
         response, raw = result if result is not None else await forward_task
     else:
         response, raw = await forward_task
     duration_ms = elapsed_ms(started_at)
 
     if not response.is_success or not isinstance(raw, dict):
+        if credit_reserve:
+            refund_generation_credits(db, credit_reserve.id, reason="文案生成失败自动退款")
         upstream_message = pick_error_message(raw, "文案请求失败。")
         message = GENERATION_FAILED_MESSAGE
         failed_message = None
@@ -2604,13 +3998,13 @@ async def proxy_text(
         if conversation and failed_message and current_user and should_return_generation_failure_payload(response):
             db.commit()
             refreshed = reload_conversation(db, current_user, conversation.id)
-            return {
+            return attach_credit_payload({
                 "content": "",
                 "status": "failed",
                 "usage": None,
                 "conversation": serialize_conversation(refreshed).model_dump(mode="json"),
                 "assistantMessage": serialize_message(failed_message).model_dump(mode="json"),
-            }
+            }, db, current_user)
         if conversation and failed_message and current_user:
             db.commit()
             refreshed = reload_conversation(db, current_user, conversation.id)
@@ -2622,6 +4016,8 @@ async def proxy_text(
         raise HTTPException(status_code=response.status_code or 500, detail=detail)
 
     content = pick_text_content(raw)
+    if credit_reserve:
+        capture_generation_credits(db, credit_reserve.id)
 
     assistant_message = None
     if current_user and model_group and sub_model:
@@ -2659,6 +4055,7 @@ async def proxy_text(
         "usage": raw.get("usage"),
         "raw": raw,
     }
+    attach_credit_payload(result, db, current_user)
     if conversation and current_user:
         db.commit()
         refreshed = reload_conversation(db, current_user, conversation.id)
@@ -2695,7 +4092,7 @@ async def proxy_text_query(
     message = find_text_task_message(conversation, task_id)
     if not message:
         raise HTTPException(status_code=404, detail={"message": "文本任务不存在或已被清理。"})
-    return serialize_text_task_result(conversation, message, task_id)
+    return attach_credit_payload(serialize_text_task_result(conversation, message, task_id), db, current_user)
 
 
 @app.post("/api/proxy/image")
@@ -2717,6 +4114,7 @@ async def proxy_image(
     )
     model_group = sub_model = None
     conversation = None
+    credit_reserve = None
     if payload.get("subModelId"):
         model_group, sub_model, api_key_record, api_key = get_sub_model_for_user(db, current_user, str(payload["subModelId"]))
         base_url = api_key_record.base_url
@@ -2732,6 +4130,7 @@ async def proxy_image(
     request_body = copy.deepcopy(payload.get("requestBody") or {})
     body = {"model": model, **request_body}
     body = normalize_image_reference_fields_for_adapter(body, adapter)
+    image_count = requested_image_count(body)
     reference_assets = collect_reference_image_assets(body)
     edit_references = collect_image_edit_references(body)
     target_url = resolve_url(base_url, "/v1/images/edits" if edit_references else "/v1/images/generations")
@@ -2772,26 +4171,123 @@ async def proxy_image(
             request=body,
         )
         add_reference_assets(db, user_message, current_user, capability="image", references=reference_assets)
+    if model_group and sub_model:
+        credit_reserve = prepare_generation_credit(
+            db,
+            user=current_user,
+            capability="image",
+            model_group=model_group,
+            sub_model=sub_model,
+            conversation_id=conversation.id if conversation else "",
+            quantity=image_count,
+        )
+    if current_user and conversation and image_count > 1:
+        task_id = new_long_task_id(IMAGE_LONG_TASK_PREFIX)
+        assistant_message = add_message(
+            db,
+            conversation,
+            current_user,
+            role="assistant",
+            capability="image",
+            content=task_id,
+            status="processing",
+            can_retry=False,
+            model_group_id=model_group.id if model_group else None,
+            sub_model_id=sub_model.id if sub_model else None,
+            request=body,
+            response={
+                "taskId": task_id,
+                "localTaskId": task_id,
+                "status": "processing",
+                "progress": f"0/{image_count}",
+                "batch": {
+                    "requestedCount": image_count,
+                    "completedCount": 0,
+                    "successCount": 0,
+                    "failedCount": 0,
+                },
+                **({"creditReserveId": credit_reserve.id} if credit_reserve else {}),
+            },
+        )
+        update_reserved_transaction_refs(
+            db,
+            credit_reserve,
+            conversation_id=conversation.id,
+            message_id=assistant_message.id,
+            task_id=task_id,
+            metadata={"quantity": image_count},
+        )
+        record_generation_task_event(
+            db,
+            task_id=task_id,
+            event_type="submitted",
+            status="processing",
+            user=current_user,
+            model_group=model_group,
+            sub_model=sub_model,
+            capability="image",
+            endpoint="/api/proxy/image",
+            conversation_id=conversation.id,
+            message_id=assistant_message.id,
+            message="Batch image task submitted.",
+            payload={
+                "taskId": task_id,
+                "localTaskId": task_id,
+                "status": "processing",
+                "requestedCount": image_count,
+                "conversationId": conversation.id,
+                "messageId": assistant_message.id,
+            },
+        )
+        db.commit()
+        refreshed = reload_conversation(db, current_user, conversation.id)
+        asyncio.create_task(
+            complete_image_batch_task(
+                started_at=time.perf_counter(),
+                user_id=current_user.id,
+                conversation_id=conversation.id,
+                message_id=assistant_message.id,
+                model_group_id=model_group.id if model_group else None,
+                sub_model_id=sub_model.id if sub_model else None,
+                body=body,
+                task_id=task_id,
+                requested_count=image_count,
+                base_url=base_url,
+                target_url=target_url,
+                api_key=api_key,
+                edit_references=edit_references,
+            )
+        )
+        return attach_credit_payload({
+            "images": [],
+            "taskId": task_id,
+            "status": "processing",
+            "progress": f"0/{image_count}",
+            "raw": {
+                "taskId": task_id,
+                "localTaskId": task_id,
+                "status": "processing",
+                "progress": f"0/{image_count}",
+                "batch": {
+                    "requestedCount": image_count,
+                    "completedCount": 0,
+                    "successCount": 0,
+                    "failedCount": 0,
+                },
+                **({"creditReserveId": credit_reserve.id} if credit_reserve else {}),
+            },
+            "conversation": serialize_conversation(refreshed).model_dump(),
+            "assistantMessage": serialize_message(assistant_message).model_dump(),
+        }, db, current_user)
+
     async def send_image_request() -> tuple[httpx.Response, dict[str, Any] | str]:
-        nonlocal body, target_url
-        if edit_references:
-            edit_data = {
-                key: str(value)
-                for key, value in body.items()
-                if key != "image" and value is not None
-            }
-            edit_files = [
-                ("image", (reference["filename"], reference["content"], reference["content_type"]))
-                for reference in edit_references
-            ]
-            response, raw = await forward_multipart(target_url, api_key, data=edit_data, files=edit_files)
-            if (not response.is_success or not isinstance(raw, dict)) and is_non_json_upstream_error(raw):
-                body = expand_local_image_references(copy.deepcopy(body))
-                target_url = resolve_url(base_url, "/v1/images/generations")
-                response, raw = await forward_json("POST", target_url, api_key, body)
-            return response, raw
-        else:
-            return await forward_json("POST", target_url, api_key, body)
+        return await forward_image_request(
+            base_url=base_url,
+            target_url=target_url,
+            api_key=api_key,
+            body=body,
+            edit_references=edit_references,
+        )
 
     started_at = time.perf_counter()
     try:
@@ -2812,7 +4308,39 @@ async def proxy_image(
                     model_group_id=model_group.id if model_group else None,
                     sub_model_id=sub_model.id if sub_model else None,
                     request=body,
-                    response={"taskId": task_id, "status": "processing"},
+                    response={
+                        "taskId": task_id,
+                        "status": "processing",
+                        **({"creditReserveId": credit_reserve.id} if credit_reserve else {}),
+                    },
+                )
+                update_reserved_transaction_refs(
+                    db,
+                    credit_reserve,
+                    conversation_id=conversation.id,
+                    message_id=assistant_message.id,
+                    task_id=task_id,
+                )
+                record_generation_task_event(
+                    db,
+                    task_id=task_id,
+                    event_type="submitted",
+                    status="processing",
+                    user=current_user,
+                    model_group=model_group,
+                    sub_model=sub_model,
+                    capability="image",
+                    endpoint="/api/proxy/image",
+                    conversation_id=conversation.id,
+                    message_id=assistant_message.id,
+                    message="Image task submitted.",
+                    payload={
+                        "taskId": task_id,
+                        "localTaskId": task_id,
+                        "status": "processing",
+                        "conversationId": conversation.id,
+                        "messageId": assistant_message.id,
+                    },
                 )
                 db.commit()
                 refreshed = reload_conversation(db, current_user, conversation.id)
@@ -2829,15 +4357,19 @@ async def proxy_image(
                         task_id=task_id,
                     )
                 )
-                return {
+                return attach_credit_payload({
                     "images": [],
                     "taskId": task_id,
                     "status": "processing",
                     "progress": None,
-                    "raw": {"taskId": task_id, "status": "processing"},
+                    "raw": {
+                        "taskId": task_id,
+                        "status": "processing",
+                        **({"creditReserveId": credit_reserve.id} if credit_reserve else {}),
+                    },
                     "conversation": serialize_conversation(refreshed).model_dump(),
                     "assistantMessage": serialize_message(assistant_message).model_dump(),
-                }
+                }, db, current_user)
             response, raw = result if result is not None else await forward_task
         else:
             response, raw = await forward_task
@@ -2850,6 +4382,8 @@ async def proxy_image(
     duration_ms = elapsed_ms(started_at)
 
     if not response.is_success or not isinstance(raw, dict):
+        if credit_reserve:
+            refund_generation_credits(db, credit_reserve.id, reason="图片生成失败自动退款")
         upstream_message = pick_error_message(raw, "图片请求失败。")
         message = generation_public_error_message(raw, response.status_code)
         failed_message = None
@@ -2885,13 +4419,13 @@ async def proxy_image(
         if conversation and failed_message and current_user and should_return_generation_failure_payload(response):
             db.commit()
             refreshed = reload_conversation(db, current_user, conversation.id)
-            return {
+            return attach_credit_payload({
                 "images": [],
                 "status": "failed",
                 "progress": None,
                 "conversation": serialize_conversation(refreshed).model_dump(mode="json"),
                 "assistantMessage": serialize_message(failed_message).model_dump(mode="json"),
-            }
+            }, db, current_user)
         if conversation and failed_message and current_user:
             db.commit()
             refreshed = reload_conversation(db, current_user, conversation.id)
@@ -2926,6 +4460,11 @@ async def proxy_image(
     )
     task_status = normalize_task_status(str(task_status_source or "processing"))
     is_async_image_task = bool(task_id and not images and task_status != "failed")
+    if credit_reserve and not is_async_image_task:
+        if images:
+            capture_generation_credits(db, credit_reserve.id)
+        else:
+            refund_generation_credits(db, credit_reserve.id, reason="图片生成失败自动退款")
 
     assistant_message = None
     if current_user:
@@ -2942,7 +4481,10 @@ async def proxy_image(
                 model_group_id=model_group.id if model_group else None,
                 sub_model_id=sub_model.id if sub_model else None,
                 request=body,
-                response=safe_raw,
+                response={
+                    **safe_raw,
+                    **({"creditReserveId": credit_reserve.id} if credit_reserve else {}),
+                },
             )
             for image in images:
                 add_asset(
@@ -2953,6 +4495,28 @@ async def proxy_image(
                     asset_type="image",
                     url=image["src"],
                     metadata={"revisedPrompt": image.get("revisedPrompt")},
+                )
+            if is_async_image_task:
+                record_generation_task_event(
+                    db,
+                    task_id=task_id,
+                    event_type="submitted",
+                    status="processing",
+                    user=current_user,
+                    model_group=model_group,
+                    sub_model=sub_model,
+                    capability="image",
+                    endpoint="/api/proxy/image",
+                    conversation_id=conversation.id if conversation else "",
+                    message_id=assistant_message.id if assistant_message else "",
+                    duration_ms=duration_ms,
+                    message="Image task submitted.",
+                    payload={
+                        **summarize_task_payload(safe_raw, task_id=task_id, status="processing"),
+                        "providerTaskId": task_id,
+                        "conversationId": conversation.id if conversation else "",
+                        "messageId": assistant_message.id if assistant_message else "",
+                    },
                 )
         if model_group and sub_model:
             record_call_log(
@@ -2973,6 +4537,7 @@ async def proxy_image(
         "raw": safe_raw,
         **({"taskId": task_id, "status": "processing"} if is_async_image_task else {}),
     }
+    attach_credit_payload(result, db, current_user)
     if conversation and current_user:
         db.commit()
         refreshed = reload_conversation(db, current_user, conversation.id)
@@ -3018,7 +4583,7 @@ async def proxy_image_query(
             message = find_legacy_local_image_task_message(conversation)
         if not message:
             raise HTTPException(status_code=404, detail={"message": "图片任务不存在或已被清理。"})
-        return serialize_local_image_task_result(conversation, message, task_id)
+        return attach_credit_payload(serialize_local_image_task_result(conversation, message, task_id), db, current_user)
 
     target_url = resolve_url(base_url, resolve_image_query_path(task_id))
     started_at = time.perf_counter()
@@ -3047,6 +4612,7 @@ async def proxy_image_query(
                     request={"taskId": task_id},
                     response=raw,
                 )
+                refund_credit_for_message(db, failed_message, task_id=task_id, conversation_id=conversation.id, reason="图片任务查询失败自动退款")
             record_call_log(
                 db,
                 user=current_user,
@@ -3066,6 +4632,7 @@ async def proxy_image_query(
                 **detail,
                 "conversation": serialize_conversation(refreshed).model_dump(mode="json"),
                 "assistantMessage": serialize_message(failed_message).model_dump(mode="json"),
+                "credits": credit_payload(db, current_user),
             }
         raise HTTPException(status_code=response.status_code or 500, detail=detail)
 
@@ -3099,6 +4666,10 @@ async def proxy_image_query(
             request={"taskId": task_id},
             response=raw,
         )
+        if message_status == "success":
+            capture_credit_for_message(db, assistant_message, task_id=task_id, conversation_id=conversation.id)
+        elif message_status == "error":
+            refund_credit_for_message(db, assistant_message, task_id=task_id, conversation_id=conversation.id, reason="图片任务失败自动退款")
         if result.get("images") and message_status == "success":
             db.query(GeneratedAsset).filter(GeneratedAsset.message_id == assistant_message.id).delete()
             for image in result["images"]:
@@ -3116,10 +4687,34 @@ async def proxy_image_query(
                         "revisedPrompt": image.get("revisedPrompt"),
                     },
                 )
+        event_type = "completed" if message_status == "success" else "failed" if message_status == "error" else "updated"
+        event_status = "success" if message_status == "success" else "error" if message_status == "error" else "processing"
+        record_generation_task_event(
+            db,
+            task_id=task_id,
+            event_type=event_type,
+            status=event_status,
+            user=current_user,
+            model_group=model_group,
+            sub_model=sub_model,
+            capability="image",
+            endpoint="/api/proxy/image/query",
+            conversation_id=conversation.id,
+            message_id=assistant_message.id,
+            duration_ms=duration_ms,
+            message=task_error_message or str(result.get("status") or ""),
+            payload=summarize_task_payload(
+                result.get("raw") if isinstance(result.get("raw"), dict) else raw,
+                task_id=task_id,
+                status=str(result.get("status") or ""),
+                images=result.get("images") if isinstance(result.get("images"), list) else None,
+            ),
+        )
         db.commit()
         refreshed = reload_conversation(db, current_user, conversation.id)
         result["conversation"] = serialize_conversation(refreshed).model_dump()
         result["assistantMessage"] = serialize_message(assistant_message).model_dump()
+        attach_credit_payload(result, db, current_user)
         record_call_log(
             db,
             user=current_user,
@@ -3226,6 +4821,7 @@ async def proxy_video_create(
     )
     model_group = sub_model = None
     conversation = None
+    credit_reserve = None
     if payload.get("subModelId"):
         model_group, sub_model, api_key_record, api_key = get_sub_model_for_user(db, current_user, str(payload["subModelId"]))
         base_url = api_key_record.base_url
@@ -3267,11 +4863,22 @@ async def proxy_video_create(
             request=request_body,
         )
         add_reference_assets(db, user_message, current_user, capability="video", references=reference_assets)
+    if model_group and sub_model:
+        credit_reserve = prepare_generation_credit(
+            db,
+            user=current_user,
+            capability="video",
+            model_group=model_group,
+            sub_model=sub_model,
+            conversation_id=conversation.id if conversation else "",
+        )
     started_at = time.perf_counter()
     response, raw = await forward_json("POST", target_url, api_key, request_body)
     duration_ms = elapsed_ms(started_at)
 
     if not response.is_success or not isinstance(raw, dict):
+        if credit_reserve:
+            refund_generation_credits(db, credit_reserve.id, reason="视频任务提交失败自动退款")
         message = pick_error_message(raw, "视频任务提交失败。")
         failed_message = None
         if current_user and model_group and sub_model:
@@ -3310,6 +4917,7 @@ async def proxy_video_create(
                 **detail,
                 "conversation": serialize_conversation(refreshed).model_dump(mode="json"),
                 "assistantMessage": serialize_message(failed_message).model_dump(mode="json"),
+                "credits": credit_payload(db, current_user),
             }
         raise HTTPException(status_code=response.status_code or 500, detail=detail)
 
@@ -3329,7 +4937,38 @@ async def proxy_video_create(
                 model_group_id=model_group.id,
                 sub_model_id=sub_model.id,
                 request=request_body,
-                response=raw,
+                response={
+                    **raw,
+                    **({"creditReserveId": credit_reserve.id} if credit_reserve else {}),
+                },
+            )
+            update_reserved_transaction_refs(
+                db,
+                credit_reserve,
+                conversation_id=conversation.id,
+                message_id=assistant_message.id,
+                task_id=task_id,
+            )
+            record_generation_task_event(
+                db,
+                task_id=task_id,
+                event_type="submitted",
+                status="processing",
+                user=current_user,
+                model_group=model_group,
+                sub_model=sub_model,
+                capability="video",
+                endpoint="/api/proxy/video/create",
+                conversation_id=conversation.id,
+                message_id=assistant_message.id,
+                duration_ms=duration_ms,
+                message="Video task submitted.",
+                payload={
+                    **summarize_task_payload(raw, task_id=task_id, status="processing"),
+                    "providerTaskId": task_id,
+                    "conversationId": conversation.id,
+                    "messageId": assistant_message.id,
+                },
             )
         record_call_log(
             db,
@@ -3349,6 +4988,7 @@ async def proxy_video_create(
         "status": raw.get("status") if isinstance(raw.get("status"), str) else raw.get("code") if isinstance(raw.get("code"), str) else "submitted",
         "raw": raw,
     }
+    attach_credit_payload(result, db, current_user)
     if conversation and current_user:
         db.commit()
         refreshed = reload_conversation(db, current_user, conversation.id)
@@ -3422,6 +5062,7 @@ async def proxy_video_query(
                     request={"taskId": task_id},
                     response=raw,
                 )
+                refund_credit_for_message(db, failed_message, task_id=task_id, conversation_id=conversation.id, reason="视频任务查询失败自动退款")
             record_call_log(
                 db,
                 user=current_user,
@@ -3433,6 +5074,23 @@ async def proxy_video_query(
                 duration_ms=duration_ms,
                 error_message=message,
             )
+            if conversation and failed_message:
+                record_generation_task_event(
+                    db,
+                    task_id=task_id,
+                    event_type="failed",
+                    status="error",
+                    user=current_user,
+                    model_group=model_group,
+                    sub_model=sub_model,
+                    capability="video",
+                    endpoint="/api/proxy/video/query",
+                    conversation_id=conversation.id,
+                    message_id=failed_message.id,
+                    duration_ms=duration_ms,
+                    message=message,
+                    payload=summarize_task_payload(raw, task_id=task_id, status="failed"),
+                )
         detail = upstream_error(raw, "任务查询失败。", response.status_code).detail
         if conversation and failed_message and current_user:
             db.commit()
@@ -3441,6 +5099,7 @@ async def proxy_video_query(
                 **detail,
                 "conversation": serialize_conversation(refreshed).model_dump(mode="json"),
                 "assistantMessage": serialize_message(failed_message).model_dump(mode="json"),
+                "credits": credit_payload(db, current_user),
             }
         raise HTTPException(status_code=response.status_code or 500, detail=detail)
 
@@ -3479,6 +5138,10 @@ async def proxy_video_query(
             request={"taskId": task_id},
             response=raw,
         )
+        if message_status == "success":
+            capture_credit_for_message(db, assistant_message, task_id=task_id, conversation_id=conversation.id)
+        elif message_status == "error":
+            refund_credit_for_message(db, assistant_message, task_id=task_id, conversation_id=conversation.id, reason="视频任务失败自动退款")
         if result.get("videoUrl") and message_status == "success":
             db.query(GeneratedAsset).filter(GeneratedAsset.message_id == assistant_message.id).delete()
             add_asset(
@@ -3491,10 +5154,34 @@ async def proxy_video_query(
                 thumbnail_url=str(result.get("thumbnailUrl") or ""),
                 metadata={"taskId": task_id, "status": result.get("status"), "progress": result.get("progress")},
             )
+        event_type = "completed" if message_status == "success" else "failed" if message_status == "error" else "updated"
+        event_status = "success" if message_status == "success" else "error" if message_status == "error" else "processing"
+        record_generation_task_event(
+            db,
+            task_id=task_id,
+            event_type=event_type,
+            status=event_status,
+            user=current_user,
+            model_group=model_group,
+            sub_model=sub_model,
+            capability="video",
+            endpoint="/api/proxy/video/query",
+            conversation_id=conversation.id,
+            message_id=assistant_message.id,
+            duration_ms=duration_ms,
+            message=task_error_message or str(result.get("status") or ""),
+            payload=summarize_task_payload(
+                result.get("raw") if isinstance(result.get("raw"), dict) else raw,
+                task_id=task_id,
+                status=str(result.get("status") or ""),
+                video_url=str(result.get("videoUrl") or ""),
+            ),
+        )
         db.commit()
         refreshed = reload_conversation(db, current_user, conversation.id)
         result["conversation"] = serialize_conversation(refreshed).model_dump()
         result["assistantMessage"] = serialize_message(assistant_message).model_dump()
+        attach_credit_payload(result, db, current_user)
         record_call_log(
             db,
             user=current_user,

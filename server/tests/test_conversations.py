@@ -428,6 +428,10 @@ def test_public_text_model_records_assistant_message_for_non_admin_user(monkeypa
 
 
 def test_public_image_model_records_generated_asset_for_non_admin_user(monkeypatch) -> None:
+    from app.database import SessionLocal
+    from app.credit_service import admin_adjust_credits
+    from app.db_models import User
+
     async def fake_forward_json(method, url, api_key, body=None):
         return httpx.Response(200, json={"data": [{"url": "https://cdn.example.com/public-image.png"}]}), {
             "data": [{"url": "https://cdn.example.com/public-image.png"}]
@@ -444,6 +448,10 @@ def test_public_image_model_records_generated_asset_for_non_admin_user(monkeypat
 
     normal = TestClient(app)
     login(normal, "normal-user")
+    with SessionLocal() as db:
+        admin_user = db.query(User).filter(User.email == "cage_ben@sina.com").one()
+        normal_user = db.query(User).filter(User.external_user_id == "normal-user").one()
+        admin_adjust_credits(db, admin=admin_user, target_user=normal_user, amount=1, reason="test seed")
     visible_public = next(item for item in normal.get("/api/models").json()["models"] if item["id"] == public_model["id"])
 
     response = normal.post(
@@ -650,6 +658,191 @@ def test_image_proxy_records_generated_assets(monkeypatch) -> None:
     assert payload["assistantMessage"]["assets"][0]["url"] == "https://cdn.example.com/image.png"
     conversation = client.get(f"/api/conversations/{payload['conversation']['id']}").json()["conversation"]
     assert conversation["messages"][-1]["assets"][0]["assetType"] == "image"
+
+
+def test_image_proxy_batches_requested_quantity_into_single_image_calls(monkeypatch) -> None:
+    calls: list[dict] = []
+
+    async def fake_forward_json(method, url, api_key, body=None):
+        assert method == "POST"
+        calls.append(dict(body or {}))
+        await asyncio.sleep(0)
+        image_number = len(calls)
+        return httpx.Response(200, json={"data": [{"url": f"https://cdn.example.com/batch-{image_number}.png"}]}), {
+            "data": [{"url": f"https://cdn.example.com/batch-{image_number}.png"}]
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+    sub_model_id = create_model(client, "image", "image-openai", "gpt-image-2")
+    headers = csrf_headers(client)
+
+    response = client.post(
+        "/api/proxy/image",
+        headers=headers,
+        json={"subModelId": sub_model_id, "requestBody": {"prompt": "batch image", "quantity": 3}},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "processing"
+    assert payload["taskId"].startswith("local-image-task-")
+    assert payload["assistantMessage"]["status"] == "processing"
+
+    completed = wait_for_completed_task(
+        client,
+        "/api/proxy/image/query",
+        headers,
+        {
+            "subModelId": sub_model_id,
+            "conversationId": payload["conversation"]["id"],
+            "taskId": payload["taskId"],
+        },
+    )
+
+    assert len(calls) == 3
+    assert [call["quantity"] for call in calls] == [1, 1, 1]
+    assert [image["src"] for image in completed["images"]] == [
+        "https://cdn.example.com/batch-1.png",
+        "https://cdn.example.com/batch-2.png",
+        "https://cdn.example.com/batch-3.png",
+    ]
+    assert completed["raw"]["batch"]["requestedCount"] == 3
+    assert completed["raw"]["batch"]["successCount"] == 3
+    assert completed["assistantMessage"]["status"] == "success"
+    assert len(completed["assistantMessage"]["assets"]) == 3
+    conversation = client.get(f"/api/conversations/{payload['conversation']['id']}").json()["conversation"]
+    assert len(conversation["messages"][-1]["assets"]) == 3
+
+
+def test_image_proxy_batch_keeps_successful_images_when_one_call_fails(monkeypatch) -> None:
+    calls: list[dict] = []
+
+    async def fake_forward_json(method, url, api_key, body=None):
+        assert method == "POST"
+        calls.append(dict(body or {}))
+        await asyncio.sleep(0)
+        if len(calls) == 2:
+            return httpx.Response(502, json={"error": {"message": "temporary upstream failure"}}), {
+                "error": {"message": "temporary upstream failure"}
+            }
+        return httpx.Response(200, json={"data": [{"url": f"https://cdn.example.com/partial-{len(calls)}.png"}]}), {
+            "data": [{"url": f"https://cdn.example.com/partial-{len(calls)}.png"}]
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+    sub_model_id = create_model(client, "image", "image-openai", "gpt-image-2")
+    headers = csrf_headers(client)
+
+    response = client.post(
+        "/api/proxy/image",
+        headers=headers,
+        json={"subModelId": sub_model_id, "requestBody": {"prompt": "partial batch image", "n": 3}},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    completed = wait_for_completed_task(
+        client,
+        "/api/proxy/image/query",
+        headers,
+        {
+            "subModelId": sub_model_id,
+            "conversationId": payload["conversation"]["id"],
+            "taskId": payload["taskId"],
+        },
+    )
+
+    assert len(calls) == 3
+    assert [call["n"] for call in calls] == [1, 1, 1]
+    assert [image["src"] for image in completed["images"]] == [
+        "https://cdn.example.com/partial-1.png",
+        "https://cdn.example.com/partial-3.png",
+    ]
+    assert completed["status"] == "completed"
+    assert completed["raw"]["batch"]["failedCount"] == 1
+    assert completed["assistantMessage"]["status"] == "success"
+    assert len(completed["assistantMessage"]["assets"]) == 2
+
+
+def test_image_proxy_keeps_separate_assistant_messages_for_repeated_batches(monkeypatch) -> None:
+    calls: list[dict] = []
+
+    async def fake_forward_json(method, url, api_key, body=None):
+        assert method == "POST"
+        calls.append(dict(body or {}))
+        await asyncio.sleep(0)
+        image_number = len(calls)
+        return httpx.Response(200, json={"data": [{"url": f"https://cdn.example.com/repeated-{image_number}.png"}]}), {
+            "data": [{"url": f"https://cdn.example.com/repeated-{image_number}.png"}]
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+    sub_model_id = create_model(client, "image", "image-openai", "gpt-image-2")
+    headers = csrf_headers(client)
+
+    first = client.post(
+        "/api/proxy/image",
+        headers=headers,
+        json={"subModelId": sub_model_id, "requestBody": {"prompt": "first image batch", "quantity": 2}},
+    )
+    assert first.status_code == 200
+    first_payload = first.json()
+    first_completed = wait_for_completed_task(
+        client,
+        "/api/proxy/image/query",
+        headers,
+        {
+            "subModelId": sub_model_id,
+            "conversationId": first_payload["conversation"]["id"],
+            "taskId": first_payload["taskId"],
+        },
+    )
+
+    second = client.post(
+        "/api/proxy/image",
+        headers=headers,
+        json={
+            "subModelId": sub_model_id,
+            "conversationId": first_payload["conversation"]["id"],
+            "requestBody": {"prompt": "second image batch", "quantity": 2},
+        },
+    )
+    assert second.status_code == 200
+    second_payload = second.json()
+    second_completed = wait_for_completed_task(
+        client,
+        "/api/proxy/image/query",
+        headers,
+        {
+            "subModelId": sub_model_id,
+            "conversationId": first_payload["conversation"]["id"],
+            "taskId": second_payload["taskId"],
+        },
+    )
+
+    conversation = client.get(f"/api/conversations/{first_payload['conversation']['id']}").json()["conversation"]
+    assistant_messages = [message for message in conversation["messages"] if message["role"] == "assistant"]
+
+    assert first_completed["assistantMessage"]["id"] != second_completed["assistantMessage"]["id"]
+    assert [message["content"] for message in conversation["messages"] if message["role"] == "user"] == [
+        "first image batch",
+        "second image batch",
+    ]
+    assert len(assistant_messages) == 2
+    assert [asset["url"] for asset in assistant_messages[0]["assets"]] == [
+        "https://cdn.example.com/repeated-1.png",
+        "https://cdn.example.com/repeated-2.png",
+    ]
+    assert [asset["url"] for asset in assistant_messages[1]["assets"]] == [
+        "https://cdn.example.com/repeated-3.png",
+        "https://cdn.example.com/repeated-4.png",
+    ]
 
 
 def test_image_proxy_records_reference_assets_on_user_message(monkeypatch) -> None:
@@ -883,6 +1076,87 @@ def test_image_query_updates_processing_message_with_generated_asset(monkeypatch
     conversation = client.get(f"/api/conversations/{conversation_id}").json()["conversation"]
     assert conversation["messages"][-1]["content"] == "completed"
     assert conversation["messages"][-1]["assets"][0]["assetType"] == "image"
+
+
+def test_image_query_keeps_repeated_async_results_in_separate_messages(monkeypatch) -> None:
+    created_tasks: list[str] = []
+
+    async def fake_forward_json(method, url, api_key, body=None):
+        if method == "POST":
+            task_id = f"image-task-{len(created_tasks) + 1}"
+            created_tasks.append(task_id)
+            return httpx.Response(200, json={"code": "success", "data": {"task_id": task_id, "status": "processing"}}), {
+                "code": "success",
+                "data": {"task_id": task_id, "status": "processing"},
+            }
+        assert method == "GET"
+        task_id = url.rsplit("/", 1)[-1]
+        return httpx.Response(
+            200,
+            json={
+                "id": task_id,
+                "status": "completed",
+                "data": {
+                    "url": f"https://cdn.example.com/{task_id}.png",
+                    "progress": "100%",
+                },
+            },
+        ), {
+            "id": task_id,
+            "status": "completed",
+            "data": {
+                "url": f"https://cdn.example.com/{task_id}.png",
+                "progress": "100%",
+            },
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+    sub_model_id = create_model(client, "image", "image-openai", "gpt-image-2")
+    headers = csrf_headers(client)
+
+    first_created = client.post(
+        "/api/proxy/image",
+        headers=headers,
+        json={"subModelId": sub_model_id, "requestBody": {"prompt": "first async image"}},
+    )
+    assert first_created.status_code == 200
+    conversation_id = first_created.json()["conversation"]["id"]
+    first_queried = client.post(
+        "/api/proxy/image/query",
+        headers=headers,
+        json={"subModelId": sub_model_id, "conversationId": conversation_id, "taskId": "image-task-1"},
+    )
+    assert first_queried.status_code == 200
+
+    second_created = client.post(
+        "/api/proxy/image",
+        headers=headers,
+        json={
+            "subModelId": sub_model_id,
+            "conversationId": conversation_id,
+            "requestBody": {"prompt": "second async image"},
+        },
+    )
+    assert second_created.status_code == 200
+    second_queried = client.post(
+        "/api/proxy/image/query",
+        headers=headers,
+        json={"subModelId": sub_model_id, "conversationId": conversation_id, "taskId": "image-task-2"},
+    )
+    assert second_queried.status_code == 200
+
+    conversation = client.get(f"/api/conversations/{conversation_id}").json()["conversation"]
+    assert [(message["role"], message["content"]) for message in conversation["messages"]] == [
+        ("user", "first async image"),
+        ("assistant", "completed"),
+        ("user", "second async image"),
+        ("assistant", "completed"),
+    ]
+    assistant_messages = [message for message in conversation["messages"] if message["role"] == "assistant"]
+    assert [asset["url"] for asset in assistant_messages[0]["assets"]] == ["https://cdn.example.com/image-task-1.png"]
+    assert [asset["url"] for asset in assistant_messages[1]["assets"]] == ["https://cdn.example.com/image-task-2.png"]
 
 
 def test_image_proxy_hands_off_long_request_and_query_updates_asset(monkeypatch) -> None:
@@ -1256,6 +1530,44 @@ def test_image_proxy_persists_b64_response_as_generated_asset(monkeypatch) -> No
     assert asset_response.content == b"fake-png"
 
 
+def test_image_proxy_persists_data_url_response_as_generated_asset(monkeypatch) -> None:
+    tiny_png = base64.b64encode(b"fake-png-from-data-url").decode("ascii")
+    data_url = f"data:image/png;base64,{tiny_png}"
+    raw = {
+        "data": [{"url": data_url, "revised_prompt": "small image"}],
+        "usage": {"total_tokens": 7},
+    }
+
+    async def fake_forward_json(method, url, api_key, body=None):
+        return httpx.Response(200, json=raw), raw
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+    sub_model_id = create_model(client, "image", "image-openai", "gpt-image-2")
+
+    response = client.post(
+        "/api/proxy/image",
+        headers=csrf_headers(client),
+        json={
+            "subModelId": sub_model_id,
+            "requestBody": {"prompt": "image from data url"},
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    image_url = payload["images"][0]["src"]
+    assert image_url.startswith("/api/assets/generated/")
+    assert payload["raw"]["data"][0]["url"] == image_url
+    assert "data:image/png;base64" not in payload["raw"]["data"][0]["url"]
+    assert payload["assistantMessage"]["assets"][0]["url"] == image_url
+
+    asset_response = client.get(image_url)
+    assert asset_response.status_code == 200
+    assert asset_response.content == b"fake-png-from-data-url"
+
+
 def test_image_proxy_sanitizes_large_reference_data_urls_before_storing(monkeypatch) -> None:
     reference_data_url = f"data:image/jpeg;base64,{'a' * 8000}"
 
@@ -1596,6 +1908,185 @@ def test_video_create_and_query_record_playable_asset(monkeypatch) -> None:
 
     assert queried.status_code == 200
     assert queried.json()["assistantMessage"]["assets"][0]["url"] == "https://cdn.example.com/video.mp4"
+
+
+def test_video_create_records_submitted_task_event_visible_in_timeline(monkeypatch) -> None:
+    async def fake_forward_json(method, url, api_key, body=None):
+        return httpx.Response(200, json={"id": "task-event-create", "status": "processing"}), {
+            "id": "task-event-create",
+            "status": "processing",
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "admin")
+    client.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": "admin-task-events", "email": "cage_ben@sina.com", "nickname": "Admin"},
+    )
+    sub_model_id = create_model(client, "video", "video-unified-generic", "seedance-2.0")
+
+    created = client.post(
+        "/api/proxy/video/create",
+        headers=csrf_headers(client),
+        json={"subModelId": sub_model_id, "requestBody": {"prompt": "structured event video"}},
+    )
+
+    assert created.status_code == 200
+    timeline = client.get("/api/admin/tasks/task-event-create/timeline")
+    assert timeline.status_code == 200
+    events = timeline.json()["events"]
+    task_events = [event for event in events if event["source"] == "task_event"]
+    assert [event["eventType"] for event in task_events] == ["submitted"]
+    assert task_events[0]["status"] == "processing"
+    assert task_events[0]["endpoint"] == "/api/proxy/video/create"
+    assert task_events[0]["payload"]["providerTaskId"] == "task-event-create"
+    assert task_events[0]["payload"]["conversationId"] == created.json()["conversation"]["id"]
+
+
+def test_video_query_completed_records_completed_task_event_visible_in_timeline(monkeypatch) -> None:
+    async def fake_forward_json(method, url, api_key, body=None):
+        if method == "POST":
+            return httpx.Response(200, json={"id": "task-event-complete", "status": "processing"}), {
+                "id": "task-event-complete",
+                "status": "processing",
+            }
+        return httpx.Response(
+            200,
+            json={"id": "task-event-complete", "status": "completed", "video_url": "https://cdn.example.com/event.mp4"},
+        ), {
+            "id": "task-event-complete",
+            "status": "completed",
+            "video_url": "https://cdn.example.com/event.mp4",
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "admin")
+    client.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": "admin-task-events", "email": "cage_ben@sina.com", "nickname": "Admin"},
+    )
+    sub_model_id = create_model(client, "video", "video-unified-generic", "seedance-2.0")
+    headers = csrf_headers(client)
+
+    created = client.post(
+        "/api/proxy/video/create",
+        headers=headers,
+        json={"subModelId": sub_model_id, "requestBody": {"prompt": "completed structured event video"}},
+    )
+    assert created.status_code == 200
+    conversation_id = created.json()["conversation"]["id"]
+
+    queried = client.post(
+        "/api/proxy/video/query",
+        headers=headers,
+        json={"subModelId": sub_model_id, "conversationId": conversation_id, "taskId": "task-event-complete"},
+    )
+
+    assert queried.status_code == 200
+    timeline = client.get("/api/admin/tasks/task-event-complete/timeline")
+    assert timeline.status_code == 200
+    task_events = [event for event in timeline.json()["events"] if event["source"] == "task_event"]
+    assert [event["eventType"] for event in task_events] == ["submitted", "completed"]
+    assert [event["status"] for event in task_events] == ["processing", "success"]
+    assert task_events[1]["endpoint"] == "/api/proxy/video/query"
+    assert task_events[1]["payload"]["videoUrl"] == "https://cdn.example.com/event.mp4"
+    assert task_events[1]["payload"]["status"] == "completed"
+
+
+def test_image_create_records_submitted_task_event_visible_in_timeline(monkeypatch) -> None:
+    async def fake_forward_json(method, url, api_key, body=None):
+        return httpx.Response(
+            200,
+            json={"code": "success", "data": {"task_id": "image-task-event-create", "status": "processing"}},
+        ), {
+            "code": "success",
+            "data": {"task_id": "image-task-event-create", "status": "processing"},
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "admin")
+    client.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": "admin-image-task-events", "email": "cage_ben@sina.com", "nickname": "Admin"},
+    )
+    sub_model_id = create_model(client, "image", "image-openai", "gpt-image-2")
+
+    created = client.post(
+        "/api/proxy/image",
+        headers=csrf_headers(client),
+        json={"subModelId": sub_model_id, "requestBody": {"prompt": "structured event image"}},
+    )
+
+    assert created.status_code == 200
+    timeline = client.get("/api/admin/tasks/image-task-event-create/timeline")
+    assert timeline.status_code == 200
+    task_events = [event for event in timeline.json()["events"] if event["source"] == "task_event"]
+    assert [event["eventType"] for event in task_events] == ["submitted"]
+    assert task_events[0]["status"] == "processing"
+    assert task_events[0]["endpoint"] == "/api/proxy/image"
+    assert task_events[0]["payload"]["providerTaskId"] == "image-task-event-create"
+    assert task_events[0]["payload"]["conversationId"] == created.json()["conversation"]["id"]
+
+
+def test_image_query_completed_records_completed_task_event_visible_in_timeline(monkeypatch) -> None:
+    async def fake_forward_json(method, url, api_key, body=None):
+        if method == "POST":
+            return httpx.Response(
+                200,
+                json={"code": "success", "data": {"task_id": "image-task-event-complete", "status": "processing"}},
+            ), {
+                "code": "success",
+                "data": {"task_id": "image-task-event-complete", "status": "processing"},
+            }
+        return httpx.Response(
+            200,
+            json={
+                "id": "image-task-event-complete",
+                "status": "completed",
+                "data": {"url": "https://cdn.example.com/event-image.png", "progress": "100%"},
+            },
+        ), {
+            "id": "image-task-event-complete",
+            "status": "completed",
+            "data": {"url": "https://cdn.example.com/event-image.png", "progress": "100%"},
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "admin")
+    client.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": "admin-image-task-events", "email": "cage_ben@sina.com", "nickname": "Admin"},
+    )
+    sub_model_id = create_model(client, "image", "image-openai", "gpt-image-2")
+    headers = csrf_headers(client)
+
+    created = client.post(
+        "/api/proxy/image",
+        headers=headers,
+        json={"subModelId": sub_model_id, "requestBody": {"prompt": "completed structured event image"}},
+    )
+    assert created.status_code == 200
+    conversation_id = created.json()["conversation"]["id"]
+
+    queried = client.post(
+        "/api/proxy/image/query",
+        headers=headers,
+        json={"subModelId": sub_model_id, "conversationId": conversation_id, "taskId": "image-task-event-complete"},
+    )
+
+    assert queried.status_code == 200
+    timeline = client.get("/api/admin/tasks/image-task-event-complete/timeline")
+    assert timeline.status_code == 200
+    task_events = [event for event in timeline.json()["events"] if event["source"] == "task_event"]
+    assert [event["eventType"] for event in task_events] == ["submitted", "completed"]
+    assert [event["status"] for event in task_events] == ["processing", "success"]
+    assert task_events[1]["endpoint"] == "/api/proxy/image/query"
+    assert task_events[1]["payload"]["images"][0]["src"] == "https://cdn.example.com/event-image.png"
+    assert task_events[1]["payload"]["status"] == "completed"
 
 
 def test_video_create_with_different_sub_model_does_not_reuse_existing_conversation(monkeypatch) -> None:

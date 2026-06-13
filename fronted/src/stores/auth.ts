@@ -4,6 +4,7 @@ import {
   devLogin,
   fetchCsrfToken,
   fetchCurrentUser,
+  fetchMyCredits,
   loginWithPassword,
   logout,
   registerAccount,
@@ -34,6 +35,15 @@ export function useAuthStore() {
     } finally {
       state.loading = false;
     }
+  }
+
+  async function refreshCredits() {
+    if (!state.user) return;
+    const credits = await fetchMyCredits();
+    state.user = {
+      ...state.user,
+      credits: credits.account,
+    };
   }
 
   async function registerWithPassword(payload: { email?: string; phone?: string; password: string; nickname?: string }) {
@@ -105,6 +115,7 @@ export function useAuthStore() {
   return {
     state,
     loadCurrentUser,
+    refreshCredits,
     registerWithPassword,
     login,
     loginForDevelopment,

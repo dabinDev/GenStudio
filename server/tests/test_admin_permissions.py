@@ -80,9 +80,30 @@ def test_admin_identifier_resolves_admin_without_settings_update() -> None:
     assert "model:secret:view_summary" not in permissions
     assert "record:view" in permissions
     assert "credit:adjust" in permissions
+    assert "user:export" in permissions
     assert "model:publish" in permissions
     assert can(user, "settings:update", settings) is False
     assert can(user, "record:view", settings) is True
+
+
+def test_database_role_assignment_overrides_config_identifier() -> None:
+    from app.db_models import AdminRoleAssignment
+
+    user = make_user(
+        email="viewer@example.com",
+        external_user_id="cylonai",
+        nickname="Viewer",
+    )
+    user.id = "usr_role_assigned"
+    user.admin_role_assignment = AdminRoleAssignment(user_id=user.id, role="viewer", assigned_by="owner")
+    settings = Settings(admin_emails=[], admin_identifiers=["cylonai"])
+
+    role = resolve_admin_role(user, settings)
+
+    assert role == "viewer"
+    assert can(user, "model:view", settings) is True
+    assert can(user, "model:update", settings) is False
+    assert can(user, "credit:adjust", settings) is False
 
 
 def test_permission_groups_are_complete_contract_sets() -> None:
@@ -99,6 +120,7 @@ def test_permission_groups_are_complete_contract_sets() -> None:
     }
     assert USER_CREDIT_PERMISSIONS == {
         "user:view",
+        "user:export",
         "user:update",
         "user:disable",
         "user:delete",
@@ -141,6 +163,8 @@ def test_operator_and_viewer_include_read_permissions() -> None:
     }
     assert "settings:update" not in operator_permissions
     assert "settings:update" not in viewer_permissions
+    assert "user:export" not in operator_permissions
+    assert "user:export" not in viewer_permissions
 
 
 def test_admin_permissions_me_route_returns_role_and_permissions(monkeypatch) -> None:

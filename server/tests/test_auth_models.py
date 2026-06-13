@@ -267,6 +267,39 @@ def test_login_with_local_account_establishes_session() -> None:
     assert login_client.get("/api/auth/me").json()["user"]["nickname"] == "Login User"
 
 
+def test_login_records_client_ip_from_forwarded_for() -> None:
+    client = TestClient(app)
+    registered = client.post(
+        "/api/auth/register",
+        json={"email": "ip-login@example.com", "password": "StrongPass123!", "nickname": "IP User"},
+    )
+    assert registered.status_code == 200
+
+    login_client = TestClient(app)
+    login = login_client.post(
+        "/api/auth/login",
+        headers={"X-Forwarded-For": "198.51.100.44, 10.0.0.10"},
+        json={"identifier": "ip-login@example.com", "password": "StrongPass123!"},
+    )
+
+    assert login.status_code == 200
+    with SessionLocal() as db:
+        row = db.execute(
+            text(
+                """
+                select sessions.client_ip
+                from sessions
+                join users on users.id = sessions.user_id
+                where users.email = :email
+                order by sessions.created_at desc
+                limit 1
+                """
+            ),
+            {"email": "ip-login@example.com"},
+        ).one()
+    assert row[0] == "198.51.100.44"
+
+
 def test_duplicate_local_email_registration_is_rejected() -> None:
     client = TestClient(app)
     first = client.post(
@@ -981,6 +1014,27 @@ def test_public_auth_callback_accepts_safe_next_path(monkeypatch) -> None:
 
     assert response.status_code == 307
     assert response.headers["location"] == "http://127.0.0.1:5173/#/videos"
+    assert "genstudio_session=" in response.headers["set-cookie"]
+
+
+def test_public_auth_callback_accepts_independent_admin_next_path(monkeypatch) -> None:
+    async def fake_exchange(code, settings):
+        assert code == "official-code"
+        return {
+            "external_user_id": "official-admin-next",
+            "email": "admin-next@example.com",
+            "phone": "",
+            "nickname": "Admin Next",
+            "avatar_url": "",
+        }
+
+    monkeypatch.setattr(main_module, "exchange_official_code", fake_exchange)
+    client = TestClient(app, follow_redirects=False)
+
+    response = client.get("/auth/callback?code=official-code&next=%2Fadmin%2F")
+
+    assert response.status_code == 307
+    assert response.headers["location"] == "http://127.0.0.1:5173/admin/"
     assert "genstudio_session=" in response.headers["set-cookie"]
 
 

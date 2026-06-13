@@ -66,6 +66,8 @@ CALL genstudio_add_column_if_missing('models', 'prompt_optimize_enabled', 'BOOL 
 CALL genstudio_add_column_if_missing('models', 'default_parameters_json', 'TEXT');
 CALL genstudio_add_index_if_missing('models', 'ix_models_is_public', '(is_public)');
 
+CALL genstudio_add_column_if_missing('sessions', 'client_ip', 'VARCHAR(64) NOT NULL DEFAULT ''''');
+
 UPDATE models
 SET
   public_description = COALESCE(public_description, ''),
@@ -118,6 +120,22 @@ CALL genstudio_add_index_if_missing('prompt_templates', 'ix_prompt_templates_cap
 CALL genstudio_add_index_if_missing('prompt_templates', 'ix_prompt_templates_model_group_id', '(model_group_id)');
 CALL genstudio_add_index_if_missing('prompt_templates', 'ix_prompt_templates_template_type', '(template_type)');
 CALL genstudio_add_index_if_missing('prompt_templates', 'ix_prompt_templates_updated_by', '(updated_by)');
+
+CREATE TABLE IF NOT EXISTS prompt_template_versions (
+  id VARCHAR(64) NOT NULL,
+  template_id VARCHAR(64) NOT NULL,
+  version INT NOT NULL DEFAULT 1,
+  name VARCHAR(128) NOT NULL DEFAULT '',
+  content TEXT NOT NULL,
+  enabled BOOL NOT NULL DEFAULT TRUE,
+  updated_by VARCHAR(64) NOT NULL DEFAULT '',
+  created_at DATETIME NOT NULL,
+  PRIMARY KEY (id),
+  FOREIGN KEY(template_id) REFERENCES prompt_templates (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CALL genstudio_add_index_if_missing('prompt_template_versions', 'ix_prompt_template_versions_template_id', '(template_id)');
+CALL genstudio_add_index_if_missing('prompt_template_versions', 'ix_prompt_template_versions_updated_by', '(updated_by)');
+CALL genstudio_add_index_if_missing('prompt_template_versions', 'ix_prompt_template_versions_created_at', '(created_at)');
 
 CREATE TABLE IF NOT EXISTS admin_operation_logs (
   id VARCHAR(64) NOT NULL,

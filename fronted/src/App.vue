@@ -633,6 +633,18 @@ const userAccountLabel = computed(() => {
   if (!auth.state.user) return auth.state.loading ? "登录状态读取中" : "可使用官网授权或本地账号登录";
   return auth.state.user.email || auth.state.user.phone || "已登录";
 });
+const accountAvatarLabel = computed(() =>
+  avatarInitial(auth.state.user?.nickname || auth.state.user?.email || auth.state.user?.phone, "我"),
+);
+const profileAvatarLabel = computed(() =>
+  avatarInitial(auth.state.user?.nickname || auth.state.user?.email || auth.state.user?.phone, "我"),
+);
+const accountDisplayName = computed(() =>
+  safeIdentityLabel(auth.state.user?.nickname, auth.state.user?.email || auth.state.user?.phone || "未登录"),
+);
+const profileDisplayName = computed(() =>
+  safeIdentityLabel(auth.state.user?.nickname, auth.state.user?.email || auth.state.user?.phone || "未登录用户"),
+);
 
 const themeToggleLabel = computed(() => (themeMode.value === "light" ? "夜间模式" : "白天模式"));
 const themeToggleTitle = computed(() => (themeMode.value === "light" ? "切换到夜间模式" : "切换到白天模式"));
@@ -3149,7 +3161,15 @@ function modelIconUrl(model: ModelDefinition): string {
 function avatarInitial(value: string | null | undefined, fallback: string) {
   const normalized = (value || "").trim();
   if (!normalized) return fallback;
-  return Array.from(normalized)[0]?.toUpperCase() || fallback;
+  const ascii = normalized.match(/[A-Za-z0-9]/)?.[0];
+  return ascii ? ascii.toUpperCase() : fallback;
+}
+
+function safeIdentityLabel(value: string | null | undefined, fallback: string) {
+  const normalized = (value || "").trim();
+  if (!normalized) return fallback;
+  if (/[�]/.test(normalized) || /\?{2,}/.test(normalized)) return fallback;
+  return normalized;
 }
 
 function messageModel(message: ConversationMessage): ModelDefinition | null {
@@ -3158,7 +3178,7 @@ function messageModel(message: ConversationMessage): ModelDefinition | null {
 
 function messageAuthorLabel(message: ConversationMessage): string {
   if (message.role === "user") {
-    return auth.state.user?.nickname || auth.state.user?.email || auth.state.user?.phone || "你";
+    return safeIdentityLabel(auth.state.user?.nickname, auth.state.user?.email || auth.state.user?.phone || "你");
   }
   const model = messageModel(message);
   return model ? modelDisplayName(model) : "AI";
@@ -3656,9 +3676,9 @@ async function removeUnavailableModels() {
       </div>
 
       <div class="sidebar-account">
-        <div class="account-avatar">{{ auth.state.user?.nickname?.slice(0, 1) || "S" }}</div>
+        <div class="account-avatar">{{ accountAvatarLabel }}</div>
         <div class="account-copy">
-          <strong>{{ auth.state.user?.nickname || "未登录" }}</strong>
+          <strong>{{ accountDisplayName }}</strong>
           <span>{{ userAccountLabel }}</span>
         </div>
         <button v-if="auth.state.user" class="account-recharge" @click="navigate('profile')">我的</button>
@@ -3840,7 +3860,7 @@ async function removeUnavailableModels() {
             <div class="empty-canvas-card">
               <div :class="['hero-model-mark', activeModel && modelIconUrl(activeModel) ? 'hero-model-mark-has-icon' : '']">
                 <img v-if="activeModel && modelIconUrl(activeModel)" :src="modelIconUrl(activeModel)" :alt="modelDisplayName(activeModel)" loading="lazy" @error="hideBrokenModelIcon" />
-                {{ activeCapability === "text" ? "T" : activeCapability === "image" ? "I" : "V" }}
+                <span class="hero-model-mark-label">{{ activeCapability === "text" ? "T" : activeCapability === "image" ? "I" : "V" }}</span>
               </div>
               <div class="empty-canvas-top">
                 <span class="badge badge-accent">{{ activeCapability ? CAPABILITY_LABELS[activeCapability] : "创作" }}</span>
@@ -4359,8 +4379,8 @@ async function removeUnavailableModels() {
             <p class="muted">当前账号的密钥、模型、子模型和创作历史都会按用户隔离保存。</p>
           </div>
           <div class="profile-card">
-            <div class="profile-avatar">{{ auth.state.user?.nickname?.slice(0, 1) || "G" }}</div>
-            <strong>{{ auth.state.user?.nickname || "未登录用户" }}</strong>
+            <div class="profile-avatar">{{ profileAvatarLabel }}</div>
+            <strong>{{ profileDisplayName }}</strong>
             <span>{{ userAccountLabel }}</span>
           </div>
         </section>

@@ -58,7 +58,9 @@ const theme = useAdminThemeStore();
 
 const menuItems = computed(() => visibleAdminMenuItems((permission) => auth.can(permission)));
 const activePath = computed(() => route.path);
-const displayName = computed(() => auth.user?.displayName || auth.user?.nickname || auth.user?.email || '管理员');
+const displayName = computed(() =>
+  safeIdentityLabel(auth.user?.displayName || auth.user?.nickname, auth.user?.email || '管理员'),
+);
 
 let adminAmbientAnimations: gsap.core.Animation[] = [];
 
@@ -106,6 +108,13 @@ function setupAdminAmbientAnimation() {
       );
     });
   });
+}
+
+function safeIdentityLabel(value: string | null | undefined, fallback: string) {
+  const normalized = (value || '').trim();
+  if (!normalized) return fallback;
+  if (/[�]/.test(normalized) || /\?{2,}/.test(normalized)) return fallback;
+  return normalized;
 }
 
 onMounted(() => {

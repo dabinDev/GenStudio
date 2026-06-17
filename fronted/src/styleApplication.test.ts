@@ -336,6 +336,42 @@ describe("workbench style application", () => {
     expect(styles.indexOf("#0a141f", overrideIndex)).toBeGreaterThan(overrideIndex);
   });
 
+  it("uses stable avatar and icon fallbacks instead of raw nickname slicing", () => {
+    const source = appVue();
+    const styles = stylesCss();
+    const overrideIndex = styles.indexOf("Creative Workshop stable avatar fallbacks v27");
+
+    expect(source).toContain("accountAvatarLabel");
+    expect(source).toContain("profileAvatarLabel");
+    expect(source).toContain("accountDisplayName");
+    expect(source).toContain("profileDisplayName");
+    expect(source).toContain("safeIdentityLabel");
+    expect(source).toContain("{{ accountAvatarLabel }}");
+    expect(source).toContain("{{ profileAvatarLabel }}");
+    expect(source).toContain("{{ accountDisplayName }}");
+    expect(source).toContain("{{ profileDisplayName }}");
+    expect(source).not.toContain("auth.state.user?.nickname?.slice(0, 1)");
+    expect(source).toContain("hero-model-mark-label");
+    expect(overrideIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf(".shell .model-avatar-icon-failed img", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf("display: none !important", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell .hero-model-mark-label", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell .account-avatar", overrideIndex)).toBeGreaterThan(overrideIndex);
+  });
+
+  it("uses a calmer production-grade light treatment for settings model rows", () => {
+    const styles = stylesCss();
+    const overrideIndex = styles.indexOf("Creative Workshop settings production light pass v28");
+
+    expect(overrideIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .settings-list-panel", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .settings-model-board", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .settings-model-row", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf("background: rgba(255, 255, 255, 0.92) !important", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .settings-model-row-public", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf("border-left: 3px solid #0d9488 !important", overrideIndex)).toBeGreaterThan(overrideIndex);
+  });
+
   it("does not keep the old embedded admin shell in the creative workspace", () => {
     const source = appVue();
     const styles = stylesCss();

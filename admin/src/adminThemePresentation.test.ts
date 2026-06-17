@@ -69,6 +69,9 @@ describe('admin theme presentation', () => {
 
     expect(manifest).toContain('"gsap"');
     expect(layout).toContain("import { gsap } from 'gsap'");
+    expect(layout).toContain('safeIdentityLabel');
+    expect(layout).toContain("auth.user?.email || '管理员'");
+    expect(layout).not.toContain("auth.user?.displayName || auth.user?.nickname || auth.user?.email || '管理员'");
     expect(layout).toContain('setupAdminAmbientAnimation');
     expect(layout).toContain('teardownAdminAmbientAnimation');
     expect(layout).toContain('onUnmounted(() =>');
@@ -132,6 +135,20 @@ describe('admin theme presentation', () => {
     expect(styles.indexOf('.admin-content-page__asset-strip', markerIndex)).toBeGreaterThan(markerIndex);
   });
 
+  it('uses a responsive record gallery instead of a single masonry column for image records', () => {
+    const styles = stylesCss();
+    const markerIndex = styles.indexOf('Admin records responsive image gallery v5');
+
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf('.admin-content-page__waterfall', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('display: grid', styles.indexOf('.admin-content-page__waterfall', markerIndex))).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('grid-template-columns: repeat(auto-fit, minmax(280px, 1fr))', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('column-count: initial', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('.admin-content-page__image-card', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('display: grid', styles.indexOf('.admin-content-page__image-card', markerIndex))).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('aspect-ratio: 16 / 10', markerIndex)).toBeGreaterThan(markerIndex);
+  });
+
   it('opens admin record images in a zoomable queue viewer', () => {
     const view = recordsVue();
     const viewer = imageViewerVue();
@@ -156,5 +173,21 @@ describe('admin theme presentation', () => {
     expect(styles.indexOf('position: fixed', styles.indexOf('.admin-image-viewer', markerIndex))).toBeGreaterThan(markerIndex);
     expect(styles.indexOf('.admin-image-viewer__toolbar', markerIndex)).toBeGreaterThan(markerIndex);
     expect(styles.indexOf('.admin-image-viewer__nav', markerIndex)).toBeGreaterThan(markerIndex);
+  });
+
+  it('shows a thumbnail rail inside the admin image viewer for multi-image queues', () => {
+    const viewer = imageViewerVue();
+    const styles = stylesCss();
+    const markerIndex = styles.indexOf('Admin image viewer thumbnail rail v2');
+
+    expect(viewer).toContain('admin-image-viewer__thumbs');
+    expect(viewer).toContain('admin-image-viewer__thumb');
+    expect(viewer).toContain('setActiveIndex(index)');
+    expect(viewer).toContain(':aria-current="index === activeIndex"');
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf('.admin-image-viewer__thumbs', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('position: fixed', styles.indexOf('.admin-image-viewer__thumbs', markerIndex))).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('overflow-x: auto', styles.indexOf('.admin-image-viewer__thumbs', markerIndex))).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('.admin-image-viewer__thumb[aria-current=\'true\']', markerIndex)).toBeGreaterThan(markerIndex);
   });
 });

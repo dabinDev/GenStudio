@@ -61,6 +61,21 @@
         />
       </div>
 
+      <div v-if="hasMultipleImages" class="admin-image-viewer__thumbs" aria-label="图片队列">
+        <button
+          v-for="(image, index) in images"
+          :key="image.url"
+          type="button"
+          class="admin-image-viewer__thumb"
+          :aria-current="index === activeIndex"
+          :title="`查看第 ${index + 1} 张`"
+          @click="setActiveIndex(index)"
+        >
+          <img :src="image.thumbnailUrl || image.url" :alt="`第 ${index + 1} 张图片`" />
+          <span>{{ index + 1 }}</span>
+        </button>
+      </div>
+
       <button
         v-if="hasMultipleImages"
         class="admin-image-viewer__nav admin-image-viewer__nav--next"

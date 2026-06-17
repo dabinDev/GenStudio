@@ -204,6 +204,9 @@ export interface PromptTemplate {
   id: string;
   label: string;
   prompt: string;
+  category?: string;
+  summary?: string;
+  example?: string;
 }
 
 export interface UploadedAsset {

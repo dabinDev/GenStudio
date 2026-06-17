@@ -1972,6 +1972,7 @@ function applyTemplate(state: { prompt: string }, template: PromptTemplate) {
   state.prompt = state.prompt.trim()
     ? `${state.prompt.trim()}\n\n${template.prompt}`
     : template.prompt;
+  showToast("模板已加入输入框", "success");
 }
 
 function parseJsonInput(value: string): Record<string, unknown> {
@@ -3925,15 +3926,27 @@ async function removeUnavailableModels() {
             </div>
           </div>
 
-          <div class="composer-toolbar">
-            <div class="template-row">
+          <div class="composer-toolbar composer-template-library">
+            <div class="composer-template-heading">
+              <div>
+                <span>创作模板</span>
+                <strong>选择一个场景，自动补齐提示词结构</strong>
+              </div>
+              <small>可继续编辑，不会立即发送</small>
+            </div>
+            <div class="template-row composer-template-grid">
               <button
                 v-for="template in view === 'text' ? TEXT_TEMPLATES : view === 'images' ? IMAGE_TEMPLATES : VIDEO_TEMPLATES"
                 :key="template.id"
-                class="chip-button"
+                class="chip-button composer-template-card"
                 @click="applyTemplate(view === 'text' ? textState : view === 'images' ? imageState : videoState, template)"
               >
-                {{ template.label }}
+                <span class="composer-template-card-top">
+                  <small>{{ template.category || "模板" }}</small>
+                  <strong>{{ template.label }}</strong>
+                </span>
+                <span v-if="template.summary" class="composer-template-summary">{{ template.summary }}</span>
+                <span v-if="template.example" class="composer-template-example">例如：{{ template.example }}</span>
               </button>
             </div>
           </div>
@@ -4350,7 +4363,7 @@ async function removeUnavailableModels() {
             </div>
             <div v-else class="auth-code-block auth-official-only">
               <div>
-                <strong>Official SSO</strong>
+                <strong>官网授权登录</strong>
                 <span>从官网进入创意工坊，回调地址为 /auth/callback?code=xxx。</span>
               </div>
             </div>
@@ -4363,10 +4376,10 @@ async function removeUnavailableModels() {
           <div class="auth-copy auth-value-panel">
             <div>
               <p class="eyebrow">SSO</p>
-              <h2>Authorization failed</h2>
+              <h2>授权失败</h2>
               <p class="muted">{{ authErrorMessage() }}</p>
             </div>
-            <button @click="navigate('auth')">Back to login</button>
+            <button @click="navigate('auth')">返回登录</button>
           </div>
         </section>
       </section>
@@ -4462,11 +4475,11 @@ async function removeUnavailableModels() {
         </section>
         <section v-else class="settings-list-panel profile-actions">
           <div>
-            <h3>Official SSO callback</h3>
-            <p class="muted">Production login is created by the official site redirecting to /auth/callback?code=xxx. Manual code entry is disabled outside development.</p>
+            <h3>官网授权回调</h3>
+            <p class="muted">正式环境由官网生成短期 code 跳转登录，本地调试入口仅在开发环境开放。</p>
           </div>
           <div class="settings-row-actions">
-            <button class="button-secondary" @click="refreshConversations">Refresh history</button>
+            <button class="button-secondary" @click="refreshConversations">刷新历史记录</button>
           </div>
         </section>
       </section>

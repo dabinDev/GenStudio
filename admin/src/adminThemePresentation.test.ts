@@ -6,9 +6,33 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const layoutVue = () => readFileSync(resolve(process.cwd(), 'src/layouts/AdminLayout.vue'), 'utf8');
 const imageViewerVue = () => readFileSync(resolve(process.cwd(), 'src/components/AdminImageViewer.vue'), 'utf8');
+const promptCenterVue = () => readFileSync(resolve(process.cwd(), 'src/views/PromptCenterView.vue'), 'utf8');
 const recordsVue = () => readFileSync(resolve(process.cwd(), 'src/views/RecordsView.vue'), 'utf8');
+const modelCenterVue = () => readFileSync(resolve(process.cwd(), 'src/views/ModelCenterView.vue'), 'utf8');
+const auditLogsVue = () => readFileSync(resolve(process.cwd(), 'src/views/AuditLogsView.vue'), 'utf8');
 const stylesCss = () => readFileSync(resolve(process.cwd(), 'src/styles/global.css'), 'utf8');
 const packageJson = () => readFileSync(resolve(process.cwd(), 'package.json'), 'utf8');
+
+const mojibakeFragments = [
+  '绠＄悊',
+  '妯″瀷',
+  '鍒涗綔',
+  '璁板綍',
+  '鐢ㄦ埛',
+  '鎿嶄綔',
+  '鐘舵€',
+  '锛',
+  '銆',
+  '??',
+  '�',
+];
+
+function expectNoMojibake(source: string) {
+  const visibleTemplate = source.split('</template>')[0] || source;
+  for (const fragment of mojibakeFragments) {
+    expect(visibleTemplate).not.toContain(fragment);
+  }
+}
 
 function stubLocalStorage(initial: Record<string, string> = {}) {
   const store = new Map(Object.entries(initial));
@@ -61,6 +85,19 @@ describe('admin shared theme store', () => {
 });
 
 describe('admin theme presentation', () => {
+  it('keeps high-traffic admin pages free of mojibake labels', () => {
+    const pageSources = [
+      layoutVue(),
+      modelCenterVue(),
+      recordsVue(),
+      promptCenterVue(),
+    ];
+
+    for (const source of pageSources) {
+      expectNoMojibake(source);
+    }
+  });
+
   it('renders a theme-specific GSAP ambient layer behind the admin console', () => {
     const layout = layoutVue();
     const styles = stylesCss();
@@ -119,6 +156,23 @@ describe('admin theme presentation', () => {
     expect(styles.indexOf("[data-theme='dark'] .el-form-item__label", markerIndex)).toBeGreaterThan(markerIndex);
     expect(styles.indexOf("[data-theme='dark'] .el-tabs__item", markerIndex)).toBeGreaterThan(markerIndex);
     expect(styles.indexOf('--el-table-tr-bg-color: #172033', markerIndex)).toBeGreaterThan(markerIndex);
+  });
+
+  it('keeps audit filters inside a responsive contained toolbar', () => {
+    const view = auditLogsVue();
+    const styles = stylesCss();
+    const markerIndex = styles.indexOf('Admin audit filter containment v1');
+
+    expect(view).toContain('admin-content-page__filters--audit');
+    expect(view).toContain('admin-content-page__audit-date-range');
+    expect(view).toContain('admin-content-page__audit-submit');
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf('.admin-content-page__filters--audit', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('grid-template-columns: repeat(4, minmax(0, 1fr))', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('.admin-content-page__audit-date-range', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('grid-column: span 2', styles.indexOf('.admin-content-page__audit-date-range', markerIndex))).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('min-width: 0', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('@media (max-width: 1180px)', markerIndex)).toBeGreaterThan(markerIndex);
   });
 
   it('presents multi-image creation records as horizontal galleries', () => {
@@ -189,5 +243,34 @@ describe('admin theme presentation', () => {
     expect(styles.indexOf('position: fixed', styles.indexOf('.admin-image-viewer__thumbs', markerIndex))).toBeGreaterThan(markerIndex);
     expect(styles.indexOf('overflow-x: auto', styles.indexOf('.admin-image-viewer__thumbs', markerIndex))).toBeGreaterThan(markerIndex);
     expect(styles.indexOf('.admin-image-viewer__thumb[aria-current=\'true\']', markerIndex)).toBeGreaterThan(markerIndex);
+  });
+
+  it('presents prompt templates as an admin operating workspace with examples', () => {
+    const view = promptCenterVue();
+
+    expect(view).toContain('admin-prompt-center__overview');
+    expect(view).toContain('admin-prompt-center__starter-grid');
+    expect(view).toContain('promptStarterExamples');
+    expect(view).toContain('filteredTemplates.length');
+    expect(view).toContain('openStarterExample');
+    expect(view).toContain('模板样例');
+    expect(view).toContain('模型启用');
+  });
+
+  it('renders creation records with capability-specific preview cells', () => {
+    const view = recordsVue();
+    const styles = stylesCss();
+    const markerIndex = styles.indexOf('Admin records typed preview cells v6');
+
+    expect(view).toContain('admin-content-page__record-cell');
+    expect(view).toContain('recordPreviewResponse(row)');
+    expect(view).toContain('videoAssets(row)');
+    expect(view).toContain('imageAssets(row).slice(0, 4)');
+    expect(view).toContain('admin-content-page__record-media-strip');
+    expect(view).toContain('admin-content-page__record-task');
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf('.admin-content-page__record-cell', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('.admin-content-page__record-media-strip', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('.admin-content-page__record-task', markerIndex)).toBeGreaterThan(markerIndex);
   });
 });

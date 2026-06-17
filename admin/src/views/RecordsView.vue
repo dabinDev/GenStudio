@@ -115,16 +115,50 @@
 
     <section v-else class="admin-content-page__table">
       <el-table v-loading="isLoading" :data="records" row-key="id">
-        <el-table-column label="请求" min-width="260" show-overflow-tooltip>
+        <el-table-column label="请求" min-width="320">
           <template #default="{ row }">
-            <div class="admin-content-page__title-cell">
+            <div class="admin-content-page__record-cell">
+              <span class="admin-content-page__record-kicker">提问</span>
               <strong>{{ row.prompt || '无提示词' }}</strong>
               <small>{{ row.user?.email || row.user?.nickname || '未知用户' }}</small>
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="响应" min-width="260" show-overflow-tooltip>
-          <template #default="{ row }">{{ row.response || row.errorMessage || '暂无响应' }}</template>
+        <el-table-column label="响应结果" min-width="360">
+          <template #default="{ row }">
+            <div class="admin-content-page__record-cell admin-content-page__record-result">
+              <template v-if="capability === 'image' && imageAssets(row).length">
+                <div class="admin-content-page__record-media-strip">
+                  <button
+                    v-for="(asset, index) in imageAssets(row).slice(0, 4)"
+                    :key="asset.url"
+                    type="button"
+                    @click="openImageViewer(imageAssets(row), index, row.modelName || '创作图片')"
+                  >
+                    <img :src="asset.thumbnailUrl || asset.url" alt="创作图片" />
+                  </button>
+                  <span v-if="imageAssets(row).length > 4">+{{ imageAssets(row).length - 4 }}</span>
+                </div>
+              </template>
+              <template v-else-if="capability === 'video' && videoAssets(row).length">
+                <div class="admin-content-page__record-media-strip admin-content-page__record-media-strip--video">
+                  <video
+                    v-for="asset in videoAssets(row).slice(0, 1)"
+                    :key="asset.url"
+                    :src="asset.url"
+                    :poster="asset.thumbnailUrl || undefined"
+                    controls
+                    playsinline
+                  />
+                </div>
+                <span v-if="row.taskId" class="admin-content-page__record-task">{{ row.taskId }}</span>
+              </template>
+              <template v-else>
+                <span class="admin-content-page__record-kicker">回答</span>
+                <p>{{ recordPreviewResponse(row) }}</p>
+              </template>
+            </div>
+          </template>
         </el-table-column>
         <el-table-column label="模型" width="160" show-overflow-tooltip>
           <template #default="{ row }">{{ row.modelName || '未知模型' }}</template>
@@ -143,7 +177,7 @@
         <el-table-column label="时间" width="160">
           <template #default="{ row }">{{ formatDate(row.createdAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="100" fixed="right">
+        <el-table-column label="操作" width="100">
           <template #default="{ row }">
             <el-button link type="primary" @click="openDrawer(row)">详情</el-button>
           </template>
@@ -323,6 +357,15 @@ function stringify(value: unknown) {
 
 function imageAssets(record: AdminCreationRecord) {
   return record.assets?.filter((asset) => asset.type === 'image') || [];
+}
+
+function videoAssets(record: AdminCreationRecord) {
+  return record.assets?.filter((asset) => asset.type === 'video') || [];
+}
+
+function recordPreviewResponse(record: AdminCreationRecord) {
+  const value = record.response || record.errorMessage || '暂无响应';
+  return value.length > 180 ? `${value.slice(0, 180)}...` : value;
 }
 
 function recordImageAssets(record: AdminCreationRecord | null) {

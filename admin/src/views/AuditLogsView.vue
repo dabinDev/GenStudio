@@ -38,6 +38,7 @@
       </el-select>
       <el-date-picker
         v-model="filters.dateRange"
+        class="admin-content-page__audit-date-range"
         type="datetimerange"
         range-separator="至"
         start-placeholder="开始时间"
@@ -49,7 +50,7 @@
         <el-option label="最近 200 条" :value="200" />
         <el-option label="最近 300 条" :value="300" />
       </el-select>
-      <el-button type="primary" :loading="isLoading" @click="loadLogs">查询</el-button>
+      <el-button class="admin-content-page__audit-submit" type="primary" :loading="isLoading" @click="loadLogs">查询</el-button>
     </section>
 
     <el-alert v-if="errorMessage" :title="errorMessage" type="error" show-icon :closable="false" />

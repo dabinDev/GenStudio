@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 const appVue = () => readFileSync(resolve(process.cwd(), "src/App.vue"), "utf8");
 const stylesCss = () => readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
+const catalogTs = () => readFileSync(resolve(process.cwd(), "src/catalog.ts"), "utf8");
 
 describe("workbench style application", () => {
   it("does not import chat prototype components that are not rendered by App", () => {
@@ -97,6 +98,29 @@ describe("workbench style application", () => {
     expect(styles.indexOf(".shell .ai-thinking-panel", overrideIndex)).toBeGreaterThan(overrideIndex);
   });
 
+  it("presents prompt templates as scenario cards inside the composer", () => {
+    const source = appVue();
+    const catalog = catalogTs();
+    const styles = stylesCss();
+    const markerIndex = styles.indexOf("Creative Workshop prompt template cards v19");
+
+    expect(source).toContain("composer-template-library");
+    expect(source).toContain("composer-template-card");
+    expect(source).toContain("template.summary");
+    expect(source).toContain("模板已加入输入框");
+
+    expect(catalog).toContain("category:");
+    expect(catalog).toContain("summary:");
+    expect(catalog).toContain("example:");
+
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf(".shell .composer-template-library", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf(".shell .composer-template-card", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf("grid-template-columns: repeat(auto-fit, minmax(178px, 1fr))", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .composer-template-card", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf(".shell[data-theme=\"dark\"] .composer-template-card", markerIndex)).toBeGreaterThan(markerIndex);
+  });
+
   it("uses theme-specific GSAP ambient backgrounds without the old light-mode blue grid", () => {
     const source = appVue();
     const styles = stylesCss();
@@ -174,6 +198,23 @@ describe("workbench style application", () => {
       expect(block).not.toContain("background-size: 40px 40px");
       expect(block).not.toContain("rgba(8, 20, 34");
     });
+  });
+
+  it("keeps production SSO profile copy localized for Chinese users", () => {
+    const source = appVue();
+
+    expect(source).toContain("官网授权回调");
+    expect(source).toContain("官网授权登录");
+    expect(source).toContain("授权失败");
+    expect(source).toContain("返回登录");
+    expect(source).toContain("正式环境由官网生成短期 code 跳转登录");
+    expect(source).toContain("刷新历史记录");
+    expect(source).not.toContain("Official SSO");
+    expect(source).not.toContain("Official SSO callback");
+    expect(source).not.toContain("Authorization failed");
+    expect(source).not.toContain("Back to login");
+    expect(source).not.toContain("Production login is created");
+    expect(source).not.toContain("Refresh history");
   });
 
   it("uses a dedicated soft-ink treatment for light mode settings model names", () => {

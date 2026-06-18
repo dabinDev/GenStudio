@@ -1,7 +1,26 @@
 import { chromium } from 'playwright';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+export const RECORD_TAB_NAMES = ['文案记录', '生图记录', '视频记录'];
+
+export function safeName(value) {
+  const raw = String(value);
+  const ascii = raw.replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase();
+  const digest = crypto.createHash('sha1').update(raw).digest('hex').slice(0, 10);
+  if (ascii && /[^\x00-\x7F]/.test(raw)) {
+    return `${ascii}-${digest}`;
+  }
+  if (ascii) return ascii;
+  return raw ? `u-${digest}` : 'snapshot';
+}
+
+export function hasMojibake(text) {
+  return /(?:\u951f|\ufffd|\?\?\?)/.test(text || '');
+}
+
+if (process.env.ADMIN_DEEP_SMOKE_UNIT_ONLY !== '1') {
 const FRONT = process.env.FRONT_URL || 'http://127.0.0.1:5175';
 const ADMIN = process.env.ADMIN_URL || 'http://127.0.0.1:5174/admin';
 const API = process.env.API_URL || 'http://127.0.0.1:8000';
@@ -18,16 +37,8 @@ const checks = [];
 const consoleErrors = [];
 const failedResponses = [];
 
-function safeName(value) {
-  return String(value).replace(/[^a-z0-9_-]+/gi, '-').replace(/^-|-$/g, '').toLowerCase();
-}
-
 function rootOrigin(url) {
   return new URL(url).origin;
-}
-
-function hasMojibake(text) {
-  return /(?:\u951f|\ufffd|\?\?\?)/.test(text || '');
 }
 
 async function shot(page, name) {
@@ -79,13 +90,15 @@ async function clickFirst(page, locator, name, options = {}) {
     pushCheck(name, optional, { reason: 'not-visible', skipped: optional });
     return false;
   }
+  let clickFailed = false;
   await first.click({ timeout: 8000, ...clickOptions }).catch((error) => {
+    clickFailed = true;
     pushCheck(name, false, { reason: error.message });
   });
   await page.waitForTimeout(500);
   const wasRecorded = checks.some((item) => item.name === name);
   if (!wasRecorded) pushCheck(name, true);
-  return true;
+  return !clickFailed;
 }
 
 async function fillFirst(page, locator, value, name, options = {}) {
@@ -108,6 +121,34 @@ async function fillFirst(page, locator, value, name, options = {}) {
   const wasRecorded = checks.some((item) => item.name === name);
   if (!wasRecorded) pushCheck(name, true);
   return true;
+}
+
+async function ensureImageTableMode(page) {
+  const waterfall = page.locator('.admin-content-page__waterfall');
+  const isWaterfallVisible = await waterfall.isVisible().catch(() => false);
+  if (!isWaterfallVisible) {
+    const tableVisible = await page.locator('.admin-content-page__table').isVisible().catch(() => false);
+    pushCheck('records:image-table-mode', tableVisible, { alreadyTable: true, tableVisible });
+    return tableVisible;
+  }
+
+  const switches = [
+    page.locator('.admin-content-page__toolbar-group .el-switch').filter({ hasText: /瀑布流|表格/ }).last(),
+    page.locator('.admin-content-page__toolbar-group .el-switch').last(),
+  ];
+
+  for (const switchLocator of switches) {
+    const count = await switchLocator.count().catch(() => 0);
+    if (!count || !(await switchLocator.first().isVisible().catch(() => false))) continue;
+    await switchLocator.first().click({ timeout: 8000 }).catch(() => null);
+    await page.waitForTimeout(800);
+    if (!(await waterfall.isVisible().catch(() => false))) break;
+  }
+
+  const tableVisible = await page.locator('.admin-content-page__table').isVisible().catch(() => false);
+  const stillWaterfall = await waterfall.isVisible().catch(() => false);
+  pushCheck('records:image-table-mode', tableVisible && !stillWaterfall, { tableVisible, stillWaterfall });
+  return tableVisible && !stillWaterfall;
 }
 
 async function login(context) {
@@ -212,22 +253,25 @@ async function exerciseUsers(page) {
 async function exerciseRecords(page) {
   await gotoAndCapture(page, 'records?capability=image&status=non_success', 'admin-records-linked-filter');
   await clickFirst(page, page.getByRole('button', { name: /清空链接筛选/ }), 'records:clear-linked-filter');
-  const tabNames = ['文案记录', '生图记录', '视频记录'];
-  for (const tabName of tabNames) {
+  for (const tabName of RECORD_TAB_NAMES) {
     await clickFirst(page, page.getByRole('tab', { name: tabName }), `records:tab:${tabName}`);
     await page.waitForTimeout(800);
-    await addPageResult(page, `admin-records-${safeName(tabName)}`);
+    await addPageResult(page, `admin-records-tab-${tabName}`);
   }
-  await clickFirst(page, page.getByRole('switch').first(), 'records:first-switch', { optional: true });
+  await clickFirst(page, page.getByRole('tab', { name: '生图记录' }), 'records:return-image-tab');
+  await page.waitForTimeout(800);
+  await ensureImageTableMode(page);
+  await addPageResult(page, 'admin-records-image-table-mode');
   await clickFirst(page, page.getByRole('button', { name: /详情/ }), 'records:open-detail');
   await addPageResult(page, 'admin-records-detail-drawer');
   const openedViewer = await clickFirst(
     page,
-    page.locator('.admin-content-page__record-media-strip button, .admin-content-page__asset-preview-button'),
+    page.locator('.el-drawer .admin-content-page__asset-preview-button'),
     'records:open-image-viewer',
-    { optional: true },
   );
   if (openedViewer) {
+    await page.locator('.admin-image-viewer').waitFor({ state: 'visible', timeout: 8000 });
+    pushCheck('records:image-viewer-visible', true);
     await addPageResult(page, 'admin-records-image-viewer');
     await page.keyboard.press('ArrowRight').catch(() => null);
     await page.keyboard.press('ArrowLeft').catch(() => null);
@@ -309,4 +353,5 @@ console.log(JSON.stringify(summary, null, 2));
 
 if (failedResponses.length || nonAuthConsoleErrors.length || failedChecks.length) {
   process.exitCode = 1;
+}
 }

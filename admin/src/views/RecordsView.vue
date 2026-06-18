@@ -25,6 +25,17 @@
     </el-tabs>
 
     <section class="admin-content-page__toolbar">
+      <div v-if="hasRouteFilters" class="admin-content-page__toolbar-group">
+        <span>当前来自仪表盘/链接的筛选</span>
+        <el-tag
+          v-for="chip in routeFilterChips"
+          :key="chip.key"
+          effect="plain"
+        >
+          {{ chip.label }}: {{ chip.value }}
+        </el-tag>
+        <el-button link type="primary" @click="clearLinkedFilters">清空链接筛选</el-button>
+      </div>
       <div class="admin-content-page__toolbar-group">
         <el-select
           v-model="activePresetId"
@@ -272,7 +283,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 
 import { ADMIN_PERMISSIONS } from '@/adminPermissions';
 import { fetchAdminRecordDetail, fetchTaskTimeline } from '@/api/admin';
@@ -303,15 +314,19 @@ const {
   lastLoadedCapability,
   lastLoadedQuery,
   activePresetId,
+  routeFilterChips,
+  hasRouteFilters,
   visibleFilterPresets,
   saveCurrentFilterPreset,
   applyFilterPreset,
   removeFilterPreset,
   applyRouteQueryFilters,
+  clearRouteFilters,
   loadRecords,
 } = createRecordsState();
 const auth = useAdminAuthStore();
 const route = useRoute();
+const router = useRouter();
 const drawerVisible = ref(false);
 const activeRecord = ref<AdminCreationRecord | null>(null);
 const taskTimeline = ref<AdminTaskTimelineEvent[]>([]);
@@ -435,6 +450,12 @@ async function deleteFilterPreset() {
   } catch {
     // User cancelled.
   }
+}
+
+async function clearLinkedFilters() {
+  clearRouteFilters();
+  await router.replace({ path: route.path, query: {} }).catch(() => undefined);
+  await loadRecords();
 }
 
 async function copyTaskId(taskId: string) {

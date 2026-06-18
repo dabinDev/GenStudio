@@ -528,6 +528,56 @@ describe('records state', () => {
     }));
   });
 
+  it('summarizes and clears route-sourced record filters', () => {
+    const state = createRecordsState();
+
+    state.filters.keyword = 'keep-local-draft';
+    state.applyRouteQueryFilters({
+      capability: 'image',
+      userId: 'user-1',
+      modelGroupId: 'model-1',
+      status: 'error',
+    });
+
+    expect(state.hasRouteFilters.value).toBe(true);
+    expect(state.routeFilterChips.value).toEqual([
+      { key: 'modelGroupId', label: '模型 ID', value: 'model-1' },
+      { key: 'status', label: '状态', value: recordStatusLabel('error') },
+      { key: 'userId', label: '用户 ID', value: 'user-1' },
+    ]);
+
+    state.clearRouteFilters();
+
+    expect(state.hasRouteFilters.value).toBe(false);
+    expect(state.routeFilterChips.value).toEqual([]);
+    expect(state.filters.modelGroupId).toBe('');
+    expect(state.filters.status).toBe('');
+    expect(state.filters.userId).toBe('');
+    expect(state.filters.keyword).toBe('keep-local-draft');
+    expect(state.capability.value).toBe('image');
+  });
+
+  it('does not clear a route-sourced field after the user changes that field manually', () => {
+    const state = createRecordsState();
+
+    state.applyRouteQueryFilters({
+      capability: 'image',
+      modelGroupId: 'model-from-link',
+      status: 'error',
+    });
+    state.filters.modelGroupId = 'model-from-user';
+
+    expect(state.routeFilterChips.value).toEqual([
+      { key: 'status', label: '状态', value: recordStatusLabel('error') },
+    ]);
+
+    state.clearRouteFilters();
+
+    expect(state.filters.modelGroupId).toBe('model-from-user');
+    expect(state.filters.status).toBe('');
+    expect(state.hasRouteFilters.value).toBe(false);
+  });
+
   it('exports records with the last successful load query instead of unsaved filter drafts', async () => {
     const loader = vi.fn(async () => [makeRecord('image-record', 'image')]);
     const state = createRecordsState(loader);

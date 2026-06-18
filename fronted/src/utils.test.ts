@@ -300,6 +300,15 @@ describe("model selection helpers", () => {
     ).toBe("Private");
   });
 
+  it("falls back when model descriptions are broken placeholder text", () => {
+    expect(
+      safeModelDescription(
+        { ...textModel, isPublic: false, canEdit: true, description: "??????" },
+        "选择模型并输入需求开始调试。",
+      ),
+    ).toBe("选择模型并输入需求开始调试。");
+  });
+
   it("picks only editable server models when publishing selected models", () => {
     const privateServer = { ...textModel, id: "private-server", serverManaged: true, isPublic: false, canEdit: true };
     const publicServer = { ...textModel, id: "public-server", serverManaged: true, isPublic: true, canEdit: true };

@@ -1,4 +1,4 @@
-import { reactive, ref } from 'vue';
+import { computed, reactive, ref } from 'vue';
 
 import { buildExportFilename, downloadBlob } from '@/adminExport';
 import { exportAdminRecords, fetchAdminRecords } from '@/api/admin';
@@ -19,6 +19,40 @@ export interface RecordFilterPreset {
   filters: RecordFilters;
   createdAt: string;
 }
+
+export interface RouteFilterChip {
+  key: keyof RecordFilters;
+  label: string;
+  value: string;
+}
+
+const ROUTE_FILTER_LABELS: Record<keyof RecordFilters, string> = {
+  userId: '用户 ID',
+  userSearch: '用户',
+  modelGroupId: '模型 ID',
+  keyword: '关键词',
+  status: '状态',
+  size: '尺寸',
+  ratio: '比例',
+  refCount: '参考图',
+  duration: '时长',
+  resolution: '分辨率',
+  mode: '模式',
+};
+
+const ROUTE_FILTER_CHIP_ORDER: (keyof RecordFilters)[] = [
+  'modelGroupId',
+  'status',
+  'userId',
+  'userSearch',
+  'keyword',
+  'size',
+  'ratio',
+  'refCount',
+  'duration',
+  'resolution',
+  'mode',
+];
 
 function emptyRecordFilters(): RecordFilters {
   return {
@@ -164,7 +198,17 @@ export function createRecordsState(
   const lastLoadedQuery = ref<AdminRecordQuery>({ ...emptyRecordFilters() });
   const savedFilterPresets = ref<RecordFilterPreset[]>(loadFilterPresets());
   const activePresetId = ref('');
+  const routeFilterEntries = ref<Partial<Record<keyof RecordFilters, string>>>({});
   let latestRequestId = 0;
+
+  const routeFilterChips = computed<RouteFilterChip[]>(() => ROUTE_FILTER_CHIP_ORDER
+    .filter((key) => Boolean(routeFilterEntries.value[key]) && filters[key] === routeFilterEntries.value[key])
+    .map((key) => ({
+      key,
+      label: ROUTE_FILTER_LABELS[key],
+      value: key === 'status' ? recordStatusLabel(filters[key]) : filters[key],
+    })));
+  const hasRouteFilters = computed(() => routeFilterChips.value.length > 0);
 
   async function loadRecords() {
     const requestId = latestRequestId + 1;
@@ -253,11 +297,25 @@ export function createRecordsState(
       resolution: queryValue(query.resolution),
       mode: queryValue(query.mode),
     };
+    const nextRouteFilterEntries: Partial<Record<keyof RecordFilters, string>> = {};
     for (const [key, value] of Object.entries(routeFilters)) {
       if (value) {
-        filters[key as keyof RecordFilters] = value;
+        const filterKey = key as keyof RecordFilters;
+        filters[filterKey] = value;
+        nextRouteFilterEntries[filterKey] = value;
       }
     }
+    routeFilterEntries.value = nextRouteFilterEntries;
+  }
+
+  function clearRouteFilters() {
+    for (const [key, value] of Object.entries(routeFilterEntries.value)) {
+      const filterKey = key as keyof RecordFilters;
+      if (filters[filterKey] === value) {
+        filters[filterKey] = '';
+      }
+    }
+    routeFilterEntries.value = {};
   }
 
   return {
@@ -270,11 +328,14 @@ export function createRecordsState(
     lastLoadedQuery,
     savedFilterPresets,
     activePresetId,
+    routeFilterChips,
+    hasRouteFilters,
     visibleFilterPresets,
     saveCurrentFilterPreset,
     applyFilterPreset,
     removeFilterPreset,
     applyRouteQueryFilters,
+    clearRouteFilters,
     loadRecords,
   };
 }

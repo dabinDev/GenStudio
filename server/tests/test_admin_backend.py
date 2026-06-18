@@ -841,6 +841,85 @@ def test_admin_batch_model_health_check_records_partial_results(monkeypatch: pyt
     main_module.rate_limiter.clear()
 
 
+def test_admin_batch_model_health_check_keeps_running_after_oversized_raw(monkeypatch: pytest.MonkeyPatch) -> None:
+    import httpx
+    import app.main as main_module
+    from app.auth import get_current_user, require_csrf
+    from app.database import get_db
+    from app.main import app
+
+    db = make_db()
+    admin = make_user(db, "cage_ben@sina.com", external_id="batch-health-raw-admin")
+    large_raw_model = make_model(db, admin, name="Batch Large Raw", capability="image")
+    ok_model = make_model(db, admin, name="Batch After Raw", capability="text")
+    large_raw_sub_model = SubModel(
+        model_group_id=large_raw_model.id,
+        api_key_id=large_raw_model.api_key_id,
+        model_name="gpt-image-large-raw",
+        display_name="Image Large Raw",
+        capability="image",
+        adapter="image-openai",
+        is_primary=True,
+    )
+    ok_sub_model = SubModel(
+        model_group_id=ok_model.id,
+        api_key_id=ok_model.api_key_id,
+        model_name="gpt-batch-after-raw",
+        display_name="GPT Batch After Raw",
+        capability="text",
+        adapter="openai-chat",
+        is_primary=True,
+    )
+    db.add_all([large_raw_sub_model, ok_sub_model])
+    db.flush()
+    large_raw_model.primary_sub_model_id = large_raw_sub_model.id
+    ok_model.primary_sub_model_id = ok_sub_model.id
+    db.commit()
+
+    async def fake_forward_json(method: str, url: str, api_key: str, body: dict | None = None):
+        request = httpx.Request(method, url)
+        if body and body.get("model") == "gpt-image-large-raw":
+            raw = {
+                "data": [
+                    {
+                        "url": "https://cdn.example.com/generated.png",
+                        "revised_prompt": "large prompt " * 1000,
+                    }
+                ],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
+            }
+            response = httpx.Response(200, json=raw, request=request)
+            return response, raw
+        response = httpx.Response(200, json={"id": "batch-after-raw"}, request=request)
+        return response, {"id": "batch-after-raw"}
+
+    def override_db():
+        yield db
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[get_current_user] = lambda: admin
+    app.dependency_overrides[require_csrf] = lambda: None
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/admin/models/batch-health-check",
+        json={"modelIds": [large_raw_model.id, ok_model.id]},
+    )
+
+    assert response.status_code == 200
+    by_model = {item["modelId"]: item for item in response.json()["results"]}
+    assert by_model[large_raw_model.id]["status"] == "success"
+    assert by_model[ok_model.id]["status"] == "success"
+    large_raw_row = db.query(ModelHealthCheck).filter(ModelHealthCheck.model_group_id == large_raw_model.id).one()
+    assert len(large_raw_row.raw_json.encode("utf-8")) <= 3900
+    assert "truncated" in large_raw_row.raw_json
+    assert db.query(ModelHealthCheck).filter(ModelHealthCheck.model_group_id == ok_model.id).count() == 1
+
+    app.dependency_overrides.clear()
+    main_module.rate_limiter.clear()
+
+
 def test_admin_batch_model_health_check_requires_model_test_permission(monkeypatch: pytest.MonkeyPatch) -> None:
     import app.main as main_module
     from app.auth import get_current_user, require_csrf

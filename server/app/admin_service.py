@@ -38,6 +38,27 @@ def json_dumps_safe(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, default=str)
 
 
+def bounded_json_dumps_safe(value: Any, max_bytes: int = 3800) -> str:
+    text = json_dumps_safe(value)
+    if len(text.encode("utf-8")) <= max_bytes:
+        return text
+
+    envelope = {
+        "truncated": True,
+        "maxBytes": max_bytes,
+        "originalBytes": len(text.encode("utf-8")),
+        "preview": "",
+    }
+    preview_budget = max(max_bytes - len(json_dumps_safe(envelope).encode("utf-8")) - 64, 128)
+    preview = text.encode("utf-8")[:preview_budget].decode("utf-8", errors="ignore")
+    envelope["preview"] = preview
+    bounded = json_dumps_safe(envelope)
+    while len(bounded.encode("utf-8")) > max_bytes and envelope["preview"]:
+        envelope["preview"] = envelope["preview"][:-128]
+        bounded = json_dumps_safe(envelope)
+    return bounded
+
+
 def parse_json_object(value: str, fallback: Any) -> Any:
     try:
         return json.loads(value or "")
@@ -211,7 +232,7 @@ def record_model_health_check(
         status=clean_status,
         duration_ms=max(int(duration_ms or 0), 0),
         message=clean_message,
-        raw_json=json_dumps_safe(raw or {}),
+        raw_json=bounded_json_dumps_safe(raw or {}),
     )
     db.add(item)
     db.commit()

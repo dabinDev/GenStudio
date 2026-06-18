@@ -2575,6 +2575,7 @@ async def run_admin_model_health_check_for_model(
             sub_model_id=sub_model.id,
         )
     except Exception as exc:
+        db.rollback()
         duration_ms = elapsed_ms(started_at)
         raw_error = {"error": exc.__class__.__name__}
         if str(exc):

@@ -284,6 +284,15 @@ function firstReadableDisplayText(...values: Array<string | null | undefined>): 
   return "";
 }
 
+export function conversationDisplayTitle(conversation: Pick<ConversationDefinition, "capability" | "title"> | null | undefined): string {
+  const title = firstReadableDisplayText(conversation?.title);
+  if (title) return title;
+  const capability = conversation?.capability;
+  if (capability === "text") return "文案创作历史";
+  if (capability === "video") return "视频创作历史";
+  return "图片创作历史";
+}
+
 export function modelCatalogIconUrl(model: ModelDefinition | null | undefined): string {
   if (!model) return "";
   const publicIcon = model.iconUrl?.trim();

@@ -58,6 +58,7 @@ import {
   combinePrompt,
   composerShortcutFromKeyboardEvent,
   conversationAssetFromVideoQueryResult,
+  conversationDisplayTitle,
   createLocalId,
   deleteConfirmationSummary,
   filterReferenceImageFiles,
@@ -493,7 +494,8 @@ const visibleConversations = computed(() => {
 const currentMessages = computed(() => visibleConversationMessages(conversationState.current, activeCapability.value));
 
 const currentConversationTitle = computed(() => {
-  if (conversationState.current?.title) return conversationState.current.title;
+  const title = conversationDisplayTitle(conversationState.current);
+  if (conversationState.current && title) return title;
   if (activeModel.value) return `${modelDisplayName(activeModel.value)} 的新对话`;
   return "新对话";
 });
@@ -3746,7 +3748,7 @@ async function removeUnavailableModels() {
               <span :class="['history-kind', `history-kind-${conversation.capability}`]">
                 {{ CAPABILITY_LABELS[conversation.capability] }}
               </span>
-              <strong>{{ conversation.title }}</strong>
+              <strong>{{ conversationDisplayTitle(conversation) }}</strong>
               <span class="history-meta">
                 <span>{{ formatConversationTime(conversation.updatedAt) }}</span>
                 <span>{{ conversation.status || "active" }}</span>

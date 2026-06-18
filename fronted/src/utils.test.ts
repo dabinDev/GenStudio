@@ -11,6 +11,7 @@ import {
   markConversationMessageFailed,
   catalogOptionMaxCount,
   composerShortcutFromKeyboardEvent,
+  conversationDisplayTitle,
   generatedAssetReferenceFileName,
   latestConversationForModel,
   findPromptBeforeMessage,
@@ -1607,6 +1608,13 @@ describe("conversation helpers", () => {
         setting({ modelNameOverride: "gpt-5.5" }),
       ),
     ).toBe("GPT-5.5");
+  });
+
+  it("uses readable fallback titles for broken conversation history names", () => {
+    expect(conversationDisplayTitle({ title: "????????????????????", capability: "image" })).toBe("图片创作历史");
+    expect(conversationDisplayTitle({ title: "hello ???", capability: "text" })).toBe("hello");
+    expect(conversationDisplayTitle({ title: "真实标题", capability: "video" })).toBe("真实标题");
+    expect(conversationDisplayTitle({ title: "", capability: "video" })).toBe("视频创作历史");
   });
 
   it("formats test results without empty status or duration placeholders", () => {

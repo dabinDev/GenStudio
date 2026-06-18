@@ -22,6 +22,7 @@ import {
   batchHealthSummary,
   createModelCenterState,
   createModelHealthState,
+  displayModelDescription,
   nextActiveModelAfterRemoval,
   parseDefaultParameters,
   selectedIdsAfterRemoval,
@@ -348,6 +349,13 @@ describe('model center state', () => {
   it('validates default parameter JSON before saving', () => {
     expect(() => parseDefaultParameters('{bad json}')).toThrow('默认参数必须是合法的 JSON 对象');
     expect(serializePublicTags([' 图像 ', '', '创作'])).toBe('图像, 创作');
+  });
+
+  it('hides broken placeholder descriptions in model detail panels', () => {
+    expect(displayModelDescription(makeModel({ description: '??????' }))).toBe('暂无说明');
+    expect(displayModelDescription(makeModel({ description: '????????????????Agent????????????????' }))).toBe('暂无说明');
+    expect(displayModelDescription(makeModel({ description: '高质量图片生成模型' }))).toBe('高质量图片生成模型');
+    expect(displayModelDescription(makeModel({ description: '' }))).toBe('暂无说明');
   });
 
   it('ignores stale health responses when active model changes', async () => {

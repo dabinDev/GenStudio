@@ -48,6 +48,21 @@ export function publicStateLabel(model: Pick<AdminModel, 'isPublic'>): string {
   return model.isPublic ? '已公用' : '未公用';
 }
 
+export function isBrokenDisplayText(value: string): boolean {
+  const text = value.trim();
+  if (!text) return true;
+  const compact = text.replace(/\s+/g, '');
+  if (/[�锟]/.test(compact)) return true;
+  const questionMarks = compact.match(/\?/g)?.length || 0;
+  if (questionMarks >= 2 && questionMarks / Math.max(compact.length, 1) > 0.18) return true;
+  return /\?{2,}$/.test(compact);
+}
+
+export function displayModelDescription(model: Pick<AdminModel, 'description'>): string {
+  const value = (model.description || '').trim();
+  return value && !isBrokenDisplayText(value) ? value : '暂无说明';
+}
+
 export function serializePublicTags(tags: string[] = []): string {
   return tags.map((tag) => tag.trim()).filter(Boolean).join(', ');
 }

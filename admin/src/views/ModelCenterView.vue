@@ -180,7 +180,7 @@
           </div>
           <div>
             <span>说明</span>
-            <strong>{{ activeModel.description || '暂无说明' }}</strong>
+            <strong>{{ displayModelDescription(activeModel) }}</strong>
           </div>
         </section>
 
@@ -317,6 +317,7 @@ import {
   createEditForm,
   createModelHealthState,
   createModelCenterState,
+  displayModelDescription,
   MODEL_CENTER_TITLE,
   nextActiveModelAfterRemoval,
   publicStateLabel,

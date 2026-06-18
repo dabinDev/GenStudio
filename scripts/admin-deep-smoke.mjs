@@ -20,6 +20,12 @@ export function hasMojibake(text) {
   return /(?:\u951f|\ufffd|\?\?\?)/.test(text || '');
 }
 
+export function adminRouteUrl(adminBase, route) {
+  const base = String(adminBase || '').replace(/\/+$/, '');
+  const nextRoute = String(route || '').replace(/^\/+/, '');
+  return `${base}/${nextRoute}`;
+}
+
 if (process.env.ADMIN_DEEP_SMOKE_UNIT_ONLY !== '1') {
 const FRONT = process.env.FRONT_URL || 'http://127.0.0.1:5175';
 const ADMIN = process.env.ADMIN_URL || 'http://127.0.0.1:5174/admin';
@@ -70,7 +76,7 @@ async function addPageResult(page, name, extra = {}) {
 }
 
 async function gotoAndCapture(page, route, name) {
-  const url = route.startsWith('http') ? route : `${ADMIN}/${route.replace(/^\/+/, '')}`;
+  const url = route.startsWith('http') ? route : adminRouteUrl(ADMIN, route);
   await page.goto(url, { waitUntil: 'networkidle', timeout: 60000 }).catch(async () => {
     await page.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => null);
   });

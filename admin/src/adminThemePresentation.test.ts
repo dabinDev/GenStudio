@@ -245,6 +245,37 @@ describe('admin theme presentation', () => {
     expect(styles.indexOf('.admin-image-viewer__thumb[aria-current=\'true\']', markerIndex)).toBeGreaterThan(markerIndex);
   });
 
+  it('presents the admin image viewer as a full-screen command surface', () => {
+    const viewer = imageViewerVue();
+    const styles = stylesCss();
+    const markerIndex = styles.indexOf('Admin image viewer command surface v3');
+
+    expect(viewer).toContain('admin-image-viewer__action-label');
+    expect(viewer).toContain('admin-image-viewer__shortcut');
+    expect(viewer).toContain('滚轮缩放');
+    expect(viewer).toContain('拖动查看细节');
+    expect(viewer).toContain('← / → 切换图片');
+
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf('.admin-image-viewer__shortcut', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('.admin-image-viewer__actions button', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('min-width: 76px', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('backdrop-filter: blur(24px)', markerIndex)).toBeGreaterThan(markerIndex);
+  });
+
+  it('adds a refined admin shell polish layer for light and dark mode', () => {
+    const styles = stylesCss();
+    const markerIndex = styles.indexOf('Admin console product polish v4');
+
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf('.admin-sidebar', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('.admin-topbar', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('.admin-dashboard__header', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('[data-theme=\'dark\'] .admin-sidebar', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('linear-gradient(180deg', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('box-shadow: 0 24px 70px', markerIndex)).toBeGreaterThan(markerIndex);
+  });
+
   it('presents prompt templates as an admin operating workspace with examples', () => {
     const view = promptCenterVue();
 

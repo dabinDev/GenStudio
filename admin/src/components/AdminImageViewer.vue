@@ -15,20 +15,34 @@
         </div>
         <div class="admin-image-viewer__actions">
           <button type="button" :disabled="!hasMultipleImages" title="上一张" @click="showPreviousImage">
-            ←
+            <span aria-hidden="true">←</span>
+            <span class="admin-image-viewer__action-label">上一张</span>
           </button>
           <button type="button" :disabled="!hasMultipleImages" title="下一张" @click="showNextImage">
-            →
+            <span aria-hidden="true">→</span>
+            <span class="admin-image-viewer__action-label">下一张</span>
           </button>
-          <button type="button" title="缩小" @click="zoomImage(-0.18)">-</button>
-          <button type="button" title="放大" @click="zoomImage(0.18)">+</button>
-          <button type="button" title="重置" @click="resetTransform">1:1</button>
+          <button type="button" title="缩小" @click="zoomImage(-0.18)">
+            <span aria-hidden="true">-</span>
+            <span class="admin-image-viewer__action-label">缩小</span>
+          </button>
+          <button type="button" title="放大" @click="zoomImage(0.18)">
+            <span aria-hidden="true">+</span>
+            <span class="admin-image-viewer__action-label">放大</span>
+          </button>
+          <button type="button" title="重置" @click="resetTransform">
+            <span aria-hidden="true">1:1</span>
+            <span class="admin-image-viewer__action-label">重置</span>
+          </button>
           <a :href="activeImage.url" :download="downloadFileName" title="保存图片" @click.stop>
-            保存
+            <span class="admin-image-viewer__action-label">保存</span>
           </a>
-          <a :href="activeImage.url" target="_blank" rel="noreferrer" title="打开原图" @click.stop>原图</a>
+          <a :href="activeImage.url" target="_blank" rel="noreferrer" title="打开原图" @click.stop>
+            <span class="admin-image-viewer__action-label">原图</span>
+          </a>
           <button class="admin-image-viewer__close" type="button" title="关闭" @click="closeViewer">
-            ×
+            <span aria-hidden="true">×</span>
+            <span class="admin-image-viewer__action-label">关闭</span>
           </button>
         </div>
       </div>
@@ -59,6 +73,13 @@
           :style="{ transform: viewerTransform }"
           draggable="false"
         />
+      </div>
+
+      <div class="admin-image-viewer__shortcut" aria-hidden="true">
+        <span>滚轮缩放</span>
+        <span>拖动查看细节</span>
+        <span>← / → 切换图片</span>
+        <span>Esc 关闭</span>
       </div>
 
       <div v-if="hasMultipleImages" class="admin-image-viewer__thumbs" aria-label="图片队列">

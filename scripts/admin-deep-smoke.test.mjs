@@ -26,3 +26,18 @@ test('mojibake detector catches broken placeholder labels', () => {
   assert.equal(smoke.hasMojibake('�'), true);
   assert.equal(smoke.hasMojibake('正常中文'), false);
 });
+
+test('admin route URLs are joined without double slash blank pages', () => {
+  assert.equal(
+    smoke.adminRouteUrl('https://studio.cylonai.cn/admin/', 'dashboard'),
+    'https://studio.cylonai.cn/admin/dashboard',
+  );
+  assert.equal(
+    smoke.adminRouteUrl('https://studio.cylonai.cn/admin', 'records?capability=image'),
+    'https://studio.cylonai.cn/admin/records?capability=image',
+  );
+  assert.equal(
+    smoke.adminRouteUrl('https://studio.cylonai.cn/admin/', '/settings'),
+    'https://studio.cylonai.cn/admin/settings',
+  );
+});

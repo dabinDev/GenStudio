@@ -79,7 +79,10 @@ async function gotoAndCapture(page, route, name) {
 }
 
 async function clickFirst(page, locator, name, options = {}) {
-  const { optional = false, ...clickOptions } = options;
+  const { optional = false, waitForIdle = true, ...clickOptions } = options;
+  if (waitForIdle) {
+    await waitForPageIdle(page, `${name}:idle-before-click`);
+  }
   const count = await locator.count().catch(() => 0);
   if (!count) {
     pushCheck(name, optional, { reason: 'not-found', skipped: optional });
@@ -99,6 +102,21 @@ async function clickFirst(page, locator, name, options = {}) {
   const wasRecorded = checks.some((item) => item.name === name);
   if (!wasRecorded) pushCheck(name, true);
   return !clickFailed;
+}
+
+async function waitForPageIdle(page, name = 'page:idle') {
+  await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => null);
+  await page
+    .locator('.el-loading-mask')
+    .first()
+    .waitFor({ state: 'hidden', timeout: 15000 })
+    .catch(() => null);
+  await page.waitForTimeout(200);
+  const visibleLoadingMasks = await page.locator('.el-loading-mask:visible').count().catch(() => 0);
+  if (visibleLoadingMasks === 0) {
+    pushCheck(name, true, { visibleLoadingMasks });
+  }
+  return visibleLoadingMasks === 0;
 }
 
 async function fillFirst(page, locator, value, name, options = {}) {
@@ -261,6 +279,7 @@ async function exerciseRecords(page) {
   await clickFirst(page, page.getByRole('tab', { name: '生图记录' }), 'records:return-image-tab');
   await page.waitForTimeout(800);
   await ensureImageTableMode(page);
+  await waitForPageIdle(page, 'records:idle-after-image-table-mode');
   await addPageResult(page, 'admin-records-image-table-mode');
   await clickFirst(page, page.getByRole('button', { name: /详情/ }), 'records:open-detail');
   await addPageResult(page, 'admin-records-detail-drawer');

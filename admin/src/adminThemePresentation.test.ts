@@ -436,4 +436,36 @@ describe('admin theme presentation', () => {
     expect(styles.indexOf('grid-template-columns: minmax(280px, 1.05fr) minmax(320px, 1.2fr) minmax(180px, 0.58fr) 84px', markerIndex)).toBeGreaterThan(markerIndex);
     expect(styles.indexOf('min-height: 112px', markerIndex)).toBeGreaterThan(markerIndex);
   });
+
+  it('turns model rows into operational asset cards with clear status chips', () => {
+    const modelCenter = modelCenterVue();
+    const styles = stylesCss();
+    const markerIndex = styles.indexOf('Admin model operational asset cards v12');
+
+    expect(modelCenter).toContain('admin-model-center__asset-shell');
+    expect(modelCenter).toContain('admin-model-center__empty-asset');
+    expect(modelCenter).toContain('admin-model-center__visibility-chip');
+    expect(modelCenter).toContain('admin-model-center__asset-meta');
+    expect(modelCenter).toContain('admin-model-center__action-stack');
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf('.admin-model-center__asset-shell', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('.admin-model-center__empty-asset', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('grid-template-columns: minmax(260px, 1.1fr) repeat(3, minmax(120px, 0.42fr)) minmax(116px, 0.38fr)', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('.admin-model-center__visibility-chip', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('.admin-model-center__action-stack', markerIndex)).toBeGreaterThan(markerIndex);
+  });
+
+  it('gives prompt templates a guided operations roadmap instead of a plain empty block', () => {
+    const promptCenter = promptCenterVue();
+    const styles = stylesCss();
+    const markerIndex = styles.indexOf('Admin prompt operations roadmap v12');
+
+    expect(promptCenter).toContain('admin-prompt-center__roadmap');
+    expect(promptCenter).toContain('admin-prompt-center__roadmap-step');
+    expect(promptCenter).toContain('admin-prompt-center__starter-signal');
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf('.admin-prompt-center__roadmap', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('grid-template-columns: repeat(3, minmax(0, 1fr))', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('.admin-prompt-center__starter-signal', markerIndex)).toBeGreaterThan(markerIndex);
+  });
 });

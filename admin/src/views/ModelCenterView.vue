@@ -103,75 +103,91 @@
         @selection-change="handleSelectionChange"
       >
         <el-table-column type="selection" width="44" reserve-selection />
-        <el-table-column label="模型" min-width="240">
+        <el-table-column label="模型资产" min-width="920">
           <template #default="{ row }">
-            <div class="admin-model-center__identity admin-model-center__asset-card">
-              <div class="admin-model-center__model-mark">
-                {{ capabilityLabel(row.capability).slice(0, 1) }}
-              </div>
-              <div class="admin-model-center__model-name">
-                <strong>{{ row.publicDisplayName || row.name }}</strong>
-                <small>{{ row.name }} · {{ row.primaryModelName }}</small>
-                <div class="admin-model-center__source-badges">
-                  <span>{{ capabilityLabel(row.capability) }}</span>
-                  <span>{{ row.adapter }}</span>
-                  <span>{{ row.isPublic ? '公用模型' : '私有模型' }}</span>
+            <div class="admin-model-center__asset-shell">
+              <div class="admin-model-center__identity admin-model-center__asset-card">
+                <div class="admin-model-center__model-mark">
+                  {{ capabilityLabel(row.capability).slice(0, 1) }}
+                </div>
+                <div class="admin-model-center__model-name">
+                  <strong>{{ row.publicDisplayName || row.name }}</strong>
+                  <small>{{ row.name }} · {{ row.primaryModelName }}</small>
+                  <div class="admin-model-center__source-badges">
+                    <span>{{ capabilityLabel(row.capability) }}</span>
+                    <span>{{ row.adapter }}</span>
+                    <span>{{ row.vendor || '自定义厂商' }}</span>
+                  </div>
                 </div>
               </div>
+              <div class="admin-model-center__asset-meta">
+                <span>可见性</span>
+                <strong class="admin-model-center__visibility-chip" :data-public="row.isPublic ? 'true' : 'false'">
+                  {{ publicStateLabel(row) }}
+                </strong>
+              </div>
+              <div class="admin-model-center__asset-meta">
+                <span>能力类型</span>
+                <strong>{{ capabilityLabel(row.capability) }}</strong>
+              </div>
+              <div class="admin-model-center__asset-meta admin-model-center__price-pill">
+                <span>积分价格</span>
+                <strong>{{ row.creditPrice }}</strong>
+                <small>{{ priceSourceLabel(row.creditPriceSource) }}</small>
+              </div>
+              <div class="admin-model-center__action-stack">
+                <el-button type="primary" plain @click="openDrawer(row)">详情</el-button>
+                <el-dropdown
+                  v-if="hasModelRowActions(row)"
+                  trigger="click"
+                  @command="(command: string) => handleRowCommand(command, row)"
+                >
+                  <el-button>操作</el-button>
+                  <template #dropdown>
+                    <el-dropdown-menu>
+                      <el-dropdown-item
+                        v-if="auth.can(ADMIN_PERMISSIONS.modelPublish)"
+                        command="publish"
+                        :disabled="!canPublishRow(row)"
+                      >
+                        公用
+                      </el-dropdown-item>
+                      <el-dropdown-item
+                        v-if="auth.can(ADMIN_PERMISSIONS.modelUnpublish)"
+                        command="unpublish"
+                        :disabled="!canUnpublishRow(row)"
+                      >
+                        取消公用
+                      </el-dropdown-item>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
+              </div>
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="类型" width="96">
-          <template #default="{ row }">{{ capabilityLabel(row.capability) }}</template>
-        </el-table-column>
-        <el-table-column label="厂商" prop="vendor" min-width="120" />
-        <el-table-column label="公用状态" width="110">
-          <template #default="{ row }">
-            <el-tag :type="row.isPublic ? 'success' : 'info'" effect="plain">
-              {{ publicStateLabel(row) }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="积分价格" width="120">
-          <template #default="{ row }">
-            <div class="admin-model-center__price-pill">
-              <span>{{ row.creditPrice }}</span>
-              <small class="admin-model-center__muted">{{ priceSourceLabel(row.creditPriceSource) }}</small>
+        <template #empty>
+          <div class="admin-model-center__empty-asset">
+            <span>模型资产</span>
+            <strong>还没有匹配的模型</strong>
+            <p>可以调整筛选条件，或回到前台设置页添加模型；同步后这里会展示公用状态、积分价格和测试入口。</p>
+            <div>
+              <article>
+                <b>01</b>
+                <small>添加密钥与 baseURL</small>
+              </article>
+              <article>
+                <b>02</b>
+                <small>选择主模型并测试</small>
+              </article>
+              <article>
+                <b>03</b>
+                <small>设为公用并配置积分</small>
+              </article>
             </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="172" fixed="right">
-          <template #default="{ row }">
-            <div class="admin-model-center__row-actions">
-              <el-button link type="primary" @click="openDrawer(row)">详情</el-button>
-              <el-dropdown
-                v-if="hasModelRowActions(row)"
-                trigger="click"
-                @command="(command: string) => handleRowCommand(command, row)"
-              >
-                <el-button link type="primary">操作</el-button>
-                <template #dropdown>
-                  <el-dropdown-menu>
-                    <el-dropdown-item
-                      v-if="auth.can(ADMIN_PERMISSIONS.modelPublish)"
-                      command="publish"
-                      :disabled="!canPublishRow(row)"
-                    >
-                      公用
-                    </el-dropdown-item>
-                    <el-dropdown-item
-                      v-if="auth.can(ADMIN_PERMISSIONS.modelUnpublish)"
-                      command="unpublish"
-                      :disabled="!canUnpublishRow(row)"
-                    >
-                      取消公用
-                    </el-dropdown-item>
-                  </el-dropdown-menu>
-                </template>
-              </el-dropdown>
-            </div>
-          </template>
-        </el-table-column>
+            <el-button type="primary" plain :loading="isLoading" @click="loadModels">重新加载</el-button>
+          </div>
+        </template>
       </el-table>
     </section>
 

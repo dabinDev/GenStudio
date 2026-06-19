@@ -52,7 +52,28 @@
           <h3>模板样例</h3>
           <p>先用样例理解模板结构，再进入真实模板调整启用状态、内容和模型覆盖。</p>
         </div>
-        <el-tag effect="plain">仅预览，不会保存</el-tag>
+        <div class="admin-prompt-center__starter-signal">
+          <span>运营校验</span>
+          <strong>3 步闭环</strong>
+          <small>预览 · 测试 · 覆盖</small>
+        </div>
+      </div>
+      <div class="admin-prompt-center__roadmap">
+        <article class="admin-prompt-center__roadmap-step">
+          <span>01</span>
+          <strong>选择创作类型</strong>
+          <small>文案、图片、视频使用不同补全策略，先确认模板所属场景。</small>
+        </article>
+        <article class="admin-prompt-center__roadmap-step">
+          <span>02</span>
+          <strong>多样例渲染</strong>
+          <small>用短提示词、参考图提示词和分镜提示词各测一次。</small>
+        </article>
+        <article class="admin-prompt-center__roadmap-step">
+          <span>03</span>
+          <strong>模型级覆盖</strong>
+          <small>检查默认模板和专属模板，避免某个模型仍使用旧提示语。</small>
+        </article>
       </div>
       <div class="admin-prompt-center__starter-grid">
         <button

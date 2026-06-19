@@ -141,12 +141,18 @@ export function buildHealthCoverageSummary(models, batchResults) {
 }
 
 export function shouldFailCoverage(summary) {
+  const options = arguments[1] || {};
+  const requireSuccess = options.requireSuccess !== false;
   return (
     summary.totalModels === 0 ||
     summary.totalModels !== summary.testedModels ||
-    (summary.failures?.length || 0) > 0 ||
+    (requireSuccess && (summary.failures?.length || 0) > 0) ||
     (summary.integrityErrors?.length || 0) > 0
   );
+}
+
+export function shouldRequireModelHealthSuccess(env = process.env) {
+  return env.MODEL_HEALTH_REQUIRE_SUCCESS !== '0';
 }
 
 export function createOutputDir(now = new Date()) {
@@ -239,7 +245,7 @@ if (process.env.MODEL_HEALTH_COVERAGE_UNIT_ONLY !== '1') {
   summary.outDir = createOutputDir();
   writeSummaryArtifact(summary, summary.outDir);
   console.log(JSON.stringify(summary, null, 2));
-  if (shouldFailCoverage(summary)) {
+  if (shouldFailCoverage(summary, { requireSuccess: shouldRequireModelHealthSuccess() })) {
     process.exitCode = 1;
   }
 }

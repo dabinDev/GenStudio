@@ -31,6 +31,21 @@ describe('admin theme sync smoke helpers', () => {
     );
   });
 
+  it('adds a theme bridge query for local split-origin admin testing', () => {
+    assert.equal(
+      smoke.adminThemeUrl('http://127.0.0.1:5174/admin/', 'dark'),
+      'http://127.0.0.1:5174/admin/?theme=dark',
+    );
+    assert.equal(
+      smoke.adminThemeUrl('https://studio.cylonai.cn/admin/', 'light'),
+      'https://studio.cylonai.cn/admin/?theme=light',
+    );
+    assert.equal(
+      smoke.adminThemeUrl('https://studio.cylonai.cn/admin/?foo=bar', 'dark'),
+      'https://studio.cylonai.cn/admin/?foo=bar&theme=dark',
+    );
+  });
+
   it('summarizes failed theme checks and browser errors', () => {
     const summary = smoke.summarizeThemeSmoke({
       checks: [{ ok: true }, { ok: false }],

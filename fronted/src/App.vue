@@ -930,7 +930,7 @@ function handleHashChange() {
 
 function openAdminConsole() {
   if (!requireLoginForAction()) return;
-  window.location.href = resolveAdminConsoleHref(window.location.origin);
+  window.location.href = resolveAdminConsoleHref(window.location.origin, themeMode.value);
 }
 
 function navigate(nextView: ViewName) {

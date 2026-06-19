@@ -264,6 +264,12 @@ describe("model selection helpers", () => {
     expect(resolveAdminConsoleHref("https://studio.cylonai.cn")).toBe("/admin/");
   });
 
+  it("carries the current workspace theme into the independent admin app", () => {
+    expect(resolveAdminConsoleHref("http://127.0.0.1:5175", "dark")).toBe("http://127.0.0.1:5174/admin/?theme=dark");
+    expect(resolveAdminConsoleHref("https://studio.cylonai.cn", "light")).toBe("/admin/?theme=light");
+    expect(resolveAdminConsoleHref("https://studio.cylonai.cn", "system")).toBe("/admin/");
+  });
+
   it("does not expose upstream endpoints in model list summaries", () => {
     expect(
       modelConnectionLabel(
@@ -1613,6 +1619,8 @@ describe("conversation helpers", () => {
   it("uses readable fallback titles for broken conversation history names", () => {
     expect(conversationDisplayTitle({ title: "????????????????????", capability: "image" })).toBe("图片创作历史");
     expect(conversationDisplayTitle({ title: "hello ???", capability: "text" })).toBe("hello");
+    expect(conversationDisplayTitle({ title: "?? SU7", capability: "video" })).toBe("SU7");
+    expect(conversationDisplayTitle({ title: "4 ?", capability: "image" })).toBe("图片创作历史");
     expect(conversationDisplayTitle({ title: "真实标题", capability: "video" })).toBe("真实标题");
     expect(conversationDisplayTitle({ title: "", capability: "video" })).toBe("视频创作历史");
   });

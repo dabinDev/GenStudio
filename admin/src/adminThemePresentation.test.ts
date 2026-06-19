@@ -72,6 +72,14 @@ describe('admin shared theme store', () => {
     expect(theme.theme).toBe('dark');
   });
 
+  it('prefers the admin theme URL parameter for cross-origin local entry', async () => {
+    stubLocalStorage({ 'genstudio-theme': 'light', 'genstudio-admin-theme': 'light' });
+    const { readAdminThemeQuery } = await import('./stores/theme');
+
+    expect(readAdminThemeQuery('?theme=dark')).toBe('dark');
+    expect(readAdminThemeQuery('?theme=system')).toBeNull();
+  });
+
   it('persists admin theme changes to the shared and legacy keys', async () => {
     const storage = stubLocalStorage({ 'genstudio-theme': 'light' });
     const { useAdminThemeStore } = await import('./stores/theme');
@@ -303,5 +311,21 @@ describe('admin theme presentation', () => {
     expect(styles.indexOf('.admin-content-page__record-cell', markerIndex)).toBeGreaterThan(markerIndex);
     expect(styles.indexOf('.admin-content-page__record-media-strip', markerIndex)).toBeGreaterThan(markerIndex);
     expect(styles.indexOf('.admin-content-page__record-task', markerIndex)).toBeGreaterThan(markerIndex);
+  });
+
+  it('keeps record filters focused with a collapsible advanced section', () => {
+    const view = recordsVue();
+    const styles = stylesCss();
+    const markerIndex = styles.indexOf('Admin records focused filters v7');
+
+    expect(view).toContain('showAdvancedFilters');
+    expect(view).toContain('admin-content-page__quick-filters');
+    expect(view).toContain('admin-content-page__advanced-filters');
+    expect(view).toContain('基础筛选');
+    expect(view).toContain('高级筛选');
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf('.admin-content-page__quick-filters', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('.admin-content-page__advanced-filters', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('grid-template-columns: repeat(auto-fit', markerIndex)).toBeGreaterThan(markerIndex);
   });
 });

@@ -26,6 +26,88 @@ export function adminRouteUrl(adminBase, route) {
   return `${base}/${nextRoute}`;
 }
 
+const REQUIRED_IMAGE_VIEWER_CHECKS = [
+  'records:image-tab-selected',
+  'records:image-table-mode',
+  'records:image-record-media-visible',
+  'records:image-viewer-visible',
+  'records:image-viewer-actions-visible',
+];
+
+export function hasRequiredImageViewerChecks(checks) {
+  if (!Array.isArray(checks)) return false;
+  return REQUIRED_IMAGE_VIEWER_CHECKS.every((name) => checks.some((check) => check?.name === name && check.ok === true));
+}
+
+export function requiresImageViewerCoverage(summaryOrChecks) {
+  const checks = Array.isArray(summaryOrChecks) ? summaryOrChecks : summaryOrChecks?.checks;
+  return hasRequiredImageViewerChecks(checks);
+}
+
+export function buildAdminDeepSmokeSummary({
+  front,
+  admin,
+  api,
+  outDir,
+  results,
+  checks,
+  failedResponses,
+  consoleErrors,
+  nonAuthConsoleErrors,
+}) {
+  const nextChecks = Array.isArray(checks) ? [...checks] : [];
+  const summary = {
+    front,
+    admin,
+    api,
+    outDir,
+    results,
+    checks: nextChecks,
+    failedChecks: [],
+    failedResponses,
+    consoleErrors,
+    nonAuthConsoleErrors,
+  };
+
+  if (!requiresImageViewerCoverage(summary)) {
+    summary.checks.push({
+      name: 'records:image-viewer-coverage-required',
+      ok: false,
+      required: REQUIRED_IMAGE_VIEWER_CHECKS,
+    });
+  }
+
+  summary.failedChecks = summary.checks.filter((item) => !item.ok);
+  return summary;
+}
+
+export function buildImageViewerActionChecks(viewer) {
+  return [
+    { label: '上一张', locator: viewer.getByRole('button', { name: /上一张/ }) },
+    { label: '下一张', locator: viewer.getByRole('button', { name: /下一张/ }) },
+    { label: '缩小', locator: viewer.getByRole('button', { name: /缩小/ }) },
+    { label: '放大', locator: viewer.getByRole('button', { name: /放大/ }) },
+    { label: '重置', locator: viewer.getByRole('button', { name: /重置/ }) },
+    { label: '保存', locator: viewer.getByRole('link', { name: /保存/ }) },
+    { label: '原图', locator: viewer.getByRole('link', { name: /原图/ }) },
+    { label: '关闭', locator: viewer.getByRole('button', { name: /关闭/ }) },
+  ];
+}
+
+export async function collectViewerActionVisibility(viewerActionChecks) {
+  const results = [];
+  for (const action of viewerActionChecks) {
+    results.push({
+      label: action.label,
+      visible: await action.locator.first().isVisible().catch(() => false),
+    });
+  }
+  return {
+    ok: results.every((item) => item.visible),
+    results,
+  };
+}
+
 if (process.env.ADMIN_DEEP_SMOKE_UNIT_ONLY !== '1') {
 const FRONT = process.env.FRONT_URL || 'http://127.0.0.1:5175';
 const ADMIN = process.env.ADMIN_URL || 'http://127.0.0.1:5174/admin';
@@ -175,6 +257,15 @@ async function ensureImageTableMode(page) {
   return tableVisible && !stillWaterfall;
 }
 
+async function verifyImageViewerActions(page) {
+  const viewer = page.locator('.admin-image-viewer');
+  return collectViewerActionVisibility(buildImageViewerActionChecks(viewer));
+}
+
+function summarizeViewerActionChecks(actionSummary) {
+  return actionSummary.results.map((item) => `${item.label}:${item.visible ? 'visible' : 'missing'}`).join(', ');
+}
+
 async function login(context) {
   const frontOrigin = rootOrigin(FRONT);
   const apiOrigin = rootOrigin(API);
@@ -284,24 +375,72 @@ async function exerciseRecords(page) {
   }
   await clickFirst(page, page.getByRole('tab', { name: '生图记录' }), 'records:return-image-tab');
   await page.waitForTimeout(800);
+  pushCheck(
+    'records:image-tab-selected',
+    await page.getByRole('tab', { name: RECORD_TAB_NAMES[1], selected: true }).isVisible().catch(() => false),
+  );
   await ensureImageTableMode(page);
   await waitForPageIdle(page, 'records:idle-after-image-table-mode');
   await addPageResult(page, 'admin-records-image-table-mode');
-  await clickFirst(page, page.getByRole('button', { name: /详情/ }), 'records:open-detail');
-  await addPageResult(page, 'admin-records-detail-drawer');
-  const openedViewer = await clickFirst(
-    page,
-    page.locator('.el-drawer .admin-content-page__asset-preview-button'),
-    'records:open-image-viewer',
+  await clickFirst(page, page.getByRole('button', { name: /高级筛选/ }), 'records:toggle-advanced-filters');
+  pushCheck(
+    'records:advanced-filters-visible',
+    await page.locator('.admin-content-page__advanced-filters').isVisible().catch(() => false),
   );
-  if (openedViewer) {
-    await page.locator('.admin-image-viewer').waitFor({ state: 'visible', timeout: 8000 });
-    pushCheck('records:image-viewer-visible', true);
-    await addPageResult(page, 'admin-records-image-viewer');
-    await page.keyboard.press('ArrowRight').catch(() => null);
-    await page.keyboard.press('ArrowLeft').catch(() => null);
-    await page.keyboard.press('Escape').catch(() => null);
+  await addPageResult(page, 'admin-records-advanced-filters');
+
+  const tableMediaButtons = page.locator('.admin-content-page__record-media-strip button');
+  let mediaVisible = await tableMediaButtons.first().isVisible().catch(() => false);
+  let openedViewer = false;
+
+  if (mediaVisible) {
+    pushCheck('records:image-record-media-visible', true, { source: 'table' });
+    await tableMediaButtons.first().click({ timeout: 8000 }).catch((error) => {
+      pushCheck('records:open-image-viewer', false, { source: 'table', reason: error.message });
+    });
+    openedViewer = await page
+      .locator('.admin-image-viewer')
+      .waitFor({ state: 'visible', timeout: 8000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!checks.some((item) => item.name === 'records:open-image-viewer')) {
+      pushCheck('records:open-image-viewer', openedViewer, { source: 'table' });
+    }
+  } else {
+    await clickFirst(page, page.getByRole('button', { name: /详情/ }), 'records:open-detail');
+    await addPageResult(page, 'admin-records-detail-drawer');
+    const drawerPreviewButtons = page.locator('.el-drawer .admin-content-page__asset-preview-button');
+    mediaVisible = await drawerPreviewButtons.first().isVisible().catch(() => false);
+    pushCheck('records:image-record-media-visible', mediaVisible, { source: 'detail-drawer' });
+    if (mediaVisible) {
+      await drawerPreviewButtons.first().click({ timeout: 8000 }).catch((error) => {
+        pushCheck('records:open-image-viewer', false, { source: 'detail-drawer', reason: error.message });
+      });
+      openedViewer = await page
+        .locator('.admin-image-viewer')
+        .waitFor({ state: 'visible', timeout: 8000 })
+        .then(() => true)
+        .catch(() => false);
+      if (!checks.some((item) => item.name === 'records:open-image-viewer')) {
+        pushCheck('records:open-image-viewer', openedViewer, { source: 'detail-drawer' });
+      }
+    }
   }
+
+  const viewerVisible = await page.locator('.admin-image-viewer').isVisible().catch(() => false);
+  pushCheck('records:image-viewer-visible', openedViewer && viewerVisible);
+  const viewerActionSummary = await verifyImageViewerActions(page);
+  pushCheck('records:image-viewer-actions-visible', viewerVisible && viewerActionSummary.ok, {
+    actions: summarizeViewerActionChecks(viewerActionSummary),
+  });
+  await page.keyboard.press('ArrowRight').catch(() => null);
+  await page.keyboard.press('ArrowLeft').catch(() => null);
+  await addPageResult(
+    page,
+    viewerVisible ? 'admin-records-image-viewer' : 'admin-records-image-viewer-missing',
+    { viewerVisible },
+  );
+  await page.keyboard.press('Escape').catch(() => null);
 }
 
 async function exerciseAudit(page) {
@@ -359,24 +498,22 @@ try {
 }
 
 const nonAuthConsoleErrors = consoleErrors.filter((item) => !/401|favicon/i.test(item.text || ''));
-const failedChecks = checks.filter((item) => !item.ok);
-const summary = {
+const summary = buildAdminDeepSmokeSummary({
   front: FRONT,
   admin: ADMIN,
   api: API,
   outDir,
   results,
   checks,
-  failedChecks,
   failedResponses,
   consoleErrors,
   nonAuthConsoleErrors,
-};
+});
 
 fs.writeFileSync(path.join(outDir, 'summary.json'), JSON.stringify(summary, null, 2));
 console.log(JSON.stringify(summary, null, 2));
 
-if (failedResponses.length || nonAuthConsoleErrors.length || failedChecks.length) {
+if (summary.failedResponses.length || summary.nonAuthConsoleErrors.length || summary.failedChecks.length) {
   process.exitCode = 1;
 }
 }

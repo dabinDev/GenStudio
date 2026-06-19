@@ -105,13 +105,17 @@ export function resolveAuthRedirect(hash: string, fallback = "images"): string {
   return ["text", "images", "videos", "settings", "profile", "admin"].includes(route) ? route : fallback;
 }
 
-export function resolveAdminConsoleHref(origin: string): string {
+function adminThemeQuery(theme?: unknown): string {
+  return theme === "dark" || theme === "light" ? `?theme=${theme}` : "";
+}
+
+export function resolveAdminConsoleHref(origin: string, theme?: unknown): string {
   const normalized = origin.trim();
   const match = normalized.match(/^(https?:\/\/(?:127\.0\.0\.1|localhost)):(?:5173|5175)$/i);
   if (match) {
-    return `${match[1]}:5174/admin/`;
+    return `${match[1]}:5174/admin/${adminThemeQuery(theme)}`;
   }
-  return "/admin/";
+  return `/admin/${adminThemeQuery(theme)}`;
 }
 
 export type PostAuthView = "text" | "images" | "videos" | "settings" | "profile";
@@ -265,6 +269,7 @@ function isBrokenDisplayText(value: string): boolean {
   const text = value.trim();
   if (!text) return false;
   const compact = text.replace(/\s+/g, "");
+  if (/^\d+\?+$/.test(compact)) return true;
   const questionMarks = compact.match(/\?/g)?.length || 0;
   if (compact.length >= 2 && questionMarks / compact.length > 0.65) return true;
   if (compact.length >= 12 && questionMarks / compact.length > 0.45) return true;
@@ -273,7 +278,11 @@ function isBrokenDisplayText(value: string): boolean {
 }
 
 function cleanDisplayText(value: string): string {
-  return value.trim().replace(/\s+\?{2,}$/g, "").trim();
+  return value
+    .trim()
+    .replace(/^\?{2,}\s*/g, "")
+    .replace(/\s+\?{2,}$/g, "")
+    .trim();
 }
 
 function firstReadableDisplayText(...values: Array<string | null | undefined>): string {

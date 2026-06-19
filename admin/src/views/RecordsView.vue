@@ -72,24 +72,39 @@
     </section>
 
     <section class="admin-content-page__filters admin-content-page__filters--records">
-      <el-input v-model="filters.userId" clearable placeholder="用户 ID" @keyup.enter="loadRecords" />
-      <el-input v-model="filters.userSearch" clearable placeholder="用户邮箱或昵称" @keyup.enter="loadRecords" />
-      <el-input v-model="filters.modelGroupId" clearable placeholder="模型 ID" @keyup.enter="loadRecords" />
-      <el-input v-model="filters.keyword" clearable placeholder="提示词 / 响应关键词" @keyup.enter="loadRecords" />
-      <el-select v-model="filters.status" aria-label="状态筛选">
-        <el-option label="全部状态" value="" />
-        <el-option label="未成功" value="non_success" />
-        <el-option label="成功" value="success" />
-        <el-option label="失败" value="error" />
-        <el-option label="处理中" value="processing" />
-      </el-select>
-      <el-input v-if="capability === 'image'" v-model="filters.size" clearable placeholder="尺寸，如 1024x1024" />
-      <el-input v-if="capability === 'image'" v-model="filters.ratio" clearable placeholder="比例，如 16:9" />
-      <el-input v-if="capability === 'image'" v-model="filters.refCount" clearable placeholder="参考图数量" />
-      <el-input v-if="capability === 'video'" v-model="filters.duration" clearable placeholder="时长，如 8" />
-      <el-input v-if="capability === 'video'" v-model="filters.resolution" clearable placeholder="分辨率，如 720p" />
-      <el-input v-if="capability === 'video'" v-model="filters.mode" clearable placeholder="模式，如 reference" />
-      <el-button type="primary" :loading="isLoading" @click="loadRecords">查询</el-button>
+      <div class="admin-content-page__filter-head">
+        <div>
+          <strong>基础筛选</strong>
+          <small>默认保留用户、模型、关键词和状态，高级条件需要时再展开。</small>
+        </div>
+        <el-button text type="primary" @click="showAdvancedFilters = !showAdvancedFilters">
+          {{ showAdvancedFilters ? '收起高级筛选' : '高级筛选' }}
+        </el-button>
+      </div>
+      <div class="admin-content-page__quick-filters">
+        <el-input v-model="filters.userSearch" clearable placeholder="用户邮箱或昵称" @keyup.enter="loadRecords" />
+        <el-input v-model="filters.modelGroupId" clearable placeholder="模型 ID" @keyup.enter="loadRecords" />
+        <el-input v-model="filters.keyword" clearable placeholder="提示词 / 响应关键词" @keyup.enter="loadRecords" />
+        <el-select v-model="filters.status" aria-label="状态筛选">
+          <el-option label="全部状态" value="" />
+          <el-option label="未成功" value="non_success" />
+          <el-option label="成功" value="success" />
+          <el-option label="失败" value="error" />
+          <el-option label="处理中" value="processing" />
+        </el-select>
+        <el-button type="primary" :loading="isLoading" @click="loadRecords">查询</el-button>
+      </div>
+      <Transition name="admin-filter-reveal">
+        <div v-if="showAdvancedFilters" class="admin-content-page__advanced-filters">
+          <el-input v-model="filters.userId" clearable placeholder="用户 ID" @keyup.enter="loadRecords" />
+          <el-input v-if="capability === 'image'" v-model="filters.size" clearable placeholder="尺寸，如 1024x1024" />
+          <el-input v-if="capability === 'image'" v-model="filters.ratio" clearable placeholder="比例，如 16:9" />
+          <el-input v-if="capability === 'image'" v-model="filters.refCount" clearable placeholder="参考图数量" />
+          <el-input v-if="capability === 'video'" v-model="filters.duration" clearable placeholder="时长，如 8" />
+          <el-input v-if="capability === 'video'" v-model="filters.resolution" clearable placeholder="分辨率，如 720p" />
+          <el-input v-if="capability === 'video'" v-model="filters.mode" clearable placeholder="模式，如 reference" />
+        </div>
+      </Transition>
     </section>
 
     <el-alert v-if="errorMessage" :title="errorMessage" type="error" show-icon :closable="false" />
@@ -334,6 +349,7 @@ const timelineLoading = ref(false);
 const detailErrorMessage = ref('');
 const markdownEnabled = ref(true);
 const waterfallMode = ref(true);
+const showAdvancedFilters = ref(false);
 const imageViewerState = reactive({
   visible: false,
   images: [] as AdminCreationAsset[],

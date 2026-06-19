@@ -41,3 +41,93 @@ test('admin route URLs are joined without double slash blank pages', () => {
     'https://studio.cylonai.cn/admin/settings',
   );
 });
+
+test('requiresImageViewerCoverage requires all image viewer checks to pass', () => {
+  const passingChecks = [
+    { name: 'records:image-tab-selected', ok: true },
+    { name: 'records:image-table-mode', ok: true },
+    { name: 'records:image-record-media-visible', ok: true },
+    { name: 'records:image-viewer-visible', ok: true },
+    { name: 'records:image-viewer-actions-visible', ok: true },
+  ];
+
+  assert.equal(smoke.requiresImageViewerCoverage({ checks: passingChecks }), true);
+  assert.equal(smoke.requiresImageViewerCoverage(passingChecks), true);
+  assert.equal(
+    smoke.requiresImageViewerCoverage(passingChecks.filter((check) => check.name !== 'records:image-viewer-visible')),
+    false,
+  );
+  assert.equal(
+    smoke.requiresImageViewerCoverage(
+      passingChecks.map((check) =>
+        check.name === 'records:image-record-media-visible' ? { ...check, ok: false } : check,
+      ),
+    ),
+    false,
+  );
+});
+
+test('buildAdminDeepSmokeSummary adds the image viewer coverage gate before failed checks are finalized', () => {
+  const summary = smoke.buildAdminDeepSmokeSummary({
+    front: 'http://127.0.0.1:5175',
+    admin: 'http://127.0.0.1:5174/admin',
+    api: 'http://127.0.0.1:8000',
+    outDir: 'output/test',
+    results: [],
+    checks: [
+      { name: 'records:image-tab-selected', ok: true },
+      { name: 'records:image-table-mode', ok: true },
+      { name: 'records:image-record-media-visible', ok: true },
+      { name: 'records:image-viewer-visible', ok: true },
+    ],
+    failedResponses: [],
+    consoleErrors: [],
+    nonAuthConsoleErrors: [],
+  });
+
+  assert.equal(summary.failedChecks.some((check) => check.name === 'records:image-viewer-coverage-required'), true);
+  assert.equal(summary.checks.some((check) => check.name === 'records:image-viewer-coverage-required'), true);
+});
+
+test('buildImageViewerActionChecks scopes every control lookup to the image viewer', async () => {
+  const calls = [];
+  const viewer = {
+    getByRole(role, options) {
+      calls.push({ role, name: String(options.name) });
+      return {
+        first() {
+          return {
+            async isVisible() {
+              return true;
+            },
+          };
+        },
+      };
+    },
+  };
+
+  const checks = smoke.buildImageViewerActionChecks(viewer);
+  const actionSummary = await smoke.collectViewerActionVisibility(checks);
+
+  assert.equal(actionSummary.ok, true);
+  assert.deepEqual(actionSummary.results.map((item) => item.label), [
+    '上一张',
+    '下一张',
+    '缩小',
+    '放大',
+    '重置',
+    '保存',
+    '原图',
+    '关闭',
+  ]);
+  assert.deepEqual(calls.map((call) => call.role), [
+    'button',
+    'button',
+    'button',
+    'button',
+    'button',
+    'link',
+    'link',
+    'button',
+  ]);
+});

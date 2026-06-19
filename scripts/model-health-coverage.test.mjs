@@ -57,6 +57,17 @@ test('shouldFailCoverage requires every model to be tested and successful', () =
   );
 });
 
+test('shouldFailCoverage can run in coverage-only mode while preserving health failures', () => {
+  const summary = { totalModels: 2, testedModels: 2, failures: [{ modelId: 'broken' }], integrityErrors: [] };
+
+  assert.equal(coverage.shouldFailCoverage(summary, { requireSuccess: false }), false);
+  assert.equal(coverage.shouldFailCoverage({ ...summary, testedModels: 1 }, { requireSuccess: false }), true);
+  assert.equal(
+    coverage.shouldFailCoverage({ ...summary, integrityErrors: [{ reason: 'duplicate model id' }] }, { requireSuccess: false }),
+    true,
+  );
+});
+
 test('empty model list fails coverage to avoid a false 0/0 success', () => {
   const summary = coverage.buildHealthCoverageSummary([], []);
 
@@ -127,6 +138,12 @@ test('model health timeout defaults to four minutes and supports environment ove
       process.env.MODEL_HEALTH_TIMEOUT_MS = original;
     }
   }
+});
+
+test('health success requirement is enabled by default and can be relaxed for local upstream mocks', () => {
+  assert.equal(coverage.shouldRequireModelHealthSuccess({}), true);
+  assert.equal(coverage.shouldRequireModelHealthSuccess({ MODEL_HEALTH_REQUIRE_SUCCESS: '1' }), true);
+  assert.equal(coverage.shouldRequireModelHealthSuccess({ MODEL_HEALTH_REQUIRE_SUCCESS: '0' }), false);
 });
 
 test('writeSummaryArtifact stores summary.json under the provided output directory', () => {

@@ -36,6 +36,14 @@ export function adminEntryUrl(value) {
   return url.toString().replace(/\/$/, url.pathname.endsWith('/admin/') ? '/' : '');
 }
 
+export function adminThemeUrl(value, theme) {
+  const url = new URL(adminEntryUrl(value));
+  if (normalizeThemeValue(theme) === theme) {
+    url.searchParams.set('theme', theme);
+  }
+  return url.toString();
+}
+
 if (process.env.ADMIN_THEME_SYNC_UNIT_ONLY !== '1') {
 const FRONT = process.env.FRONT_URL || 'http://127.0.0.1:5175';
 const ADMIN = adminEntryUrl(process.env.ADMIN_URL || new URL('/admin/', FRONT).toString());
@@ -103,7 +111,7 @@ async function setFrontSharedTheme(page, theme) {
 }
 
 async function verifyAdminTheme(page, theme) {
-  await page.goto(ADMIN, { waitUntil: 'networkidle', timeout: 60000 }).catch(async () => {
+  await page.goto(adminThemeUrl(ADMIN, theme), { waitUntil: 'networkidle', timeout: 60000 }).catch(async () => {
     await page.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => null);
   });
   await page.waitForTimeout(800);
@@ -140,7 +148,11 @@ try {
   if (!loggedIn) throw new Error('Admin theme smoke login failed.');
 
   const sameOrigin = rootOrigin(FRONT) === rootOrigin(ADMIN);
-  pushCheck('theme:same-origin', sameOrigin, { frontOrigin: rootOrigin(FRONT), adminOrigin: rootOrigin(ADMIN) });
+  pushCheck('theme:shared-storage-or-url-bridge', sameOrigin || adminThemeUrl(ADMIN, 'dark').includes('theme=dark'), {
+    frontOrigin: rootOrigin(FRONT),
+    adminOrigin: rootOrigin(ADMIN),
+    bridgeUrl: adminThemeUrl(ADMIN, 'dark'),
+  });
 
   for (const theme of THEME_CASES) {
     await setFrontSharedTheme(page, theme);

@@ -12,7 +12,15 @@ function normalizeTheme(value: string | null): AdminTheme | null {
   return null;
 }
 
+export function readAdminThemeQuery(search: string): AdminTheme | null {
+  return normalizeTheme(new URLSearchParams(search).get('theme'));
+}
+
 function readStoredTheme(): AdminTheme {
+  if (typeof window !== 'undefined') {
+    const queryTheme = readAdminThemeQuery(window.location.search);
+    if (queryTheme) return queryTheme;
+  }
   if (typeof localStorage === 'undefined') {
     return 'light';
   }

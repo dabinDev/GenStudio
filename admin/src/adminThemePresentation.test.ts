@@ -369,4 +369,25 @@ describe('admin theme presentation', () => {
     expect(markerIndex).toBeGreaterThan(-1);
     expect(styles.indexOf('.admin-prompt-center__empty-steps', markerIndex)).toBeGreaterThan(markerIndex);
   });
+
+  it('localizes admin controls and removes generic select placeholders', () => {
+    const main = readFileSync(resolve(process.cwd(), 'src/main.ts'), 'utf8');
+    const records = recordsVue();
+    const audit = readFileSync(resolve(process.cwd(), 'src/views/AuditLogsView.vue'), 'utf8');
+    const styles = stylesCss();
+    const markerIndex = styles.indexOf('Admin localized operations polish v9');
+
+    expect(main).toContain("element-plus/es/locale/lang/zh-cn");
+    expect(main).toContain('locale: zhCn');
+    expect(records).toContain('选择常用筛选');
+    expect(records).toContain('导出筛选结果');
+    expect(audit).toContain('选择对象类型');
+    expect(audit).toContain('选择执行状态');
+    expect(audit).toContain('选择风险等级');
+    expect(audit).toContain('导出审计日志');
+    expect(`${records}\n${audit}`).not.toContain('导出当前列表');
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf('.admin-content-page__filters .el-select', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('.admin-content-page__actions .el-button', markerIndex)).toBeGreaterThan(markerIndex);
+  });
 });

@@ -8,7 +8,7 @@
       <div class="admin-content-page__actions">
         <el-button :loading="isLoading" @click="loadLogs">刷新</el-button>
         <el-button v-if="canExportAudit" :loading="isExporting" :disabled="!logs.length" @click="exportLogs">
-          导出匹配日志
+          导出审计日志
         </el-button>
       </div>
     </header>
@@ -16,7 +16,7 @@
     <section class="admin-content-page__filters admin-content-page__filters--audit">
       <el-input v-model="filters.action" clearable placeholder="操作名称" @keyup.enter="loadLogs" />
       <el-input v-model="filters.adminUserId" clearable placeholder="管理员 ID" @keyup.enter="loadLogs" />
-      <el-select v-model="filters.targetType" aria-label="目标对象">
+      <el-select v-model="filters.targetType" aria-label="目标对象" placeholder="选择对象类型">
         <el-option
           v-for="option in targetTypeOptions"
           :key="option.value"
@@ -25,12 +25,12 @@
         />
       </el-select>
       <el-input v-model="filters.targetId" clearable placeholder="目标 ID" @keyup.enter="loadLogs" />
-      <el-select v-model="filters.status" aria-label="执行状态">
+      <el-select v-model="filters.status" aria-label="执行状态" placeholder="选择执行状态">
         <el-option label="全部状态" value="" />
         <el-option label="成功" value="success" />
         <el-option label="失败" value="error" />
       </el-select>
-      <el-select v-model="filters.risk" aria-label="风险等级">
+      <el-select v-model="filters.risk" aria-label="风险等级" placeholder="选择风险等级">
         <el-option label="全部风险" value="" />
         <el-option label="高风险" value="high" />
         <el-option label="中风险" value="medium" />
@@ -45,7 +45,7 @@
         end-placeholder="结束时间"
         value-format="YYYY-MM-DDTHH:mm:ss"
       />
-      <el-select v-model="filters.limit" aria-label="返回条数">
+      <el-select v-model="filters.limit" aria-label="返回条数" placeholder="选择返回条数">
         <el-option label="最近 100 条" :value="100" />
         <el-option label="最近 200 条" :value="200" />
         <el-option label="最近 300 条" :value="300" />

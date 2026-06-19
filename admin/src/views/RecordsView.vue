@@ -13,7 +13,7 @@
           :loading="isExporting"
           @click="exportCurrentRecords"
         >
-          导出当前列表
+          导出筛选结果
         </el-button>
       </div>
     </header>
@@ -41,7 +41,7 @@
           v-model="activePresetId"
           clearable
           filterable
-          placeholder="常用筛选"
+          placeholder="选择常用筛选"
           @change="handlePresetChange"
         >
           <el-option
@@ -85,7 +85,7 @@
         <el-input v-model="filters.userSearch" clearable placeholder="用户邮箱或昵称" @keyup.enter="loadRecords" />
         <el-input v-model="filters.modelGroupId" clearable placeholder="模型 ID" @keyup.enter="loadRecords" />
         <el-input v-model="filters.keyword" clearable placeholder="提示词 / 响应关键词" @keyup.enter="loadRecords" />
-        <el-select v-model="filters.status" aria-label="状态筛选">
+        <el-select v-model="filters.status" aria-label="状态筛选" placeholder="选择任务状态">
           <el-option label="全部状态" value="" />
           <el-option label="未成功" value="non_success" />
           <el-option label="成功" value="success" />

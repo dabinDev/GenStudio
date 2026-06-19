@@ -430,6 +430,27 @@ describe("workbench style application", () => {
     expect(styles.indexOf(".shell[data-theme=\"dark\"] .empty-canvas-flow span", overrideIndex)).toBeGreaterThan(overrideIndex);
   });
 
+  it("uses product language instead of internal demo copy in the creative workspace", () => {
+    const source = appVue();
+    const styles = stylesCss();
+    const overrideIndex = styles.indexOf("Creative Workshop copy and focus polish v30");
+
+    expect(source).toContain("多模型创作工作台");
+    expect(source).toContain("开始创作");
+    expect(source).toContain("当前模型");
+    expect(source).toContain("还没有保存的对话");
+    expect(source).toContain("专属创作模型");
+    expect(source).toContain("创作资产");
+    expect(source).not.toContain("多模型创作调试台");
+    expect(source).not.toContain("玩法说明");
+    expect(source).not.toContain("No saved conversations yet.");
+    expect(source).not.toContain("用户自定义模型");
+    expect(overrideIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf(".shell .empty-canvas-card", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell .composer-topline", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell .settings-hero .eyebrow", overrideIndex)).toBeGreaterThan(overrideIndex);
+  });
+
   it("does not keep the old embedded admin shell in the creative workspace", () => {
     const source = appVue();
     const styles = stylesCss();

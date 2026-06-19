@@ -3086,7 +3086,7 @@ function getDraftModel(): ModelDefinition {
     capability: draft.capability,
     adapter: draft.adapter,
     model: modelName || draft.id,
-    description: draft.description.trim() || "用户自定义模型",
+    description: draft.description.trim() || "专属创作模型",
     builtin: false,
   };
 }
@@ -3211,7 +3211,7 @@ function aiThinkingCaption(message: ConversationMessage): string {
 }
 
 function modelSafeDescription(model: ModelDefinition | null | undefined): string {
-  return safeModelDescription(model, "选择模型并输入需求开始调试。");
+  return safeModelDescription(model, "选择模型后即可套用模板、上传素材并开始创作。");
 }
 
 function hideBrokenModelIcon(event: Event) {
@@ -3315,7 +3315,7 @@ async function saveDialog() {
       vendor: draft.vendor.trim() || "自定义",
       capability: draft.capability,
       adapter: draft.adapter,
-      description: draft.description.trim() || "用户自定义模型",
+      description: draft.description.trim() || "专属创作模型",
       baseUrl: draft.baseUrl.trim(),
       apiKey: draft.apiKey.trim(),
       primaryModelName: modelName,
@@ -3352,7 +3352,7 @@ async function saveDialog() {
       capability: draft.capability,
       adapter: draft.adapter,
       model: modelName,
-      description: draft.description.trim() || "用户自定义模型",
+      description: draft.description.trim() || "专属创作模型",
     });
   } else {
     const target = store.models.value.find((model) => model.id === draft.id);
@@ -3363,7 +3363,7 @@ async function saveDialog() {
         capability: draft.capability,
         adapter: draft.adapter,
         model: modelName,
-        description: draft.description.trim() || "用户自定义模型",
+        description: draft.description.trim() || "专属创作模型",
       });
     }
   }
@@ -3625,7 +3625,7 @@ async function removeUnavailableModels() {
         </div>
         <div>
           <strong>创意工坊</strong>
-          <span>多模型创作调试台</span>
+          <span>多模型创作工作台</span>
         </div>
       </div>
 
@@ -3738,7 +3738,7 @@ async function removeUnavailableModels() {
               <button class="button-secondary icon-button" @click="conversationState.listOpen = false">关闭</button>
             </div>
             <div v-if="conversationState.error" class="inline-message inline-danger">{{ conversationState.error }}</div>
-            <div v-if="!conversationState.loading && !visibleConversations.length" class="history-empty">No saved conversations yet.</div>
+            <div v-if="!conversationState.loading && !visibleConversations.length" class="history-empty">还没有保存的对话</div>
             <button
               v-for="conversation in visibleConversations"
               :key="conversation.id"
@@ -3872,7 +3872,7 @@ async function removeUnavailableModels() {
                 </span>
                 <span>{{ activeModel ? modelDisplayName(activeModel) : "未选择模型" }}</span>
               </div>
-              <h3>{{ activeModel ? modelDisplayName(activeModel) : "创作模型" }}</h3>
+              <h3>{{ activeModel ? modelDisplayName(activeModel) : "选择创作模型" }}</h3>
               <p class="muted">{{ modelSafeDescription(activeModel) }}</p>
               <div class="canvas-hints">
                 <span v-if="view === 'images'">电商海报</span>
@@ -3913,7 +3913,7 @@ async function removeUnavailableModels() {
                 >
                   去设置文案模型
                 </button>
-                <button type="button" @click="composerUiState.collapsed = false">打开输入区</button>
+                <button type="button" @click="composerUiState.collapsed = false">开始创作</button>
               </div>
             </div>
           </div>
@@ -3946,7 +3946,7 @@ async function removeUnavailableModels() {
 
           <template v-else>
           <div class="composer-topline">
-            <button class="gameplay-btn">玩法说明</button>
+            <button class="gameplay-btn">当前模型</button>
             <div class="composer-status-stack">
               <span :class="['parameter-source-chip', activeModelHasCatalogParameters ? 'parameter-source-chip-exact' : 'parameter-source-chip-generic']">
                 {{ activeModelParameterSourceLabel }}
@@ -3967,7 +3967,7 @@ async function removeUnavailableModels() {
                 <span>创作模板</span>
                 <strong>选择一个场景，自动补齐提示词结构</strong>
               </div>
-              <small>可继续编辑，不会立即发送</small>
+                  <small>创作资产会自动写入当前对话，发送前仍可继续编辑</small>
             </div>
             <div class="template-row composer-template-grid">
               <button
@@ -4718,7 +4718,7 @@ async function removeUnavailableModels() {
           <section class="settings-dialog">
             <div class="settings-dialog-head">
               <div>
-                <p class="eyebrow">Model Config</p>
+                <p class="eyebrow">模型连接</p>
                 <h3>{{ settingsState.dialogMode === "create" ? "添加模型" : "模型配置" }}</h3>
                 <span>填写密钥后先获取可用模型，再选择一个主模型用于创作。</span>
               </div>

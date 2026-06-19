@@ -10905,6 +10905,56 @@ body {
   }
 }
 
+/* Creative Workshop copy and focus polish v30 */
+.shell .empty-canvas-card {
+  width: min(100%, 620px) !important;
+  padding: 30px 36px 28px !important;
+  border-radius: 14px !important;
+}
+
+.shell .empty-canvas-card h3 {
+  margin-top: 10px !important;
+  letter-spacing: 0 !important;
+}
+
+.shell .empty-canvas-card .muted {
+  max-width: 460px !important;
+  margin-inline: auto !important;
+  line-height: 1.7 !important;
+}
+
+.shell .composer-topline {
+  align-items: center !important;
+  padding-inline: 18px !important;
+}
+
+.shell .gameplay-btn {
+  min-width: 88px !important;
+  color: #0e5965 !important;
+  border-radius: 999px !important;
+  background: linear-gradient(135deg, rgba(236, 253, 245, 0.92), rgba(224, 242, 254, 0.86)) !important;
+  box-shadow: 0 10px 28px rgba(15, 118, 110, 0.12) !important;
+}
+
+.shell[data-theme="dark"] .gameplay-btn {
+  color: #d9fffb !important;
+  background: linear-gradient(135deg, rgba(20, 184, 166, 0.18), rgba(59, 130, 246, 0.16)) !important;
+  box-shadow: 0 10px 28px rgba(14, 165, 233, 0.12) !important;
+}
+
+.shell .settings-hero .eyebrow,
+.shell .settings-dialog-head .eyebrow {
+  color: #0f8792 !important;
+  font-size: 12px !important;
+  font-weight: 900 !important;
+  letter-spacing: 0.08em !important;
+}
+
+.shell[data-theme="dark"] .settings-hero .eyebrow,
+.shell[data-theme="dark"] .settings-dialog-head .eyebrow {
+  color: #7dd3fc !important;
+}
+
 .shell[data-theme="light"] .settings-filter-tabs button,
 .shell[data-theme="light"] .settings-search-box,
 .shell[data-theme="light"] .settings-primary-model {

@@ -459,6 +459,22 @@ describe("workbench style application", () => {
     expect(styles.indexOf(".shell .settings-hero .eyebrow", overrideIndex)).toBeGreaterThan(overrideIndex);
   });
 
+  it("keeps settings model rows from looking like a button-heavy debug table", () => {
+    const source = appVue();
+    const styles = stylesCss();
+    const overrideIndex = styles.indexOf("Creative Workshop settings operator rows v31");
+
+    expect(source).toContain("settings-row-actions-primary");
+    expect(source).toContain("settings-row-actions-more");
+    expect(source).toContain("settings-row-action-menu");
+    expect(source).toContain("操作");
+    expect(overrideIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf(".shell .settings-row-actions-primary", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell .settings-row-actions-more", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell .settings-row-action-menu", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf("grid-template-columns: repeat(2, minmax(0, 1fr))", overrideIndex)).toBeGreaterThan(overrideIndex);
+  });
+
   it("does not keep the old embedded admin shell in the creative workspace", () => {
     const source = appVue();
     const styles = stylesCss();

@@ -402,4 +402,22 @@ describe('admin theme presentation', () => {
     expect(styles.indexOf('.admin-content-page__filters .el-select', markerIndex)).toBeGreaterThan(markerIndex);
     expect(styles.indexOf('.admin-content-page__actions .el-button', markerIndex)).toBeGreaterThan(markerIndex);
   });
+
+  it('adds an editorial polish layer for admin model and record lists', () => {
+    const records = recordsVue();
+    const modelCenter = modelCenterVue();
+    const styles = stylesCss();
+    const markerIndex = styles.indexOf('Admin list editorial polish v10');
+
+    expect(modelCenter).toContain('admin-model-center__asset-card');
+    expect(modelCenter).toContain('admin-model-center__price-pill');
+    expect(records).toContain('admin-content-page__record-summary');
+    expect(records).toContain('admin-content-page__record-meta');
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf('.admin-model-center__asset-card', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('.admin-model-center__price-pill', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('.admin-content-page__record-summary', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('.admin-content-page__record-meta', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('box-shadow: inset 4px 0 0', markerIndex)).toBeGreaterThan(markerIndex);
+  });
 });

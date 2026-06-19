@@ -10963,3 +10963,71 @@ body {
   background: rgba(255, 255, 255, 0.9) !important;
   box-shadow: none !important;
 }
+
+/* Creative Workshop settings operator rows v31 */
+.shell .settings-row-actions {
+  position: relative !important;
+  display: grid !important;
+  gap: 8px !important;
+  align-content: center !important;
+  justify-items: stretch !important;
+}
+
+.shell .settings-row-actions-primary {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 8px !important;
+}
+
+.shell .settings-row-actions-more {
+  position: relative !important;
+}
+
+.shell .settings-row-actions-more > summary {
+  display: inline-flex !important;
+  width: 100% !important;
+  align-items: center !important;
+  justify-content: center !important;
+  list-style: none !important;
+  cursor: pointer !important;
+}
+
+.shell .settings-row-actions-more > summary::-webkit-details-marker {
+  display: none !important;
+}
+
+.shell .settings-row-action-menu {
+  position: absolute !important;
+  right: 0 !important;
+  top: calc(100% + 8px) !important;
+  z-index: 160 !important;
+  display: grid !important;
+  min-width: 156px !important;
+  padding: 8px !important;
+  gap: 8px !important;
+  border-radius: 14px !important;
+  border: 1px solid rgba(70, 103, 124, 0.2) !important;
+  background: rgba(255, 255, 255, 0.96) !important;
+  box-shadow: 0 22px 48px rgba(22, 61, 79, 0.18) !important;
+  backdrop-filter: blur(18px) !important;
+}
+
+.shell[data-theme="dark"] .settings-row-action-menu {
+  border-color: rgba(118, 201, 218, 0.18) !important;
+  background: rgba(12, 26, 43, 0.96) !important;
+  box-shadow: 0 24px 56px rgba(0, 0, 0, 0.34) !important;
+}
+
+.shell .settings-row-action-menu .settings-action-button {
+  width: 100% !important;
+}
+
+.shell .settings-model-row {
+  overflow: visible !important;
+}
+
+@media (max-width: 760px) {
+  .shell .settings-row-actions-primary {
+    grid-template-columns: 1fr !important;
+  }
+}

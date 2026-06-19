@@ -4691,10 +4691,17 @@ async function removeUnavailableModels() {
                 </span>
               </div>
               <div class="settings-row-actions">
-                <button class="button-secondary settings-action-button" :disabled="!canEditModel(model)" @click="fetchModelList(model, getSetting(model.id))">获取模型</button>
-                <button class="button-secondary settings-action-button" @click="testModel(model, getSetting(model.id))">测试</button>
-                <button class="button-secondary settings-action-button" :disabled="!canEditModel(model)" @click="openEditDialog(model)">编辑</button>
-                <button class="button-danger settings-action-button" :disabled="!canEditModel(model)" @click="removeModelFromWorkbench(model.id)">删除</button>
+                <div class="settings-row-actions-primary">
+                  <button class="button-secondary settings-action-button" :disabled="!canEditModel(model)" @click="fetchModelList(model, getSetting(model.id))">获取模型</button>
+                  <button class="button-secondary settings-action-button" @click="testModel(model, getSetting(model.id))">测试</button>
+                </div>
+                <details class="settings-row-actions-more">
+                  <summary class="button-secondary settings-action-button">操作</summary>
+                  <div class="settings-row-action-menu">
+                    <button class="button-secondary settings-action-button" :disabled="!canEditModel(model)" @click="openEditDialog(model)">编辑</button>
+                    <button class="button-danger settings-action-button" :disabled="!canEditModel(model)" @click="removeModelFromWorkbench(model.id)">删除</button>
+                  </div>
+                </details>
               </div>
               <div v-if="settingsState.modelListState[model.id]?.error" class="settings-row-detail inline-message inline-danger">{{ settingsState.modelListState[model.id].error }}</div>
               <div v-if="settingsState.testState[model.id]?.error" class="settings-row-detail inline-message inline-danger">{{ settingsState.testState[model.id].error }}</div>

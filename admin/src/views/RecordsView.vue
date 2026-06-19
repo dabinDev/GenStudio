@@ -143,10 +143,10 @@
       <el-table v-loading="isLoading" :data="records" row-key="id">
         <el-table-column label="请求" min-width="320">
           <template #default="{ row }">
-            <div class="admin-content-page__record-cell">
+            <div class="admin-content-page__record-cell admin-content-page__record-summary">
               <span class="admin-content-page__record-kicker">提问</span>
               <strong>{{ row.prompt || '无提示词' }}</strong>
-              <small>{{ row.user?.email || row.user?.nickname || '未知用户' }}</small>
+              <small class="admin-content-page__record-meta">{{ row.user?.email || row.user?.nickname || '未知用户' }}</small>
             </div>
           </template>
         </el-table-column>
@@ -182,6 +182,7 @@
               <template v-else>
                 <span class="admin-content-page__record-kicker">回答</span>
                 <p>{{ recordPreviewResponse(row) }}</p>
+                <small class="admin-content-page__record-meta">{{ row.createdAt || '暂无时间' }}</small>
               </template>
             </div>
           </template>

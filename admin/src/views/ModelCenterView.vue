@@ -105,7 +105,7 @@
         <el-table-column type="selection" width="44" reserve-selection />
         <el-table-column label="模型" min-width="240">
           <template #default="{ row }">
-            <div class="admin-model-center__identity">
+            <div class="admin-model-center__identity admin-model-center__asset-card">
               <div class="admin-model-center__model-mark">
                 {{ capabilityLabel(row.capability).slice(0, 1) }}
               </div>
@@ -134,8 +134,10 @@
         </el-table-column>
         <el-table-column label="积分价格" width="120">
           <template #default="{ row }">
-            <span>{{ row.creditPrice }}</span>
-            <small class="admin-model-center__muted">{{ priceSourceLabel(row.creditPriceSource) }}</small>
+            <div class="admin-model-center__price-pill">
+              <span>{{ row.creditPrice }}</span>
+              <small class="admin-model-center__muted">{{ priceSourceLabel(row.creditPriceSource) }}</small>
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="172" fixed="right">

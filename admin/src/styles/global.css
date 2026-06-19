@@ -2675,3 +2675,91 @@ body {
     column-count: initial;
   }
 }
+
+/* Admin list editorial polish v10 */
+.admin-model-center__table .el-table__row > td,
+.admin-content-page__table .el-table__row > td {
+  padding-top: 14px;
+  padding-bottom: 14px;
+}
+
+.admin-model-center__asset-card {
+  width: 100%;
+  min-height: 68px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--admin-color-primary) 8%, transparent), transparent 60%),
+    color-mix(in srgb, var(--admin-color-surface) 92%, transparent);
+  box-shadow: inset 4px 0 0 color-mix(in srgb, var(--admin-color-primary) 78%, transparent);
+}
+
+.admin-model-center__table .el-table__row:hover .admin-model-center__asset-card {
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--admin-color-primary) 13%, transparent), transparent 66%),
+    color-mix(in srgb, var(--admin-color-surface) 96%, transparent);
+}
+
+.admin-model-center__price-pill {
+  display: inline-grid;
+  min-width: 78px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--admin-color-border) 86%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--admin-color-surface-muted) 88%, transparent);
+  line-height: 1.25;
+}
+
+.admin-model-center__price-pill > span {
+  color: var(--admin-color-text);
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.admin-content-page__record-summary {
+  padding: 12px 14px;
+  border-radius: 16px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--admin-color-primary) 7%, transparent), transparent 62%),
+    color-mix(in srgb, var(--admin-color-surface-muted) 80%, transparent);
+  box-shadow: inset 4px 0 0 color-mix(in srgb, var(--admin-color-primary) 72%, transparent);
+}
+
+.admin-content-page__record-meta {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 22px;
+  align-items: center;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--admin-color-border) 82%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--admin-color-surface) 86%, transparent);
+  color: var(--admin-color-text-muted);
+  font-size: 12px;
+}
+
+.admin-content-page__record-result {
+  min-height: 76px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--admin-color-border) 70%, transparent);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--admin-color-surface) 88%, transparent);
+}
+
+.admin-content-page__record-result p {
+  margin: 0;
+}
+
+[data-theme='dark'] .admin-model-center__asset-card,
+[data-theme='dark'] .admin-content-page__record-summary,
+[data-theme='dark'] .admin-content-page__record-result {
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--admin-color-primary) 12%, transparent), transparent 62%),
+    rgba(17, 28, 47, 0.9);
+}
+
+[data-theme='dark'] .admin-model-center__price-pill,
+[data-theme='dark'] .admin-content-page__record-meta {
+  background: rgba(20, 32, 53, 0.9);
+}

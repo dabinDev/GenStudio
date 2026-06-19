@@ -2883,6 +2883,98 @@ body {
   }
 }
 
+/* Admin records long content containment v13 */
+.admin-content-page__record-row {
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1.16fr) minmax(176px, 0.52fr) 72px;
+}
+
+.admin-content-page__waterfall {
+  grid-template-columns: repeat(auto-fill, minmax(280px, min(360px, 100%)));
+  justify-content: start;
+}
+
+.admin-content-page__record-summary,
+.admin-content-page__record-result,
+.admin-content-page__record-context,
+.admin-content-page__image-card,
+.admin-content-page__image-card-body,
+.admin-content-page__image-card-body div {
+  min-width: 0;
+}
+
+.admin-content-page__record-prompt,
+.admin-content-page__image-card-prompt,
+.admin-content-page__record-response {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: normal;
+  word-break: break-word;
+  -webkit-box-orient: vertical;
+}
+
+.admin-content-page__record-prompt,
+.admin-content-page__image-card-prompt {
+  max-height: calc(1.45em * 5);
+  line-height: 1.45;
+  -webkit-line-clamp: 5;
+}
+
+.admin-content-page__record-cell .admin-content-page__record-prompt {
+  -webkit-line-clamp: 5;
+}
+
+.admin-content-page__record-response {
+  max-height: calc(1.5em * 4);
+  line-height: 1.5;
+  -webkit-line-clamp: 4;
+}
+
+.admin-content-page__record-cell .admin-content-page__record-response {
+  -webkit-line-clamp: 4;
+}
+
+.admin-content-page__image-card-prompt {
+  color: var(--admin-color-text);
+  font-size: 13px;
+}
+
+.admin-content-page__image-card-body {
+  gap: 7px;
+  grid-template-rows: auto minmax(18px, auto) auto;
+  min-height: 0;
+  padding: 12px;
+}
+
+.admin-content-page__image-card-body div > span,
+.admin-content-page__record-task {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.admin-content-page__record-flow .admin-content-page__record-summary {
+  align-content: start;
+}
+
+.admin-content-page__record-flow .admin-content-page__record-result {
+  align-content: center;
+}
+
+@media (max-width: 1180px) {
+  .admin-content-page__record-row {
+    grid-template-columns: minmax(0, 1fr) minmax(220px, 0.7fr) 78px;
+  }
+}
+
+@media (max-width: 760px) {
+  .admin-content-page__record-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 /* Admin model operational asset cards v12 */
 .admin-model-center__table .el-table__header-wrapper {
   display: none;

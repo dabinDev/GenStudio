@@ -162,15 +162,28 @@ Deployment verification:
 - Remote deploy helper: `deploy/remote-brand-deploy.sh`.
 - The helper refuses to reload Nginx if `/admin/` routing is missing; install the Nginx shape above before publishing the independent admin app.
 
+Canonical release order:
+
+1. Review `git status --short` and confirm only intended source/documentation files are modified.
+2. Run the relevant frontend/admin tests for the changed areas.
+3. Build `fronted/dist` and `admin/dist` from a clean local working tree.
+4. Package only `server/`, `docs/`, `.dockerignore`, `fronted/dist`, and `admin/dist` into `.deploy-stage/genstudio-brand-release.tar.gz`.
+5. Upload the release package and `deploy/remote-brand-deploy.sh` to the Guangzhou host.
+6. Run the remote helper, which backs up current server/static files before replacing them.
+7. Verify backend health, Nginx config, frontend route, and admin route.
+8. Commit and push the source changes after verification, or commit before deployment when a traceable release SHA is required. Do not commit `.deploy-stage`, `dist`, screenshots, logs, or secret files.
+
 Local preflight:
 
 ```powershell
 git status --short
 git log -1 --oneline
 cd fronted
+npm test -- src/styleApplication.test.ts
 npm run build
 cd ..
 cd admin
+npm test -- src/adminThemePresentation.test.ts
 npm run build
 cd ..
 ```
@@ -198,6 +211,8 @@ npm run build
 cd ..
 python -m pytest server/tests/test_conversations.py
 ```
+
+For UI-only changes, still build both frontends if the production package will include both static directories. If only one app changed, the unchanged `dist` can be rebuilt to keep the release artifact internally consistent.
 
 Package the release from the project root after `fronted/dist` and `admin/dist` are fresh:
 
@@ -260,7 +275,23 @@ Notes:
 - Use `ssh -F NUL` on this Windows host because the user's default SSH config can have permission issues.
 - If a shell script copied from Windows reports `set: command not found` or malformed `curl` URL output, check for a UTF-8 BOM or CRLF line endings before re-running.
 - Nginx may print existing warnings about deprecated `listen ... http2`; treat them as warnings unless `nginx -t` fails.
+- If a new CSS/JS build appears stale in the browser, verify `fronted/dist/index.html` and `/opt/nginx/html/genstudio/index.html` point to the same hashed asset, then hard refresh with a cache-busting query such as `https://studio.cylonai.cn/?v=<timestamp>#/images`.
+- If `/admin/` returns the frontend app or a 404, check the production Nginx config for a dedicated `/admin/` alias plus history fallback to `/opt/nginx/html/genstudio-admin/index.html`.
+- If `/api/health` fails after deployment, inspect `docker logs --tail=120 genstudio-api` on the host before retrying. Do not keep reloading Nginx for backend container failures.
 
 ## Rollback
 
-Keep the previous backend image and frontend `dist` artifact. Roll back application code first. Roll back database only from a tested backup when a migration itself is the fault; otherwise prefer a forward fix.
+The remote helper stores timestamped backups under `/opt/genstudio_backups` before replacing files.
+
+Rollback order:
+
+1. Identify the latest good backup directories:
+   - `/opt/genstudio_backups/server-<timestamp>`
+   - `/opt/genstudio_backups/fronted-<timestamp>`
+   - `/opt/genstudio_backups/admin-<timestamp>`
+2. Restore application/static files with `rsync --delete` back to `/opt/genstudio/server`, `/opt/nginx/html/genstudio`, and `/opt/nginx/html/genstudio-admin`.
+3. Rebuild and restart `genstudio-api` if the backend was restored.
+4. Run `docker exec nginx nginx -t && docker exec nginx nginx -s reload`.
+5. Verify `http://127.0.0.1:18082/api/health`, `https://studio.cylonai.cn/`, and `https://studio.cylonai.cn/admin/`.
+
+Roll back database only from a tested backup when a migration itself is the fault; otherwise prefer a forward fix.

@@ -437,6 +437,26 @@ describe('admin theme presentation', () => {
     expect(styles.indexOf('min-height: 112px', markerIndex)).toBeGreaterThan(markerIndex);
   });
 
+  it('contains overlong record content without distorting creation record layouts', () => {
+    const records = recordsVue();
+    const styles = stylesCss();
+    const markerIndex = styles.indexOf('Admin records long content containment v13');
+
+    expect(records).toContain('admin-content-page__record-prompt');
+    expect(records).toContain('admin-content-page__image-card-prompt');
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf('.admin-content-page__record-prompt', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('.admin-content-page__image-card-prompt', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('-webkit-line-clamp: 5', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('overflow-wrap: anywhere', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('word-break: break-word', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('max-height: calc(1.45em * 5)', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('minmax(0, 1fr)', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('.admin-content-page__record-cell .admin-content-page__record-prompt', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('repeat(auto-fill, minmax(280px, min(360px, 100%)))', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('justify-content: start', markerIndex)).toBeGreaterThan(markerIndex);
+  });
+
   it('turns model rows into operational asset cards with clear status chips', () => {
     const modelCenter = modelCenterVue();
     const styles = stylesCss();

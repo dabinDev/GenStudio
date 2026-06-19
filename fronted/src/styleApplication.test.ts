@@ -98,6 +98,48 @@ describe("workbench style application", () => {
     expect(styles.indexOf(".shell .ai-thinking-panel", overrideIndex)).toBeGreaterThan(overrideIndex);
   });
 
+  it("keeps the composer edge veil transparent so scrolled chat remains partially visible", () => {
+    const styles = stylesCss();
+    const markerIndex = styles.indexOf("Creative Workshop transparent composer veil v33");
+
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf(".shell .composer-card::before", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf("pointer-events: none !important", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf("linear-gradient(90deg, transparent 0%, #000 18%, #000 82%, transparent 100%)", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf("-webkit-mask-image", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf("mask-image", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf(".shell .composer-card::after", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf("background: transparent !important", markerIndex)).toBeGreaterThan(markerIndex);
+  });
+
+  it("makes image and video composer side rails translucent without fading controls", () => {
+    const styles = stylesCss();
+    const markerIndex = styles.indexOf("Creative Workshop media composer translucent side rails v34");
+
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf(".shell .composer-surface:has(.media-composer-grid)", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf(".shell .composer-surface:has(.media-composer-grid)::before", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf("linear-gradient(90deg, transparent 0%,", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf("pointer-events: none !important", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf(".shell .composer-surface:has(.media-composer-grid) > *", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf("z-index: 1 !important", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .composer-surface:has(.media-composer-grid)::before", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf(".shell[data-theme=\"dark\"] .composer-surface:has(.media-composer-grid)::before", markerIndex)).toBeGreaterThan(markerIndex);
+  });
+
+  it("keeps media composer template and top rows unmasked and visually lightweight", () => {
+    const styles = stylesCss();
+    const markerIndex = styles.indexOf("Creative Workshop media composer lightweight chrome v35");
+
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf(".shell .composer-card-expanded:has(.media-composer-grid)", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf("mask-image: none !important", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf("-webkit-mask-image: none !important", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf(".shell .composer-card-expanded:has(.media-composer-grid) .composer-toolbar", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf(".shell .composer-card-expanded:has(.media-composer-grid) .composer-template-card", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf("backdrop-filter: none !important", markerIndex)).toBeGreaterThan(markerIndex);
+  });
+
   it("presents prompt templates as scenario cards inside the composer", () => {
     const source = appVue();
     const catalog = catalogTs();

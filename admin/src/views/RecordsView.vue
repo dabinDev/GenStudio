@@ -128,7 +128,9 @@
           </span>
         </button>
         <div class="admin-content-page__image-card-body">
-          <strong>{{ record.prompt || '无提示词' }}</strong>
+          <strong class="admin-content-page__image-card-prompt" :title="record.prompt || '无提示词'">
+            {{ record.prompt || '无提示词' }}
+          </strong>
           <small>{{ record.user?.email || record.user?.nickname || '未知用户' }}</small>
           <div>
             <el-tag :type="statusTagType(record.status)" effect="plain">{{ statusLabel(record.status) }}</el-tag>
@@ -146,7 +148,9 @@
             <div class="admin-content-page__record-row">
               <div class="admin-content-page__record-cell admin-content-page__record-summary">
                 <span class="admin-content-page__record-kicker">提问</span>
-                <strong>{{ row.prompt || '无提示词' }}</strong>
+                <strong class="admin-content-page__record-prompt" :title="row.prompt || '无提示词'">
+                  {{ row.prompt || '无提示词' }}
+                </strong>
                 <small class="admin-content-page__record-meta">{{ row.user?.email || row.user?.nickname || '未知用户' }}</small>
               </div>
               <div class="admin-content-page__record-cell admin-content-page__record-result">
@@ -178,7 +182,7 @@
                 </template>
                 <template v-else>
                   <span class="admin-content-page__record-kicker">回答</span>
-                  <p>{{ recordPreviewResponse(row) }}</p>
+                  <p class="admin-content-page__record-response">{{ recordPreviewResponse(row) }}</p>
                   <small class="admin-content-page__record-meta">{{ row.createdAt || '暂无时间' }}</small>
                 </template>
               </div>

@@ -11130,3 +11130,145 @@ body {
     grid-template-columns: 1fr !important;
   }
 }
+
+/* Creative Workshop transparent composer veil v33.
+   The composer keeps a readable center surface while the left/right edges fade
+   out, so scrolling chat remains visible behind the floating input area. */
+.shell .composer-card,
+.shell[data-theme="light"] .composer-card,
+.shell[data-theme="dark"] .composer-card {
+  isolation: isolate !important;
+  background: transparent !important;
+}
+
+.shell .composer-card::before {
+  position: absolute !important;
+  inset: -34px clamp(16px, 8vw, 140px) -10px !important;
+  z-index: -1 !important;
+  border-radius: 28px !important;
+  background:
+    linear-gradient(180deg, transparent 0%, rgba(67, 245, 201, 0.08) 34%, rgba(34, 111, 169, 0.055) 72%, transparent 100%) !important;
+  filter: blur(20px) !important;
+  opacity: 0.9 !important;
+  pointer-events: none !important;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 18%, #000 82%, transparent 100%) !important;
+  mask-image: linear-gradient(90deg, transparent 0%, #000 18%, #000 82%, transparent 100%) !important;
+  content: "" !important;
+}
+
+.shell .composer-card::after {
+  position: absolute !important;
+  inset: -28px 0 62% !important;
+  z-index: -2 !important;
+  background: transparent !important;
+  pointer-events: none !important;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 100%) !important;
+  mask-image: linear-gradient(180deg, transparent 0%, #000 100%) !important;
+  content: "" !important;
+}
+
+.shell[data-theme="light"] .composer-card::before {
+  background:
+    linear-gradient(180deg, transparent 0%, rgba(255, 255, 255, 0.34) 32%, rgba(231, 247, 248, 0.24) 72%, transparent 100%),
+    radial-gradient(ellipse at 50% 75%, rgba(10, 145, 141, 0.1), transparent 62%) !important;
+}
+
+.shell[data-theme="dark"] .composer-card::before {
+  background:
+    linear-gradient(180deg, transparent 0%, rgba(6, 20, 33, 0.3) 34%, rgba(11, 67, 68, 0.18) 72%, transparent 100%),
+    radial-gradient(ellipse at 50% 75%, rgba(67, 245, 201, 0.12), transparent 62%) !important;
+}
+
+@media (max-width: 760px) {
+  .shell .composer-card::before {
+    inset: -24px 8px -8px !important;
+    -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 10%, #000 90%, transparent 100%) !important;
+    mask-image: linear-gradient(90deg, transparent 0%, #000 10%, #000 90%, transparent 100%) !important;
+  }
+}
+
+/* Creative Workshop media composer translucent side rails v34.
+   Image and video composers keep their controls readable while the wide
+   surface fades at both sides, reducing the sense that history is blocked. */
+.shell .composer-surface:has(.media-composer-grid) {
+  position: relative !important;
+  isolation: isolate !important;
+  overflow: hidden !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.shell .composer-surface:has(.media-composer-grid)::before {
+  position: absolute !important;
+  inset: 0 !important;
+  z-index: 0 !important;
+  border-radius: inherit !important;
+  background:
+    linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.34) 9%, rgba(255, 255, 255, 0.78) 22%, rgba(255, 255, 255, 0.78) 78%, rgba(255, 255, 255, 0.34) 91%, transparent 100%) !important;
+  pointer-events: none !important;
+  content: "" !important;
+}
+
+.shell .composer-surface:has(.media-composer-grid) > * {
+  position: relative !important;
+  z-index: 1 !important;
+}
+
+.shell[data-theme="light"] .composer-surface:has(.media-composer-grid) {
+  border-color: rgba(42, 105, 139, 0.12) !important;
+}
+
+.shell[data-theme="light"] .composer-surface:has(.media-composer-grid)::before {
+  background:
+    linear-gradient(90deg, transparent 0%, rgba(246, 252, 253, 0.24) 8%, rgba(255, 255, 255, 0.76) 22%, rgba(255, 255, 255, 0.76) 78%, rgba(246, 252, 253, 0.24) 92%, transparent 100%),
+    radial-gradient(ellipse at 50% 0%, rgba(10, 145, 141, 0.08), transparent 64%) !important;
+}
+
+.shell[data-theme="dark"] .composer-surface:has(.media-composer-grid) {
+  border-color: rgba(124, 176, 198, 0.13) !important;
+}
+
+.shell[data-theme="dark"] .composer-surface:has(.media-composer-grid)::before {
+  background:
+    linear-gradient(90deg, transparent 0%, rgba(8, 24, 38, 0.24) 8%, rgba(7, 22, 36, 0.74) 22%, rgba(7, 22, 36, 0.74) 78%, rgba(8, 24, 38, 0.24) 92%, transparent 100%),
+    radial-gradient(ellipse at 50% 0%, rgba(67, 245, 201, 0.1), transparent 64%) !important;
+}
+
+@media (max-width: 760px) {
+  .shell .composer-surface:has(.media-composer-grid)::before {
+    background:
+      linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.68) 7%, rgba(255, 255, 255, 0.78) 93%, transparent 100%) !important;
+  }
+
+  .shell[data-theme="dark"] .composer-surface:has(.media-composer-grid)::before {
+    background:
+      linear-gradient(90deg, transparent 0%, rgba(7, 22, 36, 0.7) 7%, rgba(7, 22, 36, 0.78) 93%, transparent 100%) !important;
+  }
+}
+
+/* Creative Workshop media composer lightweight chrome v35.
+   Keep media composer controls crisp: no parent masks, no heavy template band,
+   and only the actual input surface carries a readable glass background. */
+.shell .composer-card-expanded:has(.media-composer-grid) {
+  -webkit-mask-image: none !important;
+  mask-image: none !important;
+}
+
+.shell .composer-card-expanded:has(.media-composer-grid) .composer-topline,
+.shell .composer-card-expanded:has(.media-composer-grid) .composer-toolbar {
+  background: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.shell .composer-card-expanded:has(.media-composer-grid) .composer-template-card {
+  background: rgba(255, 255, 255, 0.68) !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.shell[data-theme="dark"] .composer-card-expanded:has(.media-composer-grid) .composer-template-card {
+  background: rgba(7, 22, 36, 0.58) !important;
+}

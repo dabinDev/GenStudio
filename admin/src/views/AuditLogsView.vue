@@ -98,7 +98,7 @@
         </el-table-column>
         <el-table-column label="状态" width="100">
           <template #default="{ row }">
-            <el-tag :type="row.status === 'error' ? 'danger' : 'success'" effect="plain">{{ row.status }}</el-tag>
+            <el-tag :type="row.status === 'error' ? 'danger' : 'success'" effect="plain">{{ statusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="时间" width="170">
@@ -119,7 +119,7 @@
           <el-descriptions-item label="管理员">{{ activeLog.adminUserId || '系统' }}</el-descriptions-item>
           <el-descriptions-item label="目标">{{ activeLog.targetType }} / {{ activeLog.targetId }}</el-descriptions-item>
           <el-descriptions-item label="风险">{{ riskLabel(activeLog.riskLevel) }}</el-descriptions-item>
-          <el-descriptions-item label="状态">{{ activeLog.status }}</el-descriptions-item>
+          <el-descriptions-item label="状态">{{ statusLabel(activeLog.status) }}</el-descriptions-item>
         </el-descriptions>
         <section class="admin-content-page__detail-block">
           <strong>摘要 JSON</strong>
@@ -180,6 +180,12 @@ function riskTagType(risk?: string) {
   if (risk === 'high') return 'danger';
   if (risk === 'medium') return 'warning';
   return 'info';
+}
+
+function statusLabel(status?: string) {
+  if (status === 'success') return '成功';
+  if (status === 'error') return '失败';
+  return status || '未知';
 }
 
 function stringify(value: unknown) {

@@ -421,7 +421,16 @@ function priceSourceLabel(source: string) {
   if (source === 'default') {
     return '默认';
   }
-  return source || '默认';
+  if (source === 'private_model') {
+    return '私有模型';
+  }
+  if (source === 'capability_default') {
+    return '能力默认';
+  }
+  if (source === 'model_override') {
+    return '模型定价';
+  }
+  return '默认';
 }
 
 function openDrawer(model: AdminModel) {

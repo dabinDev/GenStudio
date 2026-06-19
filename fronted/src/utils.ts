@@ -191,6 +191,7 @@ export function safeModelDescription(model: Pick<ModelDefinition, "description" 
   if (!model?.description?.trim()) return fallback;
   if (model.isPublic && model.canEdit !== true) return "平台公共模型，可直接用于创作。";
   const text = stripUpstreamUrls(model.description);
+  if (text === "用户自定义模型") return "专属创作模型";
   return text && !isBrokenDisplayText(text) ? text : fallback;
 }
 

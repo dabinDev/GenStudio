@@ -441,10 +441,18 @@ describe("workbench style application", () => {
     expect(source).toContain("还没有保存的对话");
     expect(source).toContain("专属创作模型");
     expect(source).toContain("创作资产");
+    expect(source).toContain("模型资产");
+    expect(source).toContain("账户中心");
+    expect(source).toContain('showToast("资料已保存")');
+    expect(source).toContain("conversationStatusLabel(conversation.status)");
     expect(source).not.toContain("多模型创作调试台");
     expect(source).not.toContain("玩法说明");
     expect(source).not.toContain("No saved conversations yet.");
     expect(source).not.toContain("用户自定义模型");
+    expect(source).not.toContain("Model Settings");
+    expect(source).not.toContain("Profile saved");
+    expect(source).not.toContain('<p class="eyebrow">Profile</p>');
+    expect(source).not.toContain('conversation.status || "active"');
     expect(overrideIndex).toBeGreaterThan(-1);
     expect(styles.indexOf(".shell .empty-canvas-card", overrideIndex)).toBeGreaterThan(overrideIndex);
     expect(styles.indexOf(".shell .composer-topline", overrideIndex)).toBeGreaterThan(overrideIndex);

@@ -1393,6 +1393,16 @@ function messageStatusLabel(message: ConversationMessage): string {
   return "完成";
 }
 
+function conversationStatusLabel(status?: string): string {
+  const normalized = (status || "active").trim().toLowerCase();
+  if (normalized === "active") return "进行中";
+  if (normalized === "success" || normalized === "completed" || normalized === "done") return "已完成";
+  if (normalized === "processing" || normalized === "running" || normalized === "queued") return "生成中";
+  if (normalized === "error" || normalized === "failed") return "异常";
+  if (normalized === "archived") return "已归档";
+  return "状态待确认";
+}
+
 function formatConversationTime(value: string): string {
   const time = new Date(value);
   if (Number.isNaN(time.getTime())) return "";
@@ -1827,7 +1837,7 @@ async function handleProfileSave() {
       avatarUrl: profileForm.avatarUrl,
     });
     profileForm.success = "个人信息已保存。";
-    showToast("Profile saved");
+    showToast("资料已保存");
   } catch (error) {
     profileForm.error = error instanceof Error ? error.message : "保存个人信息失败。";
     showToast(profileForm.error, "error");
@@ -3751,7 +3761,7 @@ async function removeUnavailableModels() {
               <strong>{{ conversationDisplayTitle(conversation) }}</strong>
               <span class="history-meta">
                 <span>{{ formatConversationTime(conversation.updatedAt) }}</span>
-                <span>{{ conversation.status || "active" }}</span>
+                <span>{{ conversationStatusLabel(conversation.status) }}</span>
               </span>
             </button>
             <p v-if="!visibleConversations.length" class="muted">当前类型还没有历史记录。</p>
@@ -4422,7 +4432,7 @@ async function removeUnavailableModels() {
       <section v-else-if="view === 'profile'" class="settings-page profile-page">
         <section class="settings-hero profile-hero">
           <div>
-            <p class="eyebrow">Profile</p>
+            <p class="eyebrow">账户中心</p>
             <h2>个人信息</h2>
             <p class="muted">当前账号的密钥、模型、子模型和创作历史都会按用户隔离保存。</p>
           </div>
@@ -4522,7 +4532,7 @@ async function removeUnavailableModels() {
       <section v-else class="settings-page">
         <section class="settings-hero">
           <div>
-            <p class="eyebrow">Model Settings</p>
+            <p class="eyebrow">模型资产</p>
             <h2>模型配置</h2>
             <p class="muted">{{ auth.state.user ? "配置会保存到创意工坊数据库，密钥只由后端调用。" : "未登录时配置会缓存在当前浏览器，登录后可保存到数据库。" }}</p>
           </div>

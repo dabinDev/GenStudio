@@ -58,6 +58,41 @@ export function formatDuration(value: number) {
   return `${(value / 1000).toFixed(2)}s`;
 }
 
+export function friendlyModelError(value?: string, capability?: string) {
+  const message = String(value || '').trim();
+  const normalized = message.toLowerCase();
+  if (
+    normalized.includes('temporarily unavailable')
+    || normalized.includes('service unavailable')
+    || normalized.includes('timeout')
+    || normalized.includes('timed out')
+    || normalized.includes('504')
+  ) {
+    return '上游服务暂时不可用，请稍后重试。';
+  }
+  if (
+    normalized.includes('bad_response_body')
+    || normalized.includes('non json')
+    || normalized.includes('non-json')
+    || normalized.includes("invalid character '<'")
+  ) {
+    return '上游返回异常，请检查接口配置。';
+  }
+  if (message && !/[a-zA-Z]{3,}/.test(message)) {
+    return message;
+  }
+  if (capability === 'text') {
+    return '文案创作调用异常';
+  }
+  if (capability === 'image') {
+    return '图片创作调用异常';
+  }
+  if (capability === 'video') {
+    return '视频创作调用异常';
+  }
+  return '暂无错误摘要';
+}
+
 function isRangeValue(value: string): value is DashboardRangeValue {
   return rangeOptions.some((item) => item.value === value);
 }

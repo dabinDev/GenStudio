@@ -88,7 +88,7 @@
                 <router-link class="admin-dashboard__table-link admin-dashboard__action-card" :to="failedModelRecordLink(model)">
                   <span>
                     <strong>{{ model.modelName }}</strong>
-                    <small>{{ model.lastError || model.capability }}</small>
+                    <small>{{ friendlyModelError(model.lastError, model.capability) }}</small>
                   </span>
                   <em class="admin-dashboard__action-pill">查看失败记录</em>
                 </router-link>
@@ -181,6 +181,7 @@ import {
   formatDuration,
   formatNumber,
   formatPercent,
+  friendlyModelError,
   rangeOptions,
 } from './dashboardState';
 

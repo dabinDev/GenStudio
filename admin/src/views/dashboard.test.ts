@@ -9,6 +9,7 @@ import {
   DASHBOARD_TITLE,
   formatDuration,
   formatPercent,
+  friendlyModelError,
 } from './dashboardState';
 
 const chartMock = vi.hoisted(() => {
@@ -184,6 +185,12 @@ describe('DashboardView', () => {
     expect(formatPercent(0.125)).toBe('12.5%');
     expect(formatDuration(980)).toBe('980ms');
     expect(formatDuration(2450)).toBe('2.45s');
+  });
+
+  it('maps upstream model errors to friendly dashboard summaries', () => {
+    expect(friendlyModelError('Service temporarily unavailable')).toBe('上游服务暂时不可用，请稍后重试。');
+    expect(friendlyModelError("invalid character '<' looking for beginning of value")).toBe('上游返回异常，请检查接口配置。');
+    expect(friendlyModelError('', 'video')).toBe('视频创作调用异常');
   });
 
   it('shows a friendly error when metrics cannot load', async () => {

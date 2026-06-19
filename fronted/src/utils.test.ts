@@ -316,6 +316,15 @@ describe("model selection helpers", () => {
     ).toBe("选择模型并输入需求开始调试。");
   });
 
+  it("replaces legacy generic custom model descriptions with product copy", () => {
+    expect(
+      safeModelDescription(
+        { ...textModel, isPublic: false, canEdit: true, description: "用户自定义模型" },
+        "选择模型后即可套用模板、上传素材并开始创作。",
+      ),
+    ).toBe("专属创作模型");
+  });
+
   it("picks only editable server models when publishing selected models", () => {
     const privateServer = { ...textModel, id: "private-server", serverManaged: true, isPublic: false, canEdit: true };
     const publicServer = { ...textModel, id: "public-server", serverManaged: true, isPublic: true, canEdit: true };

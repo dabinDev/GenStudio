@@ -26,7 +26,7 @@
           :loading="isExporting"
           @click="exportCurrentUsers"
         >
-          导出当前列表
+          导出用户列表
         </el-button>
       </div>
     </header>

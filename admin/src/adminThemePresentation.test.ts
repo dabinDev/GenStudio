@@ -352,6 +352,12 @@ describe('admin theme presentation', () => {
     expect(view).toContain('capabilityLabel(row.capability)');
     expect(view).toContain('row.adapter');
     expect(view).toContain('row.isPublic ?');
+    expect(view).toContain("source === 'private_model'");
+    expect(view).toContain("source === 'capability_default'");
+    expect(view).toContain('私有模型');
+    expect(view).toContain('能力默认');
+    expect(view).toContain('模型定价');
+    expect(view).not.toContain("return source || '默认'");
     expect(markerIndex).toBeGreaterThan(-1);
     expect(styles.indexOf('.admin-model-center__identity', markerIndex)).toBeGreaterThan(markerIndex);
     expect(styles.indexOf('.admin-model-center__source-badges', markerIndex)).toBeGreaterThan(markerIndex);
@@ -374,6 +380,8 @@ describe('admin theme presentation', () => {
     const main = readFileSync(resolve(process.cwd(), 'src/main.ts'), 'utf8');
     const records = recordsVue();
     const audit = readFileSync(resolve(process.cwd(), 'src/views/AuditLogsView.vue'), 'utf8');
+    const users = readFileSync(resolve(process.cwd(), 'src/views/UserCreditsView.vue'), 'utf8');
+    const system = readFileSync(resolve(process.cwd(), 'src/views/SystemSettingsView.vue'), 'utf8');
     const styles = stylesCss();
     const markerIndex = styles.indexOf('Admin localized operations polish v9');
 
@@ -385,7 +393,11 @@ describe('admin theme presentation', () => {
     expect(audit).toContain('选择执行状态');
     expect(audit).toContain('选择风险等级');
     expect(audit).toContain('导出审计日志');
-    expect(`${records}\n${audit}`).not.toContain('导出当前列表');
+    expect(audit).toContain('statusLabel(row.status)');
+    expect(users).toContain('导出用户列表');
+    expect(system).toContain('个人私有模型不扣积分');
+    expect(`${records}\n${audit}\n${users}`).not.toContain('导出当前列表');
+    expect(system).not.toContain('用户自定义模型不扣积分');
     expect(markerIndex).toBeGreaterThan(-1);
     expect(styles.indexOf('.admin-content-page__filters .el-select', markerIndex)).toBeGreaterThan(markerIndex);
     expect(styles.indexOf('.admin-content-page__actions .el-button', markerIndex)).toBeGreaterThan(markerIndex);

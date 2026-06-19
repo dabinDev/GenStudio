@@ -26,7 +26,7 @@
         <template #header>
           <div class="admin-settings-grid__head">
             <strong>默认积分价格</strong>
-            <span>仅对公用模型生效，用户自定义模型不扣积分。</span>
+            <span>仅对公用模型生效，个人私有模型不扣积分。</span>
           </div>
         </template>
         <el-form label-position="top">

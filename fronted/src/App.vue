@@ -3869,28 +3869,32 @@ async function removeUnavailableModels() {
             </article>
           </div>
 
-          <div v-else class="empty-canvas">
+          <div v-else class="empty-canvas empty-canvas-workbench">
             <div class="empty-canvas-card">
-              <div :class="['hero-model-mark', activeModel && modelIconUrl(activeModel) ? 'hero-model-mark-has-icon' : '']">
-                <img v-if="activeModel && modelIconUrl(activeModel)" :src="modelIconUrl(activeModel)" :alt="modelDisplayName(activeModel)" loading="lazy" @error="hideBrokenModelIcon" />
-                <span class="hero-model-mark-label">{{ activeCapability === "text" ? "T" : activeCapability === "image" ? "I" : "V" }}</span>
-              </div>
-              <div class="empty-canvas-top">
-                <span class="badge badge-accent">{{ activeCapability ? CAPABILITY_LABELS[activeCapability] : "创作" }}</span>
-                <span :class="['parameter-source-chip', activeModelHasCatalogParameters ? 'parameter-source-chip-exact' : 'parameter-source-chip-generic']">
-                  {{ activeModelParameterSourceLabel }}
-                </span>
-                <span>{{ activeModel ? modelDisplayName(activeModel) : "未选择模型" }}</span>
-              </div>
-              <h3>{{ activeModel ? modelDisplayName(activeModel) : "选择创作模型" }}</h3>
-              <p class="muted">{{ modelSafeDescription(activeModel) }}</p>
-              <div class="canvas-hints">
-                <span v-if="view === 'images'">电商海报</span>
-                <span v-if="view === 'images'">电影感剧照</span>
-                <span v-if="view === 'text'">品牌短句</span>
-                <span v-if="view === 'text'">视频脚本</span>
-                <span v-if="view === 'videos'">文生视频</span>
-                <span v-if="view === 'videos'">首尾帧</span>
+              <div class="empty-canvas-model-strip">
+                <div :class="['hero-model-mark', activeModel && modelIconUrl(activeModel) ? 'hero-model-mark-has-icon' : '']">
+                  <img v-if="activeModel && modelIconUrl(activeModel)" :src="modelIconUrl(activeModel)" :alt="modelDisplayName(activeModel)" loading="lazy" @error="hideBrokenModelIcon" />
+                  <span class="hero-model-mark-label">{{ activeCapability === "text" ? "T" : activeCapability === "image" ? "I" : "V" }}</span>
+                </div>
+                <div class="empty-canvas-model-copy">
+                  <div class="empty-canvas-top">
+                    <span class="badge badge-accent">{{ activeCapability ? CAPABILITY_LABELS[activeCapability] : "创作" }}</span>
+                    <span :class="['parameter-source-chip', activeModelHasCatalogParameters ? 'parameter-source-chip-exact' : 'parameter-source-chip-generic']">
+                      {{ activeModelParameterSourceLabel }}
+                    </span>
+                    <span>{{ activeModel ? modelDisplayName(activeModel) : "未选择模型" }}</span>
+                  </div>
+                  <h3>{{ activeModel ? modelDisplayName(activeModel) : "选择创作模型" }}</h3>
+                  <p class="muted">{{ modelSafeDescription(activeModel) }}</p>
+                  <div class="canvas-hints">
+                    <span v-if="view === 'images'">电商海报</span>
+                    <span v-if="view === 'images'">电影感剧照</span>
+                    <span v-if="view === 'text'">品牌短句</span>
+                    <span v-if="view === 'text'">视频脚本</span>
+                    <span v-if="view === 'videos'">文生视频</span>
+                    <span v-if="view === 'videos'">首尾帧</span>
+                  </div>
+                </div>
               </div>
               <div class="empty-canvas-flow">
                 <span>{{ activeModel ? "当前模型已就绪" : "选择模型" }}</span>
@@ -3923,7 +3927,7 @@ async function removeUnavailableModels() {
                 >
                   去设置文案模型
                 </button>
-                <button type="button" @click="composerUiState.collapsed = false">开始创作</button>
+                <button class="empty-canvas-primary-action" type="button" @click="composerUiState.collapsed = false">开始创作</button>
               </div>
             </div>
           </div>

@@ -420,4 +420,20 @@ describe('admin theme presentation', () => {
     expect(styles.indexOf('.admin-content-page__record-meta', markerIndex)).toBeGreaterThan(markerIndex);
     expect(styles.indexOf('box-shadow: inset 4px 0 0', markerIndex)).toBeGreaterThan(markerIndex);
   });
+
+  it('presents creation records as scan-friendly operation cards', () => {
+    const records = recordsVue();
+    const styles = stylesCss();
+    const markerIndex = styles.indexOf('Admin records operation stream polish v11');
+
+    expect(records).toContain('admin-content-page__record-flow');
+    expect(records).toContain('admin-content-page__record-context');
+    expect(records).toContain('admin-content-page__record-open');
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf('.admin-content-page__record-flow', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('.admin-content-page__record-context', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('.admin-content-page__record-open', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('grid-template-columns: minmax(280px, 1.05fr) minmax(320px, 1.2fr) minmax(180px, 0.58fr) 84px', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('min-height: 112px', markerIndex)).toBeGreaterThan(markerIndex);
+  });
 });

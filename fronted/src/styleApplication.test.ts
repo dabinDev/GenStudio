@@ -475,6 +475,23 @@ describe("workbench style application", () => {
     expect(styles.indexOf("grid-template-columns: repeat(2, minmax(0, 1fr))", overrideIndex)).toBeGreaterThan(overrideIndex);
   });
 
+  it("turns the empty creative canvas into a compact workbench status strip", () => {
+    const source = appVue();
+    const styles = stylesCss();
+    const overrideIndex = styles.indexOf("Creative Workshop compact creation workbench v32");
+
+    expect(source).toContain("empty-canvas-workbench");
+    expect(source).toContain("empty-canvas-model-strip");
+    expect(source).toContain("empty-canvas-primary-action");
+    expect(overrideIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf(".shell .empty-canvas-workbench", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell .empty-canvas-model-strip", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell .empty-canvas-primary-action", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf("min-height: 0 !important", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf("grid-template-columns: auto minmax(0, 1fr) auto", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf("max-width: 980px", overrideIndex)).toBeGreaterThan(overrideIndex);
+  });
+
   it("does not keep the old embedded admin shell in the creative workspace", () => {
     const source = appVue();
     const styles = stylesCss();

@@ -11026,7 +11026,106 @@ body {
   overflow: visible !important;
 }
 
+/* Creative Workshop compact creation workbench v32 */
+.shell .empty-canvas-workbench {
+  min-height: 0 !important;
+  align-content: start !important;
+  place-items: stretch !important;
+  padding: clamp(12px, 2.4vh, 28px) clamp(16px, 3vw, 34px) 8px !important;
+  text-align: left !important;
+}
+
+.shell .empty-canvas-workbench .empty-canvas-card {
+  width: min(100%, 980px) !important;
+  max-width: 980px !important;
+  justify-self: center !important;
+  justify-items: stretch !important;
+  gap: 14px !important;
+  padding: 16px 18px !important;
+}
+
+.shell .empty-canvas-model-strip {
+  display: grid !important;
+  grid-template-columns: auto minmax(0, 1fr) auto !important;
+  align-items: center !important;
+  gap: 16px !important;
+  min-width: 0 !important;
+}
+
+.shell .empty-canvas-model-copy {
+  display: grid !important;
+  gap: 8px !important;
+  min-width: 0 !important;
+}
+
+.shell .empty-canvas-model-strip .hero-model-mark {
+  width: 54px !important;
+  height: 54px !important;
+  align-self: start !important;
+}
+
+.shell .empty-canvas-workbench .empty-canvas-top {
+  justify-content: flex-start !important;
+}
+
+.shell .empty-canvas-workbench h3 {
+  margin: 0 !important;
+  font-size: clamp(24px, 2.4vw, 34px) !important;
+  line-height: 1.08 !important;
+}
+
+.shell .empty-canvas-workbench .muted {
+  max-width: 720px !important;
+  margin: 0 !important;
+  line-height: 1.62 !important;
+}
+
+.shell .empty-canvas-workbench .canvas-hints {
+  justify-content: flex-start !important;
+  margin-top: 0 !important;
+}
+
+.shell .empty-canvas-workbench .empty-canvas-flow {
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  margin-top: 2px !important;
+}
+
+.shell .empty-canvas-workbench .empty-canvas-actions {
+  justify-content: flex-end !important;
+  margin-top: 0 !important;
+}
+
+.shell .empty-canvas-primary-action {
+  min-width: 118px !important;
+}
+
+.shell[data-theme="light"] .empty-canvas-workbench .empty-canvas-card {
+  border-color: rgba(77, 129, 124, 0.18) !important;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(241, 248, 250, 0.84)) !important;
+  box-shadow: 0 16px 42px rgba(22, 58, 78, 0.11) !important;
+}
+
+.shell[data-theme="dark"] .empty-canvas-workbench .empty-canvas-card {
+  border-color: rgba(95, 181, 213, 0.14) !important;
+  background:
+    linear-gradient(180deg, rgba(11, 25, 39, 0.9), rgba(7, 18, 31, 0.78)) !important;
+  box-shadow: 0 18px 54px rgba(0, 0, 0, 0.34) !important;
+}
+
 @media (max-width: 760px) {
+  .shell .empty-canvas-model-strip {
+    grid-template-columns: 1fr !important;
+  }
+
+  .shell .empty-canvas-model-strip .hero-model-mark {
+    justify-self: start !important;
+  }
+
+  .shell .empty-canvas-workbench .empty-canvas-flow {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
   .shell .settings-row-actions-primary {
     grid-template-columns: 1fr !important;
   }

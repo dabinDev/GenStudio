@@ -10825,6 +10825,86 @@ body {
     #ffffff !important;
 }
 
+/* Creative Workshop guided empty canvas v29 */
+.shell .empty-canvas-actions {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  justify-content: center !important;
+  gap: 10px !important;
+  margin-top: 2px !important;
+}
+
+.shell .empty-canvas-actions button {
+  min-height: 38px !important;
+  padding: 0 15px !important;
+  border-radius: 10px !important;
+  white-space: nowrap !important;
+}
+
+.shell .empty-canvas-flow {
+  display: grid !important;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  gap: 8px !important;
+  width: min(100%, 560px) !important;
+  margin-top: 4px !important;
+}
+
+.shell .empty-canvas-flow span {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  min-height: 34px !important;
+  padding: 0 10px !important;
+  border: 1px solid transparent !important;
+  border-radius: 999px !important;
+  font-size: 12px !important;
+  font-weight: 800 !important;
+  letter-spacing: 0 !important;
+}
+
+.shell[data-theme="light"] .empty-canvas-actions button {
+  color: #0c5260 !important;
+  border-color: rgba(39, 106, 127, 0.2) !important;
+  background: rgba(255, 255, 255, 0.82) !important;
+  box-shadow: 0 12px 24px rgba(27, 66, 94, 0.1) !important;
+}
+
+.shell[data-theme="light"] .empty-canvas-actions button:not(.button-secondary) {
+  color: #ffffff !important;
+  border-color: transparent !important;
+  background: linear-gradient(135deg, #0a8f86, #0e67b7) !important;
+}
+
+.shell[data-theme="light"] .empty-canvas-flow span {
+  color: #31586b !important;
+  border-color: rgba(65, 111, 135, 0.16) !important;
+  background: rgba(239, 248, 250, 0.84) !important;
+}
+
+.shell[data-theme="dark"] .empty-canvas-actions button {
+  color: #d9fffb !important;
+  border-color: rgba(37, 224, 201, 0.18) !important;
+  background: rgba(11, 37, 59, 0.84) !important;
+}
+
+.shell[data-theme="dark"] .empty-canvas-actions button:not(.button-secondary) {
+  color: #061816 !important;
+  border-color: transparent !important;
+  background: linear-gradient(135deg, #25e0c9, #50a5f4) !important;
+}
+
+.shell[data-theme="dark"] .empty-canvas-flow span {
+  color: #b9dce7 !important;
+  border-color: rgba(101, 170, 198, 0.16) !important;
+  background: rgba(14, 43, 61, 0.74) !important;
+}
+
+@media (max-width: 640px) {
+  .shell .empty-canvas-flow {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}
+
 .shell[data-theme="light"] .settings-filter-tabs button,
 .shell[data-theme="light"] .settings-search-box,
 .shell[data-theme="light"] .settings-primary-model {

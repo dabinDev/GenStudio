@@ -328,4 +328,45 @@ describe('admin theme presentation', () => {
     expect(styles.indexOf('.admin-content-page__advanced-filters', markerIndex)).toBeGreaterThan(markerIndex);
     expect(styles.indexOf('grid-template-columns: repeat(auto-fit', markerIndex)).toBeGreaterThan(markerIndex);
   });
+
+  it('presents dashboard failures as actionable record links', () => {
+    const view = readFileSync(resolve(process.cwd(), 'src/views/DashboardView.vue'), 'utf8');
+    const styles = stylesCss();
+    const markerIndex = styles.indexOf('Admin dashboard actionable insight cards v5');
+
+    expect(view).toContain('admin-dashboard__action-card');
+    expect(view).toContain('查看失败记录');
+    expect(view).toContain('查看慢调用');
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf('.admin-dashboard__action-card', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('.admin-dashboard__action-pill', markerIndex)).toBeGreaterThan(markerIndex);
+  });
+
+  it('shows model assets with source badges and compact identity rows', () => {
+    const view = modelCenterVue();
+    const styles = stylesCss();
+    const markerIndex = styles.indexOf('Admin model asset list polish v6');
+
+    expect(view).toContain('admin-model-center__identity');
+    expect(view).toContain('admin-model-center__source-badges');
+    expect(view).toContain('capabilityLabel(row.capability)');
+    expect(view).toContain('row.adapter');
+    expect(view).toContain('row.isPublic ?');
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf('.admin-model-center__identity', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('.admin-model-center__source-badges', markerIndex)).toBeGreaterThan(markerIndex);
+  });
+
+  it('turns the prompt empty state into a guided admin setup surface', () => {
+    const view = promptCenterVue();
+    const styles = stylesCss();
+    const markerIndex = styles.indexOf('Admin prompt empty setup surface v8');
+
+    expect(view).toContain('admin-prompt-center__empty-steps');
+    expect(view).toContain('确认模板类型');
+    expect(view).toContain('测试多样例');
+    expect(view).toContain('检查模型启用');
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf('.admin-prompt-center__empty-steps', markerIndex)).toBeGreaterThan(markerIndex);
+  });
 });

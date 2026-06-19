@@ -85,10 +85,13 @@
           <tbody>
             <tr v-for="model in failedModels" :key="model.modelGroupId">
               <td>
-                <router-link class="admin-dashboard__table-link" :to="failedModelRecordLink(model)">
-                  <strong>{{ model.modelName }}</strong>
+                <router-link class="admin-dashboard__table-link admin-dashboard__action-card" :to="failedModelRecordLink(model)">
+                  <span>
+                    <strong>{{ model.modelName }}</strong>
+                    <small>{{ model.lastError || model.capability }}</small>
+                  </span>
+                  <em class="admin-dashboard__action-pill">查看失败记录</em>
                 </router-link>
-                <small>{{ model.lastError || model.capability }}</small>
               </td>
               <td>{{ formatNumber(model.failedCalls || 0) }}</td>
               <td>{{ formatPercent(model.failureRate || 0) }}</td>
@@ -115,10 +118,13 @@
           <tbody>
             <tr v-for="model in slowModels" :key="model.modelGroupId">
               <td>
-                <router-link class="admin-dashboard__table-link" :to="modelRecordLink(model)">
-                  <strong>{{ model.modelName }}</strong>
+                <router-link class="admin-dashboard__table-link admin-dashboard__action-card" :to="modelRecordLink(model)">
+                  <span>
+                    <strong>{{ model.modelName }}</strong>
+                    <small>{{ model.capability }}</small>
+                  </span>
+                  <em class="admin-dashboard__action-pill">查看慢调用</em>
                 </router-link>
-                <small>{{ model.capability }}</small>
               </td>
               <td>{{ formatNumber(model.totalCalls) }}</td>
               <td>{{ formatDuration(model.averageDurationMs || 0) }}</td>

@@ -413,6 +413,23 @@ describe("workbench style application", () => {
     expect(styles.indexOf("border-left: 3px solid #0d9488 !important", overrideIndex)).toBeGreaterThan(overrideIndex);
   });
 
+  it("uses a guided empty canvas with a direct video model setup path", () => {
+    const source = appVue();
+    const styles = stylesCss();
+    const overrideIndex = styles.indexOf("Creative Workshop guided empty canvas v29");
+
+    expect(source).toContain("empty-canvas-actions");
+    expect(source).toContain("empty-canvas-flow");
+    expect(source).toContain("去设置视频模型");
+    expect(source).toContain("settingsState.activeCapability = 'video'");
+    expect(source).toContain("推荐模板");
+    expect(overrideIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf(".shell .empty-canvas-actions", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell .empty-canvas-flow", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"light\"] .empty-canvas-actions button", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".shell[data-theme=\"dark\"] .empty-canvas-flow span", overrideIndex)).toBeGreaterThan(overrideIndex);
+  });
+
   it("does not keep the old embedded admin shell in the creative workspace", () => {
     const source = appVue();
     const styles = stylesCss();

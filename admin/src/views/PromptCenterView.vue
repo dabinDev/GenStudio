@@ -101,6 +101,23 @@
     <section v-else class="admin-prompt-center__empty">
       <strong>还没有匹配的提示语模板</strong>
       <p>可以先查看上方模板样例，确认结构后在已有默认模板中编辑，或切换筛选条件查看其它类型。</p>
+      <div class="admin-prompt-center__empty-steps">
+        <article>
+          <span>01</span>
+          <strong>确认模板类型</strong>
+          <small>先选择文案、图片或视频，保证前台 AI 完善按钮使用正确模板。</small>
+        </article>
+        <article>
+          <span>02</span>
+          <strong>测试多样例</strong>
+          <small>用短提示词、参考图提示词和复杂分镜各测一次渲染效果。</small>
+        </article>
+        <article>
+          <span>03</span>
+          <strong>检查模型启用</strong>
+          <small>确认目标模型已启用 AI 文案优化，并检查是否存在专属模板。</small>
+        </article>
+      </div>
       <div>
         <el-button @click="keyword = ''; capability = 'all'; loadTemplates()">查看全部</el-button>
         <el-button type="primary" @click="openStarterExample(promptStarterExamples[0])">查看模板样例</el-button>

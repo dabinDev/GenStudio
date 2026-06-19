@@ -105,9 +105,19 @@
         <el-table-column type="selection" width="44" reserve-selection />
         <el-table-column label="模型" min-width="240">
           <template #default="{ row }">
-            <div class="admin-model-center__model-name">
-              <strong>{{ row.publicDisplayName || row.name }}</strong>
-              <small>{{ row.name }} · {{ row.primaryModelName }}</small>
+            <div class="admin-model-center__identity">
+              <div class="admin-model-center__model-mark">
+                {{ capabilityLabel(row.capability).slice(0, 1) }}
+              </div>
+              <div class="admin-model-center__model-name">
+                <strong>{{ row.publicDisplayName || row.name }}</strong>
+                <small>{{ row.name }} · {{ row.primaryModelName }}</small>
+                <div class="admin-model-center__source-badges">
+                  <span>{{ capabilityLabel(row.capability) }}</span>
+                  <span>{{ row.adapter }}</span>
+                  <span>{{ row.isPublic ? '公用模型' : '私有模型' }}</span>
+                </div>
+              </div>
             </div>
           </template>
         </el-table-column>

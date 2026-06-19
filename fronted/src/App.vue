@@ -3882,6 +3882,39 @@ async function removeUnavailableModels() {
                 <span v-if="view === 'videos'">文生视频</span>
                 <span v-if="view === 'videos'">首尾帧</span>
               </div>
+              <div class="empty-canvas-flow">
+                <span>{{ activeModel ? "当前模型已就绪" : "选择模型" }}</span>
+                <span>推荐模板</span>
+                <span>{{ view === "videos" ? "上传首帧/参考图" : view === "images" ? "上传参考图" : "完善提示词" }}</span>
+                <span>{{ view === "text" ? "发送" : "生成" }}</span>
+              </div>
+              <div class="empty-canvas-actions">
+                <button
+                  v-if="view === 'videos' && !activeModel"
+                  type="button"
+                  class="button-secondary"
+                  @click="settingsState.activeCapability = 'video'; navigate('settings')"
+                >
+                  去设置视频模型
+                </button>
+                <button
+                  v-else-if="view === 'images' && !activeModel"
+                  type="button"
+                  class="button-secondary"
+                  @click="settingsState.activeCapability = 'image'; navigate('settings')"
+                >
+                  去设置图片模型
+                </button>
+                <button
+                  v-else-if="view === 'text' && !activeModel"
+                  type="button"
+                  class="button-secondary"
+                  @click="settingsState.activeCapability = 'text'; navigate('settings')"
+                >
+                  去设置文案模型
+                </button>
+                <button type="button" @click="composerUiState.collapsed = false">打开输入区</button>
+              </div>
             </div>
           </div>
         </div>

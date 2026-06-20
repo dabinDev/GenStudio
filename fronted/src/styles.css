@@ -12027,3 +12027,54 @@ button:disabled {
 .shell .media-preview-toolbar {
   border-bottom: 1px solid var(--line) !important;
 }
+
+/* ---- I. 创作页进一步精简：hero 压成紧凑横幅 + 模板更紧凑 ----
+   目标：减少"脚手架"高度，把竖向空间还给输入区。纯外观，不改功能。 */
+.shell .empty-canvas-workbench .empty-canvas-card {
+  padding: 14px 20px !important;
+  gap: 8px !important;
+}
+.shell .empty-canvas-workbench h3 {
+  font-size: clamp(17px, 1.4vw, 21px) !important;
+}
+.shell .empty-canvas-model-strip .hero-model-mark {
+  width: 40px !important;
+  height: 40px !important;
+}
+.shell .empty-canvas-workbench .muted {
+  -webkit-line-clamp: 1 !important;
+  font-size: 12px !important;
+}
+.shell .empty-canvas-workbench .canvas-hints {
+  display: none !important;
+}
+.shell .empty-canvas-workbench .empty-canvas-flow span {
+  min-height: 26px !important;
+  font-size: 11px !important;
+}
+.shell .composer-template-library {
+  padding-top: 0 !important;
+}
+.shell .composer-template-card {
+  min-height: 80px !important;
+  gap: 5px !important;
+  padding: 10px 12px !important;
+}
+.shell .composer-template-example {
+  display: none !important;
+}
+.shell .composer-template-summary {
+  -webkit-line-clamp: 2 !important;
+  display: -webkit-box !important;
+  -webkit-box-orient: vertical !important;
+  overflow: hidden !important;
+}
+
+/* hero 顶部对齐 + 加宽为页头横幅（消除悬浮在空白中的孤立感） */
+.shell .empty-canvas-workbench {
+  align-content: start !important;
+  place-items: start center !important;
+}
+.shell .empty-canvas-workbench .empty-canvas-card {
+  width: min(100%, 1120px) !important;
+}

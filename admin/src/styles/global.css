@@ -3283,3 +3283,142 @@ body {
     width: 100%;
   }
 }
+
+/* =====================================================================
+   Admin vibrant identity v14 — 后台「创意活力」品牌对齐（克制版）
+   签名身份：青→柠→蓝；ops 控制台主色取青绿，渐变仅用于品牌/激活/关键 CTA。
+   追加于末尾以胜出级联；覆盖 v2/v3 旧蓝；旧标记与测试断言保持不变。
+   ===================================================================== */
+
+/* ---- A. 令牌对齐 ---- */
+:root,
+[data-theme='light'] {
+  --admin-color-primary: #0f9488;
+  --admin-color-primary-strong: #0c7a70;
+  --admin-color-bg: #eef4f8;
+  --admin-color-surface: #ffffff;
+  --admin-color-surface-muted: #eaf1f6;
+  --admin-color-border: #dde7ef;
+  --admin-shadow-panel: 0 22px 50px -26px rgba(14, 52, 74, 0.30);
+  --admin-radius-sm: 8px;
+  --admin-radius-md: 12px;
+  --el-color-primary: #0f9488;
+  --el-color-primary-light-3: #3fb4a8;
+  --el-color-primary-light-5: #6fc9c0;
+  --el-color-primary-light-7: #a6ded8;
+  --el-color-primary-light-8: #c5ebe7;
+  --el-color-primary-light-9: #e6f6f4;
+  --el-color-primary-dark-2: #0c7a70;
+}
+
+[data-theme='dark'] {
+  --admin-color-primary: #2dd4bf;
+  --admin-color-primary-strong: #5eead4;
+  --admin-color-bg: #0a1119;
+  --admin-color-surface: #111b26;
+  --admin-color-surface-muted: #17242f;
+  --admin-color-border: #243240;
+  --admin-shadow-panel: 0 24px 54px -26px rgba(0, 0, 0, 0.62);
+  --el-color-primary: #2dd4bf;
+  --el-color-primary-light-3: #25a99a;
+  --el-color-primary-light-5: #1d8b80;
+  --el-color-primary-light-7: #166b63;
+  --el-color-primary-light-8: #134f49;
+  --el-color-primary-light-9: #102f2c;
+  --el-color-primary-dark-2: #5eead4;
+}
+
+/* ---- B. Element Plus 主色对齐（覆盖 v3 旧蓝按钮/开关） ---- */
+[data-theme='light'] .el-button--primary:not(.is-link):not(.is-text) {
+  --el-button-bg-color: #0f9488;
+  --el-button-border-color: #0f9488;
+  --el-button-hover-bg-color: #0c7a70;
+  --el-button-hover-border-color: #0c7a70;
+  --el-button-active-bg-color: #0a6a61;
+  --el-button-active-border-color: #0a6a61;
+}
+[data-theme='dark'] .el-button--primary:not(.is-link):not(.is-text) {
+  --el-button-bg-color: #1d8b80;
+  --el-button-border-color: #1d8b80;
+  --el-button-hover-bg-color: #2dd4bf;
+  --el-button-hover-border-color: #2dd4bf;
+  --el-button-active-bg-color: #25a99a;
+  --el-button-active-border-color: #25a99a;
+  --el-button-text-color: #ffffff;
+}
+[data-theme='light'] .el-switch.is-checked .el-switch__core,
+[data-theme='dark'] .el-switch.is-checked .el-switch__core {
+  --el-switch-on-color: var(--admin-color-primary);
+  background-color: var(--admin-color-primary);
+  border-color: var(--admin-color-primary);
+}
+.el-tabs__item.is-active,
+.el-tabs__item:hover {
+  color: var(--admin-color-primary);
+}
+.el-tabs__active-bar {
+  background-color: var(--admin-color-primary);
+}
+
+/* ---- C. 布局质感 ---- */
+.admin-layout {
+  background: var(--admin-color-bg);
+}
+.admin-sidebar {
+  background:
+    radial-gradient(360px 180px at 30% 0%, rgba(20, 184, 166, 0.10), transparent 70%),
+    var(--admin-color-surface);
+}
+[data-theme='dark'] .admin-sidebar {
+  background:
+    radial-gradient(360px 180px at 30% 0%, rgba(45, 212, 191, 0.12), transparent 70%),
+    var(--admin-color-surface);
+}
+.admin-brand {
+  position: relative;
+}
+.admin-brand::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(120deg, #14b8a6 0%, #84cc16 50%, #3b82f6 100%);
+}
+.admin-brand strong {
+  color: var(--admin-color-primary);
+}
+.admin-menu-mark {
+  color: #ffffff;
+  background: linear-gradient(135deg, #14b8a6, #0ea5e9);
+  font-size: 14px;
+}
+.admin-menu-mark .el-icon {
+  font-size: 15px;
+}
+.admin-menu .el-menu-item.is-active {
+  color: var(--admin-color-primary);
+  background: linear-gradient(90deg, rgba(20, 184, 166, 0.14), transparent 80%);
+  border-right: 2px solid var(--admin-color-primary);
+}
+.admin-menu .el-menu-item.is-active .admin-menu-mark {
+  background: linear-gradient(120deg, #14b8a6 0%, #84cc16 55%, #3b82f6 100%);
+}
+.admin-topbar {
+  background:
+    linear-gradient(180deg, rgba(20, 184, 166, 0.05), transparent 60%),
+    var(--admin-color-surface);
+}
+.admin-topbar h1 {
+  background: linear-gradient(120deg, #0f9488, #2563eb);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+[data-theme='dark'] .admin-topbar h1 {
+  background: linear-gradient(120deg, #2dd4bf, #60a5fa);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}

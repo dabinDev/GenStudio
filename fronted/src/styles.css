@@ -11272,3 +11272,728 @@ body {
 .shell[data-theme="dark"] .composer-card-expanded:has(.media-composer-grid) .composer-template-card {
   background: rgba(7, 22, 36, 0.58) !important;
 }
+
+/* =====================================================================
+   Creative Workshop vibrant identity v36 — 「创意活力」整页焕新
+   签名身份：青→柠→蓝 (#14b8a6 → #84cc16 → #3b82f6)
+   原则：仅覆盖外观属性（颜色/背景/边框/圆角/阴影/留白），不改布局；
+   追加于文件末尾以胜出级联；v12–v35 旧标记与测试断言保持不变。
+   ===================================================================== */
+
+/* ---- A. 设计令牌（浅色） ---- */
+:root[data-theme="light"],
+.shell[data-theme="light"] {
+  --primary: #0f9488;
+  --primary-hover: #0c7a70;
+  --primary-gradient: linear-gradient(120deg, #14b8a6 0%, #84cc16 50%, #3b82f6 100%);
+  --cta-gradient: linear-gradient(135deg, #14b8a6 0%, #0ea5e9 100%);
+  --primary-subtle: rgba(20, 184, 166, 0.10);
+  --accent: #14b8a6;
+  --accent-strong: #3b82f6;
+  --info: #3b82f6;
+
+  --bg-base: #eef4f8;
+  --bg-surface: #ffffff;
+  --bg-elevated: #e9f1f6;
+  --bg-hover: rgba(20, 184, 166, 0.08);
+  --bg-active: rgba(20, 184, 166, 0.14);
+  --bg: #eef4f8;
+  --panel: rgba(255, 255, 255, 0.88);
+  --panel-strong: #ffffff;
+
+  --border: #e2eaf1;
+  --border-hover: #c6d6e2;
+  --border-focus: #14b8a6;
+  --line: rgba(40, 77, 110, 0.12);
+  --line-strong: rgba(28, 60, 90, 0.22);
+
+  --shadow-sm: 0 1px 2px rgba(16, 42, 67, 0.06);
+  --shadow-md: 0 8px 22px -10px rgba(16, 42, 67, 0.18);
+  --shadow-lg: 0 26px 60px -24px rgba(14, 52, 74, 0.28);
+  --glow-primary: 0 0 0 4px rgba(20, 184, 166, 0.16);
+  --shadow: 0 26px 60px -26px rgba(14, 52, 74, 0.26);
+
+  --radius-sm: 9px;
+  --radius-md: 13px;
+  --radius-lg: 18px;
+  --radius-xl: 26px;
+  --radius: 12px;
+}
+
+/* ---- A. 设计令牌（深色） ---- */
+[data-theme="dark"],
+.shell[data-theme="dark"] {
+  --primary: #2dd4bf;
+  --primary-hover: #5eead4;
+  --primary-gradient: linear-gradient(120deg, #2dd4bf 0%, #a3e635 50%, #60a5fa 100%);
+  --cta-gradient: linear-gradient(135deg, #2dd4bf 0%, #38bdf8 100%);
+  --primary-subtle: rgba(45, 212, 191, 0.12);
+  --accent: #2dd4bf;
+  --accent-strong: #60a5fa;
+  --info: #60a5fa;
+
+  --bg-base: #0a1119;
+  --bg-surface: #111b26;
+  --bg-elevated: #17242f;
+  --bg-hover: rgba(45, 212, 191, 0.10);
+  --bg-active: rgba(45, 212, 191, 0.16);
+  --bg: #0a1119;
+  --panel: rgba(17, 27, 38, 0.92);
+  --panel-strong: #111b26;
+
+  --border: #233140;
+  --border-hover: #324456;
+  --border-focus: #2dd4bf;
+  --line: rgba(150, 180, 200, 0.14);
+  --line-strong: rgba(160, 190, 210, 0.26);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 10px 26px -12px rgba(0, 0, 0, 0.6);
+  --shadow-lg: 0 28px 64px -24px rgba(0, 0, 0, 0.7);
+  --glow-primary: 0 0 0 4px rgba(45, 212, 191, 0.20);
+  --shadow: 0 28px 64px -28px rgba(0, 0, 0, 0.66);
+}
+
+/* ---- B1. 全局氛围底（替换硬编码 #0a0b0b / 旧底） ---- */
+.shell[data-theme="light"] {
+  background:
+    radial-gradient(880px 520px at 10% -6%, rgba(20, 184, 166, 0.16), transparent 60%),
+    radial-gradient(820px 480px at 92% -2%, rgba(59, 130, 246, 0.13), transparent 58%),
+    radial-gradient(760px 560px at 50% 112%, rgba(132, 204, 22, 0.12), transparent 62%),
+    linear-gradient(180deg, #f7fbfc 0%, #edf4f8 58%, #f4f8f4 100%) !important;
+}
+:root[data-theme="light"] body {
+  background: #eef4f8 !important;
+}
+.shell[data-theme="dark"] {
+  background:
+    radial-gradient(880px 520px at 10% -6%, rgba(45, 212, 191, 0.14), transparent 60%),
+    radial-gradient(820px 480px at 92% -2%, rgba(96, 165, 250, 0.12), transparent 58%),
+    radial-gradient(760px 560px at 50% 112%, rgba(163, 230, 53, 0.07), transparent 62%),
+    linear-gradient(180deg, #0b121b 0%, #0a1019 60%, #0b1016 100%) !important;
+}
+:root[data-theme="dark"] body {
+  background: #0a1119 !important;
+}
+
+/* ---- B2. 按钮系统 ---- */
+button {
+  color: #ffffff;
+  background: var(--cta-gradient);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  box-shadow: 0 10px 22px -12px rgba(13, 148, 136, 0.7);
+}
+button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: transparent;
+  box-shadow: 0 14px 26px -12px rgba(13, 148, 136, 0.82);
+}
+button:disabled {
+  color: rgba(120, 140, 150, 0.7);
+  background: rgba(140, 160, 175, 0.16);
+  border-color: rgba(140, 160, 175, 0.1);
+  box-shadow: none;
+}
+.shell .button-secondary {
+  color: var(--muted-strong) !important;
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--line) !important;
+  border-radius: var(--radius-md) !important;
+  box-shadow: var(--shadow-sm) !important;
+}
+.shell .button-secondary:hover:not(:disabled) {
+  border-color: var(--accent) !important;
+  color: var(--accent-strong) !important;
+  background: var(--bg-hover) !important;
+}
+.shell[data-theme="dark"] .button-secondary {
+  background: var(--bg-elevated) !important;
+}
+.shell .button-danger {
+  color: #ffffff !important;
+  background: linear-gradient(135deg, #fb7185 0%, #dc2626 100%) !important;
+  border: 1px solid transparent !important;
+  border-radius: var(--radius-md) !important;
+  box-shadow: 0 10px 22px -12px rgba(220, 38, 38, 0.6) !important;
+}
+.shell .button-link {
+  color: var(--accent-strong) !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* ---- B3. 侧栏 ---- */
+.shell[data-theme="light"] .sidebar {
+  background:
+    radial-gradient(420px 220px at 30% 0%, rgba(20, 184, 166, 0.10), transparent 70%),
+    linear-gradient(180deg, #ffffff 0%, #f3f8fb 100%) !important;
+  border-right: 1px solid var(--line) !important;
+}
+.shell[data-theme="dark"] .sidebar {
+  background:
+    radial-gradient(420px 220px at 30% 0%, rgba(45, 212, 191, 0.12), transparent 70%),
+    linear-gradient(180deg, #111b26 0%, #0c141d 100%) !important;
+  border-right: 1px solid var(--line) !important;
+}
+.shell .sidebar-logo {
+  border: 1px solid var(--line) !important;
+  border-radius: var(--radius-lg) !important;
+  background: linear-gradient(135deg, rgba(20, 184, 166, 0.14), rgba(59, 130, 246, 0.10)) !important;
+}
+.shell[data-theme="dark"] .sidebar-logo {
+  background: linear-gradient(135deg, rgba(45, 212, 191, 0.16), rgba(96, 165, 250, 0.12)) !important;
+}
+.shell .logo-mark {
+  background: var(--primary-gradient) !important;
+  box-shadow: 0 8px 20px -8px rgba(20, 184, 166, 0.6) !important;
+}
+.shell .primary-selector,
+.shell .secondary-selector {
+  background: var(--bg-elevated) !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 999px !important;
+  padding: 4px !important;
+}
+.shell .primary-item,
+.shell .secondary-item {
+  color: var(--muted) !important;
+  background: transparent !important;
+  border-radius: 999px !important;
+  box-shadow: none !important;
+}
+.shell .primary-item-active,
+.shell .secondary-item-active {
+  color: #ffffff !important;
+  background: var(--cta-gradient) !important;
+  box-shadow: 0 6px 14px -6px rgba(20, 184, 166, 0.6) !important;
+}
+.shell .sidebar-model-item {
+  border: 1px solid transparent !important;
+  border-radius: var(--radius-md) !important;
+  background: transparent !important;
+}
+.shell .sidebar-model-item:hover {
+  background: var(--bg-hover) !important;
+}
+.shell .sidebar-model-active {
+  background: var(--bg-active) !important;
+  border-color: color-mix(in srgb, var(--accent) 38%, transparent) !important;
+}
+.shell .model-avatar-text {
+  background: linear-gradient(135deg, #14b8a6, #0ea5e9) !important;
+  color: #ffffff !important;
+}
+.shell .model-avatar-image {
+  background: linear-gradient(135deg, #84cc16, #14b8a6) !important;
+  color: #06321f !important;
+}
+.shell .model-avatar-video {
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6) !important;
+  color: #ffffff !important;
+}
+.shell .sidebar-account {
+  border: 1px solid var(--line) !important;
+  border-radius: var(--radius-lg) !important;
+  background: var(--panel) !important;
+  box-shadow: var(--shadow-sm) !important;
+}
+
+/* ---- B4. 顶栏 ---- */
+.shell .workspace-topbar {
+  background: transparent !important;
+}
+.shell .topbar-icon-button {
+  color: var(--muted-strong) !important;
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--line) !important;
+  border-radius: var(--radius-md) !important;
+  box-shadow: var(--shadow-sm) !important;
+}
+.shell .topbar-icon-button:hover:not(:disabled) {
+  border-color: var(--accent) !important;
+  color: var(--accent-strong) !important;
+  background: var(--bg-hover) !important;
+}
+.shell[data-theme="dark"] .topbar-icon-button {
+  background: var(--bg-elevated) !important;
+}
+.shell .topbar-model-label {
+  color: var(--muted-strong) !important;
+  background: var(--primary-subtle) !important;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent) !important;
+  border-radius: 999px !important;
+}
+
+/* ---- B3 fix. 分段控件激活态（高特异性接管为渐变填充） ---- */
+.shell[data-theme="light"] .primary-selector .primary-item-active,
+.shell[data-theme="light"] .secondary-selector .secondary-item-active,
+.shell[data-theme="dark"] .primary-selector .primary-item-active,
+.shell[data-theme="dark"] .secondary-selector .secondary-item-active {
+  color: #ffffff !important;
+  background: var(--cta-gradient) !important;
+  box-shadow: 0 6px 14px -6px rgba(20, 184, 166, 0.55) !important;
+}
+
+/* ---- B5. 空态 hero ---- */
+.shell .empty-canvas-card {
+  position: relative !important;
+  overflow: hidden !important;
+  border: 1px solid var(--line) !important;
+  border-radius: var(--radius-xl) !important;
+  background: var(--panel-strong) !important;
+  box-shadow: var(--shadow-lg) !important;
+}
+.shell .empty-canvas-card::before {
+  content: "" !important;
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  height: 4px !important;
+  background: var(--primary-gradient) !important;
+  pointer-events: none !important;
+}
+.shell .empty-canvas-model-strip {
+  border: 1px solid var(--line) !important;
+  border-radius: var(--radius-lg) !important;
+  background: linear-gradient(135deg, var(--primary-subtle), transparent 70%) !important;
+}
+.shell .hero-model-mark,
+.shell .hero-model-mark-has-icon {
+  background: var(--primary-gradient) !important;
+  color: #ffffff !important;
+  box-shadow: 0 8px 20px -8px rgba(20, 184, 166, 0.6) !important;
+}
+.shell .empty-canvas-primary-action {
+  color: #ffffff !important;
+  background: var(--cta-gradient) !important;
+  border: 1px solid transparent !important;
+  box-shadow: 0 12px 26px -12px rgba(20, 184, 166, 0.7) !important;
+}
+
+/* ---- B6. 创作面板控件 ---- */
+.shell .composer-input:focus,
+.shell .composer-input:focus-visible {
+  outline: none !important;
+  border-color: var(--accent) !important;
+  box-shadow: var(--glow-primary) !important;
+}
+.shell .composer-submit-button,
+.shell .composer-query-button {
+  border-radius: var(--radius-md) !important;
+}
+.shell .composer-submit-button {
+  color: #ffffff !important;
+  background: var(--cta-gradient) !important;
+  border: 1px solid transparent !important;
+  box-shadow: 0 10px 22px -12px rgba(20, 184, 166, 0.7) !important;
+}
+.shell .composer-query-button {
+  color: var(--accent-strong) !important;
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--line) !important;
+  box-shadow: var(--shadow-sm) !important;
+}
+.shell[data-theme="dark"] .composer-query-button {
+  background: var(--bg-elevated) !important;
+}
+.shell .composer-pill {
+  border-radius: 999px !important;
+  border: 1px solid var(--line) !important;
+  background: var(--bg-surface) !important;
+}
+.shell[data-theme="dark"] .composer-pill {
+  background: var(--bg-elevated) !important;
+}
+.shell .composer-pill-active {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent) !important;
+  background: var(--primary-subtle) !important;
+  color: var(--accent-strong) !important;
+}
+
+/* ---- B7. 模板卡（核心痛点：accent bar + hover lift） ---- */
+.shell .composer-template-card {
+  position: relative !important;
+  overflow: hidden !important;
+  border: 1px solid var(--line) !important;
+  border-radius: var(--radius-lg) !important;
+  background: var(--bg-surface) !important;
+  box-shadow: var(--shadow-sm) !important;
+  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease !important;
+}
+.shell[data-theme="dark"] .composer-template-card {
+  background: var(--bg-elevated) !important;
+}
+.shell .composer-template-card::before {
+  content: "" !important;
+  position: absolute !important;
+  top: 0 !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  width: 3px !important;
+  background: var(--primary-gradient) !important;
+  opacity: 0.85 !important;
+  pointer-events: none !important;
+}
+.shell .composer-template-card:hover {
+  transform: translateY(-2px) !important;
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent) !important;
+  box-shadow: var(--shadow-md) !important;
+}
+.shell .composer-template-card-top {
+  color: var(--accent-strong) !important;
+}
+
+/* ---- B8. 消息流头像 ---- */
+.shell .message-avatar-ai {
+  background: var(--primary-gradient) !important;
+  color: #ffffff !important;
+}
+.shell .message-avatar-user {
+  background: var(--bg-elevated) !important;
+  color: var(--muted-strong) !important;
+}
+
+/* ---- B9 (部分). 徽章/标签 ---- */
+.shell .badge {
+  border-radius: 999px !important;
+  border: 1px solid var(--line) !important;
+}
+.shell .badge-accent {
+  color: var(--accent-strong) !important;
+  background: var(--primary-subtle) !important;
+  border-color: color-mix(in srgb, var(--accent) 26%, transparent) !important;
+}
+.shell .badge-success {
+  color: var(--success) !important;
+  background: var(--success-bg) !important;
+  border-color: color-mix(in srgb, var(--success) 26%, transparent) !important;
+}
+.shell .parameter-source-chip {
+  border-radius: 999px !important;
+}
+
+/* ---- B9. 标签系统（替换 305-326 硬编码渐变） ---- */
+.shell .tag {
+  border-radius: 999px !important;
+  border: 1px solid var(--line) !important;
+  background: var(--bg-elevated) !important;
+  color: var(--muted-strong) !important;
+}
+.shell .tag-info {
+  color: var(--info) !important;
+  background: rgba(59, 130, 246, 0.12) !important;
+  border-color: rgba(59, 130, 246, 0.26) !important;
+}
+.shell .tag-warn {
+  color: var(--warning) !important;
+  background: var(--warning-bg) !important;
+  border-color: color-mix(in srgb, var(--warning) 26%, transparent) !important;
+}
+.shell .tag-danger {
+  color: var(--danger) !important;
+  background: var(--danger-bg) !important;
+  border-color: color-mix(in srgb, var(--danger) 26%, transparent) !important;
+}
+.shell .tag-text {
+  color: #0e7c70 !important;
+  background: rgba(20, 184, 166, 0.14) !important;
+  border-color: rgba(20, 184, 166, 0.28) !important;
+}
+.shell .tag-image {
+  color: #4d7c0f !important;
+  background: rgba(132, 204, 22, 0.16) !important;
+  border-color: rgba(132, 204, 22, 0.3) !important;
+}
+.shell .tag-video {
+  color: #2563eb !important;
+  background: rgba(59, 130, 246, 0.14) !important;
+  border-color: rgba(59, 130, 246, 0.28) !important;
+}
+.shell[data-theme="dark"] .tag-text { color: #5eead4 !important; }
+.shell[data-theme="dark"] .tag-image { color: #a3e635 !important; }
+.shell[data-theme="dark"] .tag-video { color: #93c5fd !important; }
+
+/* ---- B10. 表单聚焦态 ---- */
+.shell input:focus,
+.shell input:focus-visible,
+.shell textarea:focus,
+.shell textarea:focus-visible,
+.shell select:focus,
+.shell select:focus-visible {
+  outline: none !important;
+  border-color: var(--accent) !important;
+  box-shadow: var(--glow-primary) !important;
+}
+
+/* ---- B11. 设置页 ---- */
+.shell .settings-hero {
+  position: relative !important;
+  overflow: hidden !important;
+  border: 1px solid var(--line) !important;
+  border-radius: var(--radius-xl) !important;
+  background:
+    radial-gradient(600px 200px at 0% 0%, var(--primary-subtle), transparent 70%),
+    var(--panel-strong) !important;
+  box-shadow: var(--shadow-lg) !important;
+}
+.shell .settings-hero::before {
+  content: "" !important;
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  height: 4px !important;
+  background: var(--primary-gradient) !important;
+  pointer-events: none !important;
+}
+.shell .settings-list-panel,
+.shell .settings-model-board {
+  border: 1px solid var(--line) !important;
+  border-radius: var(--radius-lg) !important;
+  background: var(--panel-strong) !important;
+  box-shadow: var(--shadow-md) !important;
+}
+.shell .settings-model-row:hover {
+  background: var(--bg-hover) !important;
+}
+.shell .settings-filter-tab-active {
+  color: #ffffff !important;
+  background: var(--cta-gradient) !important;
+  border-color: transparent !important;
+  box-shadow: 0 6px 14px -6px rgba(20, 184, 166, 0.55) !important;
+}
+.shell .settings-dialog {
+  border: 1px solid var(--line) !important;
+  border-radius: var(--radius-xl) !important;
+  background: var(--panel-strong) !important;
+  box-shadow: var(--shadow-lg) !important;
+}
+.shell .wizard-step-active {
+  color: var(--accent-strong) !important;
+}
+.shell .settings-action-button {
+  color: var(--accent-strong) !important;
+}
+
+/* ---- B11. 认证页 ---- */
+.shell .auth-panel {
+  border: 1px solid var(--line) !important;
+  border-radius: var(--radius-xl) !important;
+  background: var(--panel-strong) !important;
+  box-shadow: var(--shadow-lg) !important;
+}
+.shell .auth-value-panel {
+  background:
+    radial-gradient(520px 360px at 18% 12%, var(--primary-subtle), transparent 68%),
+    var(--primary-gradient) !important;
+  color: #ffffff !important;
+  border-radius: var(--radius-lg) !important;
+}
+.shell .auth-card {
+  border: 1px solid var(--line) !important;
+  border-radius: var(--radius-lg) !important;
+  background: var(--bg-surface) !important;
+}
+.shell .auth-tab-active {
+  color: #ffffff !important;
+  background: var(--cta-gradient) !important;
+  box-shadow: 0 6px 14px -6px rgba(20, 184, 166, 0.55) !important;
+}
+
+/* ---- B4 fix. 顶栏图标按钮（图标 + 文字对齐） ---- */
+.shell .topbar-icon-button {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+}
+.shell .topbar-icon-glyph {
+  flex: 0 0 auto;
+  opacity: 0.85;
+}
+
+/* =====================================================================
+   创作页重构 v36b — #/text · #/images · #/videos
+   每页能力身份（青/柠/蓝）+ 精简 hero；纯外观，不碰功能。
+   ===================================================================== */
+
+/* ---- A. 每页能力身份令牌 ---- */
+.shell .studio-panel {
+  --view-accent: var(--accent);
+  --view-accent-soft: var(--primary-subtle);
+  --view-grad: var(--primary-gradient);
+}
+.shell .studio-panel[data-view="text"] {
+  --view-accent: #14b8a6;
+  --view-accent-soft: rgba(20, 184, 166, 0.12);
+  --view-grad: linear-gradient(120deg, #14b8a6 0%, #0ea5e9 100%);
+}
+.shell .studio-panel[data-view="images"] {
+  --view-accent: #65a30d;
+  --view-accent-soft: rgba(132, 204, 22, 0.16);
+  --view-grad: linear-gradient(120deg, #84cc16 0%, #14b8a6 100%);
+}
+.shell .studio-panel[data-view="videos"] {
+  --view-accent: #3b82f6;
+  --view-accent-soft: rgba(59, 130, 246, 0.12);
+  --view-grad: linear-gradient(120deg, #3b82f6 0%, #8b5cf6 100%);
+}
+.shell[data-theme="dark"] .studio-panel[data-view="images"] {
+  --view-accent: #a3e635;
+}
+
+/* 能力色作用到 hero 顶条 / 模型 mark / 模板竖条 / 强调徽章 */
+.shell .studio-panel .empty-canvas-card::before {
+  background: var(--view-grad) !important;
+}
+.shell .studio-panel .hero-model-mark,
+.shell .studio-panel .hero-model-mark-has-icon {
+  background: var(--view-grad) !important;
+}
+.shell .studio-panel .composer-template-card::before {
+  background: var(--view-grad) !important;
+}
+.shell .studio-panel .badge-accent {
+  color: var(--view-accent) !important;
+  background: var(--view-accent-soft) !important;
+  border-color: color-mix(in srgb, var(--view-accent) 28%, transparent) !important;
+}
+.shell .studio-panel .composer-submit-button,
+.shell .studio-panel .empty-canvas-primary-action {
+  background: var(--view-grad) !important;
+}
+
+/* ---- B. 精简重构 hero（压缩竖向占用 ~40%） ---- */
+.shell .empty-canvas-workbench .empty-canvas-card {
+  padding: 18px 24px 18px !important;
+  gap: 12px !important;
+  border-radius: var(--radius-lg) !important;
+}
+.shell .empty-canvas-model-strip {
+  gap: 14px !important;
+}
+.shell .empty-canvas-model-strip .hero-model-mark {
+  width: 44px !important;
+  height: 44px !important;
+  border-radius: 12px !important;
+}
+.shell .empty-canvas-workbench h3 {
+  font-size: clamp(19px, 1.6vw, 25px) !important;
+  line-height: 1.1 !important;
+}
+.shell .empty-canvas-workbench .empty-canvas-model-copy {
+  gap: 6px !important;
+}
+.shell .empty-canvas-workbench .muted {
+  max-width: 640px !important;
+  font-size: 12.5px !important;
+  line-height: 1.5 !important;
+  display: -webkit-box !important;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden !important;
+}
+.shell .empty-canvas-workbench .empty-canvas-flow {
+  gap: 6px !important;
+  margin-top: 0 !important;
+}
+.shell .empty-canvas-workbench .empty-canvas-flow span {
+  min-height: 28px !important;
+  font-size: 11.5px !important;
+  font-weight: 700 !important;
+}
+.shell .empty-canvas-workbench .empty-canvas-flow span:first-child {
+  color: #ffffff !important;
+  background: var(--view-grad) !important;
+  border-color: transparent !important;
+}
+.shell .empty-canvas-workbench .empty-canvas-actions {
+  margin-top: 0 !important;
+}
+.shell .empty-canvas-workbench .empty-canvas-actions button {
+  min-height: 34px !important;
+}
+
+/* ---- C. 收紧竖向节奏 ---- */
+.shell .studio-canvas {
+  padding-top: 16px !important;
+}
+
+/* ---- D. 信息条（composer 顶线）层级 ---- */
+.shell .studio-panel .composer-topline {
+  border-bottom: 1px solid var(--line) !important;
+  padding-bottom: 12px !important;
+}
+.shell .studio-panel .gameplay-btn {
+  border: 1px solid color-mix(in srgb, var(--view-accent) 32%, transparent) !important;
+  background: var(--view-accent-soft) !important;
+  color: var(--view-accent) !important;
+  box-shadow: none !important;
+}
+.shell .studio-panel .credit-balance {
+  border: 1px solid var(--line) !important;
+  border-radius: 999px !important;
+  background: var(--bg-surface) !important;
+  padding: 4px 12px !important;
+}
+.shell[data-theme="dark"] .studio-panel .credit-balance {
+  background: var(--bg-elevated) !important;
+}
+
+/* ---- E. 模板区标题强化 ---- */
+.shell .studio-panel .composer-template-heading {
+  color: var(--muted) !important;
+}
+.shell .studio-panel .composer-template-heading strong {
+  position: relative !important;
+  padding-left: 12px !important;
+  font-size: 14px !important;
+}
+.shell .studio-panel .composer-template-heading strong::before {
+  content: "" !important;
+  position: absolute !important;
+  left: 0 !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+  width: 4px !important;
+  height: 14px !important;
+  border-radius: 2px !important;
+  background: var(--view-grad) !important;
+}
+
+/* ---- F. composer 输入聚焦 + AI 优化按钮 ---- */
+.shell .studio-panel .composer-input {
+  min-height: 120px !important;
+}
+.shell .studio-panel .prompt-ai-button {
+  width: 38px !important;
+  height: 38px !important;
+  color: #ffffff !important;
+  background: var(--view-grad) !important;
+  border: 1px solid transparent !important;
+  box-shadow: 0 8px 18px -8px var(--view-accent) !important;
+  font-weight: 800 !important;
+}
+.shell .studio-panel .prompt-ai-button:hover:not(:disabled) {
+  transform: translateY(-1px) !important;
+}
+
+/* ---- G. 图片/视频页参考图上传区（更明确的拖拽入口） ---- */
+.shell .studio-panel[data-view="images"] .composer-attach-button,
+.shell .studio-panel[data-view="videos"] .composer-attach-button {
+  border: 1.5px dashed color-mix(in srgb, var(--view-accent) 46%, transparent) !important;
+  border-radius: 12px !important;
+  background: var(--view-accent-soft) !important;
+  color: var(--view-accent) !important;
+}
+.shell .studio-panel .composer-attach-button:hover:not(:disabled) {
+  border-style: solid !important;
+  border-color: var(--view-accent) !important;
+}
+.shell .studio-panel .reference-strip .reference-thumb {
+  border-radius: 12px !important;
+  border: 1px solid color-mix(in srgb, var(--view-accent) 28%, transparent) !important;
+}

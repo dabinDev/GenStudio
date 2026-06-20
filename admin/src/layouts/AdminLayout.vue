@@ -15,7 +15,7 @@
       </div>
       <el-menu :default-active="activePath" router class="admin-menu">
         <el-menu-item v-for="item in menuItems" :key="item.path" :index="item.path">
-          <span class="admin-menu-mark">{{ item.mark }}</span>
+          <span class="admin-menu-mark"><el-icon><component :is="iconFor(item.path)" /></el-icon></span>
           <span>{{ item.label }}</span>
         </el-menu-item>
       </el-menu>
@@ -28,7 +28,9 @@
           <h1>{{ route.meta.title || '仪表盘' }}</h1>
         </div>
         <div class="admin-actions">
-          <el-button circle @click="theme.toggle">{{ theme.isDark ? '日' : '月' }}</el-button>
+          <el-button circle :title="theme.isDark ? '切换到白天模式' : '切换到夜间模式'" @click="theme.toggle">
+            <el-icon><component :is="theme.isDark ? Sunny : Moon" /></el-icon>
+          </el-button>
           <div class="admin-user">
             <span>{{ displayName }}</span>
             <small>{{ auth.role || '管理员' }}</small>
@@ -44,8 +46,19 @@
 </template>
 
 <script setup lang="ts">
+import {
+  Cpu,
+  Moon,
+  Notebook,
+  Odometer,
+  Setting,
+  Sunny,
+  Tickets,
+  User,
+  MagicStick,
+} from '@element-plus/icons-vue';
 import { gsap } from 'gsap';
-import { computed, nextTick, onMounted, onUnmounted, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, watch, type Component } from 'vue';
 import { useRoute } from 'vue-router';
 
 import { visibleAdminMenuItems } from '@/adminNavigation';
@@ -55,6 +68,20 @@ import { useAdminThemeStore } from '@/stores/theme';
 const route = useRoute();
 const auth = useAdminAuthStore();
 const theme = useAdminThemeStore();
+
+const MENU_ICONS: Record<string, Component> = {
+  '/dashboard': Odometer,
+  '/models': Cpu,
+  '/prompts': MagicStick,
+  '/users': User,
+  '/records': Tickets,
+  '/audit': Notebook,
+  '/settings': Setting,
+};
+
+function iconFor(path: string): Component {
+  return MENU_ICONS[path] ?? Setting;
+}
 
 const menuItems = computed(() => visibleAdminMenuItems((permission) => auth.can(permission)));
 const activePath = computed(() => route.path);

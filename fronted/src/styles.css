@@ -11997,3 +11997,33 @@ button:disabled {
   border-radius: 12px !important;
   border: 1px solid color-mix(in srgb, var(--view-accent) 28%, transparent) !important;
 }
+
+/* ---- H. 弹层 / 下拉 / 分段：统一到新主题 ---- */
+.shell .segmented-option-active {
+  color: #ffffff !important;
+  background: var(--cta-gradient) !important;
+  border-color: transparent !important;
+}
+.shell .studio-panel .segmented-option-active {
+  background: var(--view-grad) !important;
+}
+.shell .model-select-option-active {
+  color: var(--accent-strong) !important;
+  background: var(--primary-subtle) !important;
+}
+.shell .composer-popover,
+.shell .model-select-menu {
+  border: 1px solid var(--line) !important;
+  border-radius: var(--radius-lg) !important;
+  background: var(--panel-strong) !important;
+  box-shadow: var(--shadow-lg) !important;
+}
+.shell .media-preview-panel {
+  border: 1px solid var(--line) !important;
+  border-radius: var(--radius-xl) !important;
+  background: var(--panel-strong) !important;
+  box-shadow: var(--shadow-lg) !important;
+}
+.shell .media-preview-toolbar {
+  border-bottom: 1px solid var(--line) !important;
+}

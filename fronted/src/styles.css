@@ -12749,3 +12749,32 @@ button:disabled {
   max-height: 400px !important;
   object-fit: contain !important;
 }
+
+/* =====================================================================
+   v37 对话收成居中可读列：解决满宽稀疏、短消息两端拉扯
+   ===================================================================== */
+.shell .conversation-timeline {
+  max-width: 880px !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  gap: 18px !important;
+}
+.shell .message-card {
+  max-width: 100% !important;
+}
+.shell .message-user .message-bubble,
+.shell .message-assistant .message-bubble {
+  max-width: min(100%, 680px) !important;
+}
+/* 失败消息更干净 */
+.shell .message-error {
+  color: var(--danger) !important;
+}
+.shell .retry-button {
+  color: #ffffff !important;
+  background: var(--primary) !important;
+  border: 1px solid var(--primary) !important;
+}
+.shell .retry-button:hover:not(:disabled) {
+  background: var(--primary-hover) !important;
+}

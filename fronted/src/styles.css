@@ -12459,3 +12459,66 @@ button:disabled {
   border-color: var(--primary) !important;
   box-shadow: none !important;
 }
+
+/* ---- v37 收尾2：清除登录页/账户/获取模型 残留青蓝 → 靛蓝 ---- */
+.shell[data-theme="light"] .auth-tabs .auth-tab-active,
+.shell[data-theme="dark"] .auth-tabs .auth-tab-active {
+  color: #ffffff !important;
+  background: var(--primary) !important;
+  border-color: var(--primary) !important;
+  box-shadow: none !important;
+}
+.shell[data-theme="light"] .account-recharge,
+.shell[data-theme="light"] .fetch-model-button,
+.shell[data-theme="dark"] .account-recharge,
+.shell[data-theme="dark"] .fetch-model-button {
+  color: #ffffff !important;
+  background: var(--primary) !important;
+  border-color: var(--primary) !important;
+  box-shadow: none !important;
+}
+.shell[data-theme="dark"] .account-recharge:hover:not(:disabled),
+.shell[data-theme="light"] .account-recharge:hover:not(:disabled),
+.shell[data-theme="light"] .fetch-model-button:hover:not(:disabled),
+.shell[data-theme="dark"] .fetch-model-button:hover:not(:disabled) {
+  background: var(--primary-hover) !important;
+  border-color: var(--primary-hover) !important;
+}
+
+/* ---- #10 hero 精简为干净页头：去冗余步骤条 ---- */
+.shell .empty-canvas-workbench .empty-canvas-flow {
+  display: none !important;
+}
+.shell .empty-canvas-workbench .empty-canvas-card {
+  padding: 16px 22px !important;
+  gap: 12px !important;
+}
+.shell .empty-canvas-workbench .empty-canvas-model-strip {
+  align-items: center !important;
+}
+
+/* ---- #11 参考图/参考素材上传区强化 ---- */
+.shell .studio-panel[data-view="images"] .composer-attach-button,
+.shell .studio-panel[data-view="videos"] .composer-attach-button {
+  min-height: 68px !important;
+  padding: 10px 18px !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  color: var(--muted-strong) !important;
+  background: var(--bg-elevated) !important;
+  border: 1.5px dashed var(--border) !important;
+  border-radius: var(--radius-md) !important;
+}
+.shell .studio-panel[data-view="images"] .composer-attach-button:hover:not(:disabled),
+.shell .studio-panel[data-view="videos"] .composer-attach-button:hover:not(:disabled) {
+  color: var(--accent) !important;
+  border-color: var(--accent) !important;
+  background: var(--primary-subtle) !important;
+}
+
+/* ---- #12 设置页模型行左条统一靛蓝（去旧能力色残留） ---- */
+.shell .settings-model-row-text::before,
+.shell .settings-model-row-image::before,
+.shell .settings-model-row-video::before {
+  background: var(--primary) !important;
+}

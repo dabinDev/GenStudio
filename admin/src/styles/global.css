@@ -3422,3 +3422,107 @@ body {
   background-clip: text;
   -webkit-text-fill-color: transparent;
 }
+
+/* =====================================================================
+   Admin v15 — 极简冷静靛蓝重写：覆盖 v14 青绿，单色 #4f46e5，去渐变
+   黑白灰 + 单一靛蓝；旧 v2/v3/v14 标记保留不动（测试依赖），此层靠后胜出。
+   ===================================================================== */
+:root,
+[data-theme='light'] {
+  --admin-color-primary: #4f46e5;
+  --admin-color-primary-strong: #4338ca;
+  --admin-color-bg: #fafafa;
+  --admin-color-surface: #ffffff;
+  --admin-color-surface-muted: #f4f4f5;
+  --admin-color-border: #e4e4e7;
+  --admin-color-text: #18181b;
+  --admin-color-text-muted: #71717a;
+  --admin-shadow-panel: 0 1px 3px rgba(24, 24, 27, 0.07);
+  --admin-radius-sm: 8px;
+  --admin-radius-md: 10px;
+  --el-color-primary: #4f46e5;
+  --el-color-primary-light-3: #6b63ea;
+  --el-color-primary-light-5: #8c86ef;
+  --el-color-primary-light-7: #b1adf4;
+  --el-color-primary-light-8: #c9c6f7;
+  --el-color-primary-light-9: #ecebfb;
+  --el-color-primary-dark-2: #4338ca;
+}
+[data-theme='dark'] {
+  --admin-color-primary: #818cf8;
+  --admin-color-primary-strong: #a5b4fc;
+  --admin-color-bg: #09090b;
+  --admin-color-surface: #161618;
+  --admin-color-surface-muted: #1f1f23;
+  --admin-color-border: #27272a;
+  --admin-color-text: #fafafa;
+  --admin-color-text-muted: #a1a1aa;
+  --admin-shadow-panel: 0 8px 24px -8px rgba(0, 0, 0, 0.6);
+  --el-color-primary: #6366f1;
+  --el-color-primary-light-3: #565ad6;
+  --el-color-primary-light-5: #474bb0;
+  --el-color-primary-light-7: #383b8a;
+  --el-color-primary-light-8: #2e3070;
+  --el-color-primary-light-9: #1e1f47;
+  --el-color-primary-dark-2: #818cf8;
+}
+
+[data-theme='light'] .el-button--primary:not(.is-link):not(.is-text) {
+  --el-button-bg-color: #4f46e5;
+  --el-button-border-color: #4f46e5;
+  --el-button-hover-bg-color: #4338ca;
+  --el-button-hover-border-color: #4338ca;
+  --el-button-active-bg-color: #3730a3;
+  --el-button-active-border-color: #3730a3;
+}
+[data-theme='dark'] .el-button--primary:not(.is-link):not(.is-text) {
+  --el-button-bg-color: #6366f1;
+  --el-button-border-color: #6366f1;
+  --el-button-hover-bg-color: #818cf8;
+  --el-button-hover-border-color: #818cf8;
+  --el-button-active-bg-color: #4f46e5;
+  --el-button-active-border-color: #4f46e5;
+  --el-button-text-color: #ffffff;
+}
+
+/* 去 v14 渐变装饰 → 中性表面 / 细实色靛蓝 */
+.admin-layout {
+  background: var(--admin-color-bg) !important;
+}
+.admin-sidebar,
+[data-theme='dark'] .admin-sidebar {
+  background: var(--admin-color-surface) !important;
+}
+.admin-brand::before {
+  height: 2px !important;
+  background: var(--admin-color-primary) !important;
+}
+.admin-menu-mark,
+.admin-menu .el-menu-item.is-active .admin-menu-mark {
+  background: #4f46e5 !important;
+}
+[data-theme='dark'] .admin-menu-mark,
+[data-theme='dark'] .admin-menu .el-menu-item.is-active .admin-menu-mark {
+  background: #6366f1 !important;
+}
+.admin-menu .el-menu-item.is-active {
+  color: var(--admin-color-primary) !important;
+  background: rgba(79, 70, 229, 0.08) !important;
+  border-right: 2px solid var(--admin-color-primary) !important;
+}
+[data-theme='dark'] .admin-menu .el-menu-item.is-active {
+  background: rgba(129, 140, 248, 0.14) !important;
+}
+.admin-topbar,
+[data-theme='dark'] .admin-topbar {
+  background: var(--admin-color-surface) !important;
+}
+.admin-topbar h1,
+[data-theme='dark'] .admin-topbar h1 {
+  background: none !important;
+  -webkit-text-fill-color: var(--admin-color-text) !important;
+  color: var(--admin-color-text) !important;
+}
+.admin-brand strong {
+  color: var(--admin-color-primary) !important;
+}

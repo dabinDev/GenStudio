@@ -12664,3 +12664,88 @@ button:disabled {
 .shell .composer-template-library {
   gap: 8px !important;
 }
+
+/* =====================================================================
+   v37 对话/消息区清理：去青绿 → 中性 + 极淡靛蓝；图片资产卡干净化
+   ===================================================================== */
+/* 用户气泡：极淡靛蓝区分（替换青绿渐变） */
+.shell .message-user .message-bubble,
+.shell[data-theme="light"] .message-user .message-bubble,
+.shell[data-theme="dark"] .message-user .message-bubble {
+  color: var(--text) !important;
+  background: var(--primary-subtle) !important;
+  border: 1px solid color-mix(in srgb, var(--primary) 20%, transparent) !important;
+  box-shadow: none !important;
+}
+/* AI 气泡：干净白底细线 */
+.shell .message-assistant .message-bubble,
+.shell[data-theme="light"] .message-assistant .message-bubble,
+.shell[data-theme="dark"] .message-assistant .message-bubble {
+  color: var(--text) !important;
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--line) !important;
+  box-shadow: none !important;
+}
+/* 左右 accent 条统一靛蓝 */
+.shell .message-card::before {
+  background: var(--primary) !important;
+}
+/* 消息元信息中性 */
+.shell .message-meta,
+.shell .message-meta span {
+  color: var(--muted) !important;
+  background: transparent !important;
+}
+/* 头像边框中性 */
+.shell .message-avatar,
+.shell .message-avatar-user {
+  border-color: var(--line) !important;
+}
+
+/* 图片/视频资产卡：干净白 + 细线 + 圆角 */
+.shell .message-asset-card,
+.shell[data-theme="light"] .message-asset-card,
+.shell[data-theme="dark"] .message-asset-card {
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--line) !important;
+  border-radius: var(--radius-lg) !important;
+  box-shadow: none !important;
+  overflow: hidden !important;
+}
+.shell .message-asset-card img,
+.shell .message-asset-card video {
+  border-radius: var(--radius-md) !important;
+}
+/* 资产类型徽章：中性深底白字 */
+.shell .asset-kind-badge {
+  color: #ffffff !important;
+  background: rgba(24, 24, 27, 0.78) !important;
+  border: none !important;
+}
+/* 资产操作按钮：白底细线 */
+.shell .asset-action-button,
+.shell .asset-action-toolbar .asset-action-button {
+  color: var(--text) !important;
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: none !important;
+}
+.shell .asset-action-button:hover:not(:disabled) {
+  color: var(--accent) !important;
+  border-color: var(--accent) !important;
+  background: var(--primary-subtle) !important;
+}
+/* 参考缩略图：干净 */
+.shell .reference-thumb,
+.shell .reference-strip .reference-thumb {
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--line) !important;
+  border-radius: var(--radius-md) !important;
+}
+
+/* 资产图片合理上限，避免单图过大占满 */
+.shell .message-asset-card img,
+.shell .message-asset-card video {
+  max-height: 400px !important;
+  object-fit: contain !important;
+}

@@ -184,8 +184,10 @@ describe("workbench style application", () => {
     expect(styles.indexOf(".shell[data-theme=\"dark\"] .studio-ambient", overrideIndex)).toBeGreaterThan(overrideIndex);
     expect(styles.indexOf("pointer-events: none", styles.indexOf(".studio-ambient", overrideIndex))).toBeGreaterThan(overrideIndex);
     expect(styles.indexOf("z-index: 0", styles.indexOf(".studio-ambient", overrideIndex))).toBeGreaterThan(overrideIndex);
-    expect(styles.indexOf(".sidebar,\n.main", overrideIndex)).toBeGreaterThan(overrideIndex);
-    expect(styles.indexOf("z-index: 1", styles.indexOf(".sidebar,\n.main", overrideIndex))).toBeGreaterThan(overrideIndex);
+    const shellChromeLayerMatch = /\.sidebar,\r?\n\.main \{/.exec(styles.slice(overrideIndex));
+    const shellChromeLayerIndex = shellChromeLayerMatch ? overrideIndex + shellChromeLayerMatch.index : -1;
+    expect(shellChromeLayerIndex).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf("z-index: 1", shellChromeLayerIndex)).toBeGreaterThan(overrideIndex);
     expect(styles.indexOf("#f8fbfc", overrideIndex)).toBeGreaterThan(overrideIndex);
     expect(styles.indexOf("#050b13", overrideIndex)).toBeGreaterThan(overrideIndex);
     expect(styles.indexOf(".shell[data-theme=\"light\"] .studio-canvas", overrideIndex)).toBeGreaterThan(overrideIndex);

@@ -12751,20 +12751,64 @@ button:disabled {
 }
 
 /* =====================================================================
-   v37 对话收成居中可读列：解决满宽稀疏、短消息两端拉扯
+   v37 微信式左右对齐对话：消息卡满宽，气泡硬靠两边（用户右/AI左）
    ===================================================================== */
 .shell .conversation-timeline {
-  max-width: 880px !important;
-  margin-left: auto !important;
-  margin-right: auto !important;
+  max-width: none !important;
+  width: 100% !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
   gap: 18px !important;
 }
 .shell .message-card {
   max-width: 100% !important;
+  width: 100% !important;
+}
+.shell .message-user {
+  align-items: flex-end !important;
+}
+.shell .message-assistant {
+  align-items: flex-start !important;
 }
 .shell .message-user .message-bubble,
 .shell .message-assistant .message-bubble {
-  max-width: min(100%, 680px) !important;
+  max-width: min(72%, 680px) !important;
+  width: fit-content !important;
+}
+/* 用户气泡：实心靛蓝（"我"的消息，微信式），白字 */
+.shell .message-user .message-bubble,
+.shell[data-theme="light"] .message-user .message-bubble,
+.shell[data-theme="dark"] .message-user .message-bubble {
+  color: #ffffff !important;
+  background: var(--primary) !important;
+  border: 1px solid var(--primary) !important;
+}
+.shell .message-user .message-meta,
+.shell .message-user .message-meta span,
+.shell .message-user .message-content,
+.shell .message-user .markdown-preview,
+.shell .message-user .markdown-preview * {
+  color: rgba(255, 255, 255, 0.92) !important;
+}
+.shell .message-user .message-meta,
+.shell .message-user .message-meta span {
+  color: rgba(255, 255, 255, 0.7) !important;
+}
+/* AI 气泡：浅灰白底（对方消息） */
+.shell .message-assistant .message-bubble,
+.shell[data-theme="light"] .message-assistant .message-bubble,
+.shell[data-theme="dark"] .message-assistant .message-bubble {
+  color: var(--text) !important;
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--border) !important;
+}
+.shell .message-assistant .message-meta,
+.shell .message-assistant .message-meta span {
+  color: var(--muted) !important;
+}
+/* 用户气泡内不显示左右 accent 条（实心已够） */
+.shell .message-user .message-bubble {
+  border-radius: 16px !important;
 }
 /* 失败消息更干净 */
 .shell .message-error {

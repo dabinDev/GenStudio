@@ -12078,3 +12078,384 @@ button:disabled {
 .shell .empty-canvas-workbench .empty-canvas-card {
   width: min(100%, 1120px) !important;
 }
+
+/* =====================================================================
+   v37 — 极简冷静重写：黑白灰 + 单一靛蓝 #4f46e5，几乎无渐变，1px 细线
+   策略：渐变变量改为实色（让既有 var() 处自动去渐变）+ 中和花哨表面。
+   保留 v36b 的结构（紧凑 hero/模板/顶部对齐），只换配色与质感。
+   ===================================================================== */
+
+/* ---- 令牌：浅色 ---- */
+:root[data-theme="light"],
+.shell[data-theme="light"] {
+  --primary: #4f46e5;
+  --primary-hover: #4338ca;
+  --primary-gradient: #4f46e5;
+  --cta-gradient: #4f46e5;
+  --primary-subtle: rgba(79, 70, 229, 0.08);
+  --accent: #4f46e5;
+  --accent-strong: #4338ca;
+  --info: #4f46e5;
+
+  --bg-base: #fafafa;
+  --bg-surface: #ffffff;
+  --bg-elevated: #f4f4f5;
+  --bg-hover: #f4f4f5;
+  --bg-active: rgba(79, 70, 229, 0.08);
+  --bg: #fafafa;
+  --panel: #ffffff;
+  --panel-strong: #ffffff;
+
+  --text-primary: #18181b;
+  --text-secondary: #52525b;
+  --text-muted: #a1a1aa;
+  --text: #18181b;
+  --muted: #71717a;
+  --muted-strong: #3f3f46;
+
+  --border: #e4e4e7;
+  --border-hover: #d4d4d8;
+  --border-focus: #4f46e5;
+  --line: #ececef;
+  --line-strong: #d4d4d8;
+
+  --shadow-sm: 0 1px 2px rgba(24, 24, 27, 0.04);
+  --shadow-md: 0 1px 3px rgba(24, 24, 27, 0.07);
+  --shadow-lg: 0 6px 20px -6px rgba(24, 24, 27, 0.12);
+  --shadow: 0 6px 20px -6px rgba(24, 24, 27, 0.12);
+  --glow-primary: 0 0 0 3px rgba(79, 70, 229, 0.16);
+
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius: 10px;
+}
+
+/* ---- 令牌：深色 ---- */
+[data-theme="dark"],
+.shell[data-theme="dark"] {
+  --primary: #6366f1;
+  --primary-hover: #818cf8;
+  --primary-gradient: #6366f1;
+  --cta-gradient: #6366f1;
+  --primary-subtle: rgba(129, 140, 248, 0.16);
+  --accent: #a5b4fc;
+  --accent-strong: #c7d2fe;
+  --info: #818cf8;
+
+  --bg-base: #09090b;
+  --bg-surface: #161618;
+  --bg-elevated: #1f1f23;
+  --bg-hover: #1f1f23;
+  --bg-active: rgba(129, 140, 248, 0.16);
+  --bg: #09090b;
+  --panel: #161618;
+  --panel-strong: #161618;
+
+  --text-primary: #fafafa;
+  --text-secondary: #a1a1aa;
+  --text-muted: #71717a;
+  --text: #fafafa;
+  --muted: #a1a1aa;
+  --muted-strong: #d4d4d8;
+
+  --border: #27272a;
+  --border-hover: #3f3f46;
+  --border-focus: #818cf8;
+  --line: #262629;
+  --line-strong: #3f3f46;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 1px 3px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 8px 24px -8px rgba(0, 0, 0, 0.6);
+  --shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.6);
+  --glow-primary: 0 0 0 3px rgba(129, 140, 248, 0.28);
+}
+
+/* 每页能力色统一为靛蓝（取消满屏多色） */
+.shell .studio-panel,
+.shell .studio-panel[data-view="text"],
+.shell .studio-panel[data-view="images"],
+.shell .studio-panel[data-view="videos"] {
+  --view-accent: var(--accent);
+  --view-accent-soft: var(--primary-subtle);
+  --view-grad: var(--primary);
+}
+
+/* ---- 干净底：去掉氛围渐变与装饰层 ---- */
+.shell[data-theme="light"] {
+  background: #fafafa !important;
+}
+.shell[data-theme="dark"] {
+  background: #09090b !important;
+}
+:root[data-theme="light"] body { background: #fafafa !important; }
+:root[data-theme="dark"] body { background: #09090b !important; }
+.shell::before,
+.shell::after,
+.shell .studio-ambient {
+  display: none !important;
+}
+
+/* ---- 按钮：实心靛蓝 / 描边白 / 实心红 ---- */
+button {
+  color: #ffffff !important;
+  background: var(--primary) !important;
+  border: 1px solid var(--primary) !important;
+  border-radius: var(--radius-md) !important;
+  box-shadow: none !important;
+  font-weight: 500 !important;
+}
+button:hover:not(:disabled) {
+  background: var(--primary-hover) !important;
+  border-color: var(--primary-hover) !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+button:disabled {
+  color: var(--text-muted) !important;
+  background: var(--bg-elevated) !important;
+  border-color: var(--line) !important;
+}
+.shell .button-secondary {
+  color: var(--text) !important;
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: none !important;
+}
+.shell .button-secondary:hover:not(:disabled) {
+  color: var(--text) !important;
+  background: var(--bg-hover) !important;
+  border-color: var(--border-hover) !important;
+}
+.shell .button-danger {
+  color: #ffffff !important;
+  background: #dc2626 !important;
+  border: 1px solid #dc2626 !important;
+  box-shadow: none !important;
+}
+.shell .button-danger:hover:not(:disabled) {
+  background: #b91c1c !important;
+  border-color: #b91c1c !important;
+}
+.shell .button-link {
+  color: var(--accent) !important;
+  background: transparent !important;
+  border: none !important;
+}
+
+/* ---- 侧栏：白 + 细线，无渐变 ---- */
+.shell[data-theme="light"] .sidebar,
+.shell[data-theme="dark"] .sidebar {
+  background: var(--bg-surface) !important;
+  border-right: 1px solid var(--line) !important;
+}
+.shell .sidebar-logo {
+  background: transparent !important;
+  border: 1px solid var(--line) !important;
+  border-radius: var(--radius-md) !important;
+}
+.shell .logo-mark {
+  background: var(--primary) !important;
+  box-shadow: none !important;
+}
+
+/* 分段控件：灰轨 + 白底凸起激活（中性，不用色块） */
+.shell .primary-selector,
+.shell .secondary-selector {
+  background: var(--bg-elevated) !important;
+  border: 1px solid var(--line) !important;
+  border-radius: var(--radius-md) !important;
+}
+.shell .primary-item,
+.shell .secondary-item {
+  border-radius: 7px !important;
+  color: var(--muted) !important;
+  background: transparent !important;
+}
+.shell[data-theme="light"] .primary-selector .primary-item-active,
+.shell[data-theme="light"] .secondary-selector .secondary-item-active,
+.shell[data-theme="dark"] .primary-selector .primary-item-active,
+.shell[data-theme="dark"] .secondary-selector .secondary-item-active {
+  color: var(--text) !important;
+  background: var(--bg-surface) !important;
+  box-shadow: var(--shadow-sm) !important;
+}
+
+/* 侧栏模型项 + 头像中性化 */
+.shell .sidebar-model-active {
+  background: var(--primary-subtle) !important;
+  border-color: transparent !important;
+}
+.shell .model-avatar-text,
+.shell .model-avatar-image,
+.shell .model-avatar-video,
+.shell .studio-panel .model-avatar-text,
+.shell .studio-panel .model-avatar-image,
+.shell .studio-panel .model-avatar-video {
+  color: var(--accent) !important;
+  background: var(--primary-subtle) !important;
+}
+
+/* ---- 顶栏 ---- */
+.shell .topbar-icon-button {
+  color: var(--muted-strong) !important;
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: none !important;
+}
+.shell .topbar-icon-button:hover:not(:disabled) {
+  color: var(--text) !important;
+  background: var(--bg-hover) !important;
+  border-color: var(--border-hover) !important;
+}
+.shell .topbar-model-label {
+  color: var(--muted) !important;
+  background: var(--bg-elevated) !important;
+  border: 1px solid var(--line) !important;
+}
+
+/* ---- 卡片：干净白 + 细线 + 极淡阴影 ---- */
+.shell .empty-canvas-card,
+.shell[data-theme="light"] .empty-canvas-workbench .empty-canvas-card,
+.shell[data-theme="dark"] .empty-canvas-workbench .empty-canvas-card,
+.shell .composer-card,
+.shell .composer-template-card,
+.shell[data-theme="dark"] .composer-template-card,
+.shell .settings-hero,
+.shell .settings-list-panel,
+.shell .settings-model-board,
+.shell .settings-dialog,
+.shell .auth-panel,
+.shell .auth-card,
+.shell .sidebar-account {
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--line) !important;
+  box-shadow: var(--shadow-sm) !important;
+}
+
+/* hero 顶条 / 模板左条：细实色靛蓝（克制品牌点缀） */
+.shell .studio-panel .empty-canvas-card::before {
+  height: 2px !important;
+  background: var(--primary) !important;
+}
+.shell .studio-panel .composer-template-card::before {
+  width: 2px !important;
+  background: var(--primary) !important;
+  opacity: 1 !important;
+}
+.shell .studio-panel .hero-model-mark,
+.shell .studio-panel .hero-model-mark-has-icon {
+  color: var(--accent) !important;
+  background: var(--primary-subtle) !important;
+  box-shadow: none !important;
+}
+.shell .empty-canvas-model-strip {
+  background: transparent !important;
+  border: none !important;
+}
+
+/* 主 CTA / 提交 / 分段参数激活：实心靛蓝 */
+.shell .studio-panel .composer-submit-button,
+.shell .studio-panel .empty-canvas-primary-action,
+.shell .segmented-option-active,
+.shell .studio-panel .segmented-option-active,
+.shell .settings-filter-tab-active,
+.shell .auth-tab-active {
+  color: #ffffff !important;
+  background: var(--primary) !important;
+  border-color: var(--primary) !important;
+  box-shadow: none !important;
+}
+.shell .empty-canvas-workbench .empty-canvas-flow span:first-child {
+  color: var(--accent) !important;
+  background: var(--primary-subtle) !important;
+  border-color: transparent !important;
+}
+
+/* composer 次级控件中性化 */
+.shell .studio-panel .gameplay-btn {
+  color: var(--text) !important;
+  background: var(--bg-elevated) !important;
+  border: 1px solid var(--line) !important;
+  box-shadow: none !important;
+}
+.shell .studio-panel .prompt-ai-button {
+  color: var(--accent) !important;
+  background: var(--primary-subtle) !important;
+  border: 1px solid transparent !important;
+  box-shadow: none !important;
+}
+.shell .composer-query-button,
+.shell .studio-panel .composer-query-button {
+  color: var(--text) !important;
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--border) !important;
+}
+.shell .composer-pill-active,
+.shell .composer-pill:hover {
+  color: var(--accent) !important;
+  background: var(--primary-subtle) !important;
+  border-color: color-mix(in srgb, var(--primary) 36%, transparent) !important;
+}
+
+/* 图片参考图区：中性虚线 */
+.shell .studio-panel[data-view="images"] .composer-attach-button,
+.shell .studio-panel[data-view="videos"] .composer-attach-button {
+  color: var(--muted) !important;
+  background: var(--bg-elevated) !important;
+  border: 1.5px dashed var(--border) !important;
+}
+.shell .studio-panel .composer-attach-button:hover:not(:disabled) {
+  color: var(--accent) !important;
+  border-color: var(--accent) !important;
+  border-style: dashed !important;
+}
+
+/* ---- 标签：中性 + 极淡靛蓝强调 ---- */
+.shell .badge,
+.shell .tag,
+.shell .parameter-source-chip {
+  color: var(--muted-strong) !important;
+  background: var(--bg-elevated) !important;
+  border: 1px solid var(--line) !important;
+}
+.shell .badge-accent,
+.shell .studio-panel .badge-accent,
+.shell .tag-text,
+.shell .tag-image,
+.shell .tag-video {
+  color: var(--accent) !important;
+  background: var(--primary-subtle) !important;
+  border-color: transparent !important;
+}
+.shell .badge-success,
+.shell .tag-info { /* 状态语义保留绿色/中性，避免误导 */
+  color: var(--muted-strong) !important;
+  background: var(--bg-elevated) !important;
+  border-color: var(--line) !important;
+}
+
+/* 消息头像中性化 */
+.shell .message-avatar-ai {
+  color: #ffffff !important;
+  background: var(--primary) !important;
+}
+.shell .message-avatar-user {
+  color: var(--muted-strong) !important;
+  background: var(--bg-elevated) !important;
+}
+
+/* ---- v37 收尾：清除残留旧装饰/旧渐变 ---- */
+.shell .studio-canvas::before,
+.shell .studio-canvas::after {
+  display: none !important;
+}
+.shell[data-theme="light"] .empty-canvas-actions button:not(.button-secondary),
+.shell[data-theme="dark"] .empty-canvas-actions button:not(.button-secondary) {
+  color: #ffffff !important;
+  background: var(--primary) !important;
+  border-color: var(--primary) !important;
+  box-shadow: none !important;
+}

@@ -12522,3 +12522,145 @@ button:disabled {
 .shell .settings-model-row-video::before {
   background: var(--primary) !important;
 }
+
+/* =====================================================================
+   v37 底部 composer 面板清理：杂色全部统一靛蓝/中性 + 去玻璃浑浊
+   ===================================================================== */
+/* 状态 chips 全部中性化（去青绿/琥珀 tint） */
+.shell .credit-cost-preview,
+.shell .studio-panel .credit-cost-preview {
+  color: var(--muted-strong) !important;
+  background: var(--bg-elevated) !important;
+  border: 1px solid var(--line) !important;
+  box-shadow: none !important;
+}
+.shell .parameter-source-chip,
+.shell .parameter-source-chip-generic,
+.shell .studio-panel .parameter-source-chip,
+.shell .studio-panel .parameter-source-chip-generic {
+  color: var(--muted) !important;
+  background: var(--bg-elevated) !important;
+  border: 1px solid var(--line) !important;
+}
+.shell .parameter-source-chip-exact,
+.shell .studio-panel .parameter-source-chip-exact {
+  color: var(--accent) !important;
+  background: var(--primary-subtle) !important;
+  border-color: transparent !important;
+}
+/* 模板分类标签 → 靛蓝 */
+.shell .composer-template-card-top small,
+.shell .studio-panel .composer-template-card-top small {
+  color: var(--accent) !important;
+}
+
+/* 输入面板纯净：去玻璃模糊 + 去媒体侧渐变 */
+.shell .composer-surface,
+.shell .composer-surface:has(.media-composer-grid) {
+  background: var(--bg-surface) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+.shell .composer-surface:has(.media-composer-grid)::before,
+.shell .composer-surface:has(.media-composer-grid)::after {
+  display: none !important;
+}
+.shell .composer-card::before,
+.shell .composer-card::after {
+  display: none !important;
+}
+.shell .composer-card {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* 输入框：干净边框 */
+.shell .prompt-input-wrap {
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-md) !important;
+  backdrop-filter: none !important;
+}
+.shell .composer-input {
+  background: transparent !important;
+  border: none !important;
+}
+.shell .prompt-input-wrap:focus-within {
+  border-color: var(--accent) !important;
+  box-shadow: var(--glow-primary) !important;
+}
+
+/* 参数 pills 统一中性 */
+.shell .composer-pill,
+.shell .composer-keyword-compact,
+.shell .studio-panel .composer-pill {
+  color: var(--text) !important;
+  background: var(--bg-elevated) !important;
+  border: 1px solid var(--line) !important;
+  backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+.shell .composer-keyword-compact::placeholder {
+  color: var(--text-muted) !important;
+}
+
+/* "收起输入" 浮标低调 */
+.shell .composer-collapse-toggle {
+  color: var(--muted) !important;
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: var(--shadow-sm) !important;
+}
+.shell .composer-compact-kind {
+  color: var(--accent) !important;
+  background: var(--primary-subtle) !important;
+}
+
+/* ---- 模板改为紧凑 chip 行：大幅给底部面板减负 ---- */
+.shell .composer-template-grid {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 8px !important;
+  grid-template-columns: none !important;
+}
+.shell .composer-template-card {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 7px !important;
+  width: auto !important;
+  min-height: 0 !important;
+  padding: 7px 14px !important;
+  border-radius: 999px !important;
+  box-shadow: none !important;
+}
+.shell .composer-template-card::before {
+  display: none !important;
+}
+.shell .composer-template-card:hover {
+  transform: none !important;
+  border-color: var(--accent) !important;
+  background: var(--primary-subtle) !important;
+}
+.shell .composer-template-summary,
+.shell .composer-template-example {
+  display: none !important;
+}
+.shell .composer-template-card-top {
+  display: inline-flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 6px !important;
+}
+.shell .composer-template-card-top small {
+  color: var(--muted) !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+}
+.shell .composer-template-card-top strong {
+  font-size: 13px !important;
+  font-weight: 500 !important;
+}
+.shell .composer-template-library {
+  gap: 8px !important;
+}

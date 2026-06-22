@@ -6,6 +6,7 @@ import {
   authCodeCallbackNextPath,
   buildImageGenerationRequestBody,
   buildVideoMediaFields,
+  filterVideoModeOptionsForModel,
   updateLocalConversationMessage,
   updateLocalConversationTaskMessage,
   markConversationMessageFailed,
@@ -1194,6 +1195,50 @@ describe("model selection helpers", () => {
     expect(videoModeRequiredUploadCount("first-frame")).toBe(1);
     expect(videoModeUploadLimit(videoModel, "start-end")).toBe(2);
     expect(videoModeRequiredUploadCount("start-end")).toBe(2);
+  });
+
+  it("only keeps Seedance 2 image-to-video models eligible for start/end frame modes", () => {
+    const modeOptions = [
+      { label: "文生视频", value: "text", maxCount: 0 },
+      { label: "参考图", value: "reference", maxCount: 5 },
+      { label: "首帧", value: "first_frame", maxCount: 1 },
+      { label: "首尾帧", value: "first_last_frame", maxCount: 2 },
+    ];
+    const seedanceModel = (modelName: string): ModelDefinition => ({
+      ...textModel,
+      id: modelName,
+      capability: "video",
+      adapter: "video-unified-generic",
+      model: modelName,
+      primarySubModelId: `sub-${modelName}`,
+      subModels: [
+        {
+          id: `sub-${modelName}`,
+          modelName,
+          displayName: modelName,
+          capability: "video",
+          adapter: "video-unified-generic",
+          isPrimary: true,
+          status: "active",
+        },
+      ],
+      builtin: false,
+    });
+
+    expect(filterVideoModeOptionsForModel(seedanceModel("seedance-2.0-fast-image-to-video"), modeOptions).map((item) => item.value)).toEqual([
+      "text",
+      "reference",
+      "first_frame",
+      "first_last_frame",
+    ]);
+    expect(filterVideoModeOptionsForModel(seedanceModel("seedance-2.0-fast-text-to-video"), modeOptions).map((item) => item.value)).toEqual([
+      "text",
+      "reference",
+    ]);
+    expect(filterVideoModeOptionsForModel(seedanceModel("seedance-2.0-fast-multimodal-video"), modeOptions).map((item) => item.value)).toEqual([
+      "text",
+      "reference",
+    ]);
   });
 
   it("places selected video references in catalog-specific request fields", () => {

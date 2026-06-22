@@ -529,6 +529,37 @@ def test_seedance_2_encoded_local_frame_urls_use_existing_uploads(monkeypatch) -
     assert body["metadata"]["lastFrameUrl"] == "https://studio.cylonai.cn/api/assets/uploads/last%20frame.png"
 
 
+def test_seedance_2_enables_real_person_mode_by_default(monkeypatch) -> None:
+    (main_module.LOCAL_UPLOAD_DIR / "person.png").write_bytes(b"fake-person")
+    settings = main_module.get_settings()
+    monkeypatch.setattr(settings, "frontend_url", "https://studio.cylonai.cn")
+    with SessionLocal() as db:
+        catalog_model = upsert_catalog_model_detail(db, kkyi_video_detail())
+        sub_model = SubModel(
+            model_group_id="model-1",
+            api_key_id="key-1",
+            catalog_model_id=catalog_model.id,
+            model_name="seedance-2.0-fast-image-to-video",
+            display_name="Seed2.0-Fast",
+            capability="video",
+            adapter="video-unified-generic",
+        )
+        sub_model.catalog_model = catalog_model
+        body = main_module.normalize_kkyi_video_body(
+            {
+                "model": "seedance-2.0-fast-image-to-video",
+                "prompt": "real person video",
+                "image": "/api/assets/uploads/person.png",
+                "duration": 5,
+                "resolution": "720p",
+            },
+            "seedance-2.0-fast-image-to-video",
+            sub_model,
+        )
+
+    assert body["metadata"]["realPersonMode"] is True
+
+
 def test_catalog_video_model_uses_kkyi_generation_path_and_flat_parameters(monkeypatch) -> None:
     with SessionLocal() as db:
         upsert_catalog_model_detail(db, kkyi_video_detail())
@@ -602,6 +633,7 @@ def test_catalog_video_model_uses_kkyi_generation_path_and_flat_parameters(monke
         "metadata": {
             "firstFrameUrl": f"https://studio.cylonai.cn/api/assets/uploads/{first_frame}",
             "lastFrameUrl": f"https://studio.cylonai.cn/api/assets/uploads/{last_frame}",
+            "realPersonMode": True,
         },
     }
 

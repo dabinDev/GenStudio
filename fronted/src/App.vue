@@ -61,6 +61,7 @@ import {
   conversationDisplayTitle,
   createLocalId,
   deleteConfirmationSummary,
+  filterVideoModeOptionsForModel,
   filterReferenceImageFiles,
   findPromptBeforeMessage,
   generatedAssetReferenceFileName,
@@ -563,8 +564,10 @@ const imageUsesQuantityControls = computed(() => supportsCatalogParameter(active
 const imageRatioOptions = computed(() => catalogOptionItems(activeModel.value, ["ratio", "aspect_ratio"], IMAGE_RATIO_OPTIONS));
 const imageResolutionOptions = computed(() => catalogOptionItems(activeModel.value, ["resolution", "size"], IMAGE_RESOLUTION_OPTIONS));
 const videoModeOptions = computed(() => {
-  if (!hasCatalogParameter(activeModel.value, "video_mode")) return VIDEO_MODE_OPTIONS;
-  return catalogOptionItems(activeModel.value, "video_mode", VIDEO_MODE_OPTIONS.map((item) => item.value)).map((item) => ({
+  const rawOptions = hasCatalogParameter(activeModel.value, "video_mode")
+    ? catalogOptionItems(activeModel.value, "video_mode", VIDEO_MODE_OPTIONS.map((item) => item.value))
+    : VIDEO_MODE_OPTIONS;
+  return filterVideoModeOptionsForModel(activeModel.value, rawOptions).map((item) => ({
     value: catalogVideoModeValue(item.value),
     label: item.label,
   }));

@@ -458,6 +458,31 @@ export function catalogVideoModeValue(value: string): VideoModeValue {
   return "text";
 }
 
+const SEEDANCE_2_START_END_MODEL_NAMES = new Set([
+  "seedance-2.0-image-to-video",
+  "seedance-2.0-fast-image-to-video",
+]);
+
+function primarySeedance2ModelName(model: ModelDefinition | null | undefined): string {
+  const primary = getPrimarySubModel(model);
+  const candidates = [
+    primary?.modelName,
+    model?.model,
+    primary?.catalog?.modelName,
+    model?.catalog?.modelName,
+  ];
+  return candidates.map((value) => (value || "").trim().toLowerCase()).find((value) => value.startsWith("seedance-2.0-")) || "";
+}
+
+export function filterVideoModeOptionsForModel(
+  model: ModelDefinition | null | undefined,
+  options: CatalogOptionItem[],
+): CatalogOptionItem[] {
+  const seedanceModelName = primarySeedance2ModelName(model);
+  if (!seedanceModelName || SEEDANCE_2_START_END_MODEL_NAMES.has(seedanceModelName)) return options;
+  return options.filter((item) => !["first_frame", "first-frame", "first_last_frame", "start-end"].includes(item.value));
+}
+
 export function videoModeParamValue(mode: VideoModeValue): string {
   if (mode === "reference") return "reference";
   if (mode === "first-frame") return "first_frame";

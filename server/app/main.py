@@ -705,9 +705,10 @@ def normalize_kkyi_video_url_fields(normalized: dict[str, Any]) -> dict[str, Any
 
 def normalize_seedance_2_openapi_video_body(normalized: dict[str, Any], request_body: dict[str, Any]) -> dict[str, Any]:
     metadata = copy.deepcopy(request_body.get("metadata")) if isinstance(request_body.get("metadata"), dict) else {}
-    for key in ("seed", "watermark", "camera_fixed", "callback_url"):
+    for key in ("seed", "watermark", "camera_fixed", "callback_url", "realPersonMode"):
         if key in request_body and request_body[key] not in (None, ""):
             metadata[key] = request_body[key]
+    metadata.setdefault("realPersonMode", True)
     first_frame = normalized.get("firstFrameUrl") or normalized.get("first_frame")
     last_frame = normalized.get("lastFrameUrl") or normalized.get("last_frame")
     if first_frame not in (None, ""):

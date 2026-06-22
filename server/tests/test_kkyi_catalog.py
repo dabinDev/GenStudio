@@ -196,6 +196,8 @@ def kkyi_video_detail() -> dict:
         "input_hint": "Use video parameters",
         "parameters": [
             {"id": "10134", "display_name": "生成模式", "param_key": "video_mode", "widget_type": 3, "is_required": False, "default_value": "reference", "options": []},
+            {"id": "10135", "display_name": "First frame", "param_key": "first_frame", "widget_type": 6, "is_required": False, "default_value": "", "max_count": 1, "options": []},
+            {"id": "10136", "display_name": "Last frame", "param_key": "last_frame", "widget_type": 6, "is_required": False, "default_value": "", "max_count": 1, "options": []},
             {"id": "10122", "display_name": "视频比例", "param_key": "ratio", "widget_type": 3, "is_required": True, "default_value": "16:9", "options": []},
             {"id": "10123", "display_name": "分辨率", "param_key": "resolution", "widget_type": 3, "is_required": True, "default_value": "720p", "options": []},
             {"id": "10124", "display_name": "生成音频", "param_key": "generate_audio", "widget_type": 5, "is_required": False, "default_value": "true", "options": []},
@@ -455,26 +457,39 @@ def test_catalog_video_parameters_are_clamped_before_forwarding(monkeypatch) -> 
     }
 
 
-def test_catalog_video_start_end_frames_use_runninghub_url_fields(monkeypatch) -> None:
+def test_catalog_video_start_end_frames_use_catalog_url_fields(monkeypatch) -> None:
     (main_module.LOCAL_UPLOAD_DIR / "first.png").write_bytes(b"fake-first")
     (main_module.LOCAL_UPLOAD_DIR / "last.png").write_bytes(b"fake-last")
     settings = main_module.get_settings()
     monkeypatch.setattr(settings, "frontend_url", "https://studio.cylonai.cn")
-    body = main_module.normalize_kkyi_video_body(
-        {
-            "model": "seedance-2.0-fast-image-to-video",
-            "prompt": "video test",
-            "video_mode": "first_last_frame",
-            "first_frame": "/api/assets/uploads/first.png",
-            "last_frame": "/api/assets/uploads/last.png",
-        },
-        "seedance-2.0-fast-image-to-video",
-    )
+    with SessionLocal() as db:
+        catalog_model = upsert_catalog_model_detail(db, kkyi_video_detail())
+        sub_model = SubModel(
+            model_group_id="model-1",
+            api_key_id="key-1",
+            catalog_model_id=catalog_model.id,
+            model_name="seedance-2.0-fast-image-to-video",
+            display_name="Seed2.0-Fast",
+            capability="video",
+            adapter="video-unified-generic",
+        )
+        sub_model.catalog_model = catalog_model
+        body = main_module.normalize_kkyi_video_body(
+            {
+                "model": "seedance-2.0-fast-image-to-video",
+                "prompt": "video test",
+                "video_mode": "first_last_frame",
+                "first_frame": "/api/assets/uploads/first.png",
+                "last_frame": "/api/assets/uploads/last.png",
+            },
+            "seedance-2.0-fast-image-to-video",
+            sub_model,
+        )
 
-    assert body["firstFrameUrl"] == "https://studio.cylonai.cn/api/assets/uploads/first.png"
-    assert body["lastFrameUrl"] == "https://studio.cylonai.cn/api/assets/uploads/last.png"
-    assert "first_frame" not in body
-    assert "last_frame" not in body
+    assert body["first_frame"] == "https://studio.cylonai.cn/api/assets/uploads/first.png"
+    assert body["last_frame"] == "https://studio.cylonai.cn/api/assets/uploads/last.png"
+    assert "firstFrameUrl" not in body
+    assert "lastFrameUrl" not in body
 
 
 def test_catalog_video_model_uses_kkyi_generation_path_and_flat_parameters(monkeypatch) -> None:
@@ -545,8 +560,8 @@ def test_catalog_video_model_uses_kkyi_generation_path_and_flat_parameters(monke
         "generate_audio": False,
         "quantity": 1,
         "video_mode": "first_last_frame",
-        "firstFrameUrl": f"https://studio.cylonai.cn/api/assets/uploads/{first_frame}",
-        "lastFrameUrl": f"https://studio.cylonai.cn/api/assets/uploads/{last_frame}",
+        "first_frame": f"https://studio.cylonai.cn/api/assets/uploads/{first_frame}",
+        "last_frame": f"https://studio.cylonai.cn/api/assets/uploads/{last_frame}",
     }
 
 

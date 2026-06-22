@@ -633,7 +633,15 @@ def apply_catalog_video_constraints(normalized: dict[str, Any], sub_model: Any) 
     return normalized
 
 
-KKYI_VIDEO_PUBLIC_URL_FIELDS = {"img_url", "firstFrameUrl", "lastFrameUrl", "video_url", "audio_url"}
+KKYI_VIDEO_PUBLIC_URL_FIELDS = {
+    "img_url",
+    "first_frame",
+    "last_frame",
+    "firstFrameUrl",
+    "lastFrameUrl",
+    "video_url",
+    "audio_url",
+}
 
 
 def local_asset_public_url(value: str, settings: Settings | None = None) -> str:
@@ -681,6 +689,8 @@ def normalize_kkyi_video_body(request_body: dict[str, Any], model_name: str, sub
         "model": str(request_body.get("model") or model_name).strip(),
         "prompt": prompt,
     }
+    first_frame_key = "first_frame" if catalog_parameter_for_key(sub_model, ("first_frame",)) else "firstFrameUrl"
+    last_frame_key = "last_frame" if catalog_parameter_for_key(sub_model, ("last_frame",)) else "lastFrameUrl"
     field_map = {
         "ratio": ("ratio", "aspect_ratio"),
         "duration": ("duration",),
@@ -689,8 +699,8 @@ def normalize_kkyi_video_body(request_body: dict[str, Any], model_name: str, sub
         "quantity": ("quantity", "n", "count"),
         "video_mode": ("video_mode", "mode"),
         "img_url": ("img_url",),
-        "firstFrameUrl": ("firstFrameUrl", "first_frame"),
-        "lastFrameUrl": ("lastFrameUrl", "last_frame"),
+        first_frame_key: ("firstFrameUrl", "first_frame"),
+        last_frame_key: ("lastFrameUrl", "last_frame"),
         "video_url": ("video_url",),
         "audio_url": ("audio_url",),
         "material": ("material",),

@@ -2124,7 +2124,7 @@ async def health(db: Session = Depends(get_db), settings: Settings = Depends(get
     }
 
 
-@app.get("/api/assets/generated/{file_name}")
+@app.api_route("/api/assets/generated/{file_name}", methods=["GET", "HEAD"])
 async def generated_asset(file_name: str) -> FileResponse:
     if "/" in file_name or "\\" in file_name or not file_name.endswith(".png"):
         raise HTTPException(status_code=404, detail={"message": "Asset not found."})
@@ -2134,7 +2134,7 @@ async def generated_asset(file_name: str) -> FileResponse:
     return FileResponse(file_path, media_type="image/png")
 
 
-@app.get("/api/assets/uploads/{file_name}")
+@app.api_route("/api/assets/uploads/{file_name}", methods=["GET", "HEAD"])
 async def local_uploaded_asset(file_name: str) -> FileResponse:
     if "/" in file_name or "\\" in file_name:
         raise HTTPException(status_code=404, detail={"message": "Asset not found."})

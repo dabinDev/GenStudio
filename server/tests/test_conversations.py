@@ -2807,6 +2807,32 @@ def test_local_upload_fallback_stores_reference_file(monkeypatch) -> None:
     assert asset_response.content == b"fake-reference"
 
 
+def test_asset_urls_support_head_for_upstream_validation(monkeypatch) -> None:
+    settings = main_module.get_settings()
+    monkeypatch.setattr(settings, "object_storage_enabled", False)
+
+    client = TestClient(app)
+    upload_response = client.post(
+        "/api/upload/local",
+        files={"file": ("reference.png", b"fake-reference", "image/png")},
+    )
+    assert upload_response.status_code == 200
+
+    uploaded_head = client.head(upload_response.json()["publicUrl"])
+    assert uploaded_head.status_code == 200
+    assert uploaded_head.headers["content-type"].startswith("image/png")
+    assert uploaded_head.headers["content-length"] == str(len(b"fake-reference"))
+    assert uploaded_head.content == b""
+
+    generated_name = "head-check.png"
+    (main_module.GENERATED_ASSET_DIR / generated_name).write_bytes(b"fake-generated")
+    generated_head = client.head(f"/api/assets/generated/{generated_name}")
+    assert generated_head.status_code == 200
+    assert generated_head.headers["content-type"].startswith("image/png")
+    assert generated_head.headers["content-length"] == str(len(b"fake-generated"))
+    assert generated_head.content == b""
+
+
 def test_seedance_video_prompt_uses_text_content_for_title(monkeypatch) -> None:
     async def fake_forward_json(method, url, api_key, body=None):
         return httpx.Response(200, json={"id": "task-2", "status": "processing"}), {

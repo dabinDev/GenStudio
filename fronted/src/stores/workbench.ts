@@ -66,9 +66,51 @@ export function useWorkbenchStore() {
     return [...BUILTIN_MODELS, ...state.customModels].filter((model) => !removedIds.has(model.id));
   });
 
+  function primaryServerModelName(model: ModelDefinition): string {
+    return (model.model || model.subModels?.find((item) => item.id === model.primarySubModelId)?.modelName || "").trim().toLowerCase();
+  }
+
+  function preferServerModel(candidate: ModelDefinition, current: ModelDefinition): ModelDefinition {
+    if (candidate.isPublic !== current.isPublic) {
+      return candidate.isPublic ? candidate : current;
+    }
+    if (candidate.canEdit !== current.canEdit) {
+      return candidate.canEdit ? candidate : current;
+    }
+    return candidate;
+  }
+
+  function dedupeServerModels(items: ModelDefinition[]): ModelDefinition[] {
+    const indexes = new Map<string, number>();
+    const deduped: ModelDefinition[] = [];
+    items.forEach((model) => {
+      const primaryName = primaryServerModelName(model);
+      const key = model.isPublic
+        ? `${model.capability}:public:${primaryName || model.id}`
+        : `${model.capability}:private:${primaryName || model.id}:${model.id}`;
+      const existingIndex = indexes.get(key);
+      if (existingIndex === undefined) {
+        indexes.set(key, deduped.length);
+        deduped.push(model);
+        return;
+      }
+      deduped[existingIndex] = preferServerModel(model, deduped[existingIndex]);
+    });
+    const publicPrimaryKeys = new Set(
+      deduped
+        .filter((model) => model.isPublic)
+        .map((model) => `${model.capability}:${primaryServerModelName(model)}`),
+    );
+    if (!publicPrimaryKeys.size) return deduped;
+    return deduped.filter((model) => {
+      if (model.isPublic) return true;
+      return !publicPrimaryKeys.has(`${model.capability}:${primaryServerModelName(model)}`);
+    });
+  }
+
   function applyServerModels(items: ServerModelDefinition[]) {
     state.serverSynced = true;
-    state.serverModels = items.map((item) => ({
+    state.serverModels = dedupeServerModels(items.map((item) => ({
       id: item.id,
       name: item.name,
       vendor: item.vendor,
@@ -91,7 +133,7 @@ export function useWorkbenchStore() {
       publicTags: item.publicTags,
       promptOptimizeEnabled: item.promptOptimizeEnabled,
       defaultParameters: item.defaultParameters,
-    }));
+    })));
     items.forEach((item) => {
       state.modelSettings[item.id] = {
         baseUrl: item.canEdit ? item.baseUrl : "",

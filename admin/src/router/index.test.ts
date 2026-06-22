@@ -10,8 +10,10 @@ describe('admin router', () => {
     expect(router.resolve('/dashboard').name).toBe('admin-dashboard');
   });
 
-  it('registers the forbidden route outside the admin layout', () => {
+  it('registers the forbidden route inside the admin layout for consistent chrome', () => {
     expect(router.resolve('/forbidden').name).toBe('admin-forbidden');
+    expect(router.resolve('/forbidden').matched[0]?.components?.default).toBeTruthy();
+    expect(router.resolve('/forbidden').matched.length).toBeGreaterThan(1);
   });
 
   it('uses readable Chinese labels for admin routes and navigation', () => {

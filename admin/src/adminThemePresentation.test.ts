@@ -488,4 +488,33 @@ describe('admin theme presentation', () => {
     expect(styles.indexOf('grid-template-columns: repeat(3, minmax(0, 1fr))', markerIndex)).toBeGreaterThan(markerIndex);
     expect(styles.indexOf('.admin-prompt-center__starter-signal', markerIndex)).toBeGreaterThan(markerIndex);
   });
+
+  it('contains the admin shell and Element Plus tables on narrow screens', () => {
+    const layout = layoutVue();
+    const users = readFileSync(resolve(process.cwd(), 'src/views/UserCreditsView.vue'), 'utf8');
+    const styles = stylesCss();
+    const markerIndex = styles.indexOf('Admin responsive shell containment v16');
+
+    expect(layout).toContain('admin-mobile-nav');
+    expect(users).toContain('admin-user-credits__table-scroll');
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf('.admin-layout', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('overflow-x: hidden', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('.admin-mobile-nav', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('@media (max-width: 900px)', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('grid-template-columns: minmax(0, 1fr) !important', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('.admin-content-page__table', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('.admin-user-credits__table-scroll', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('overflow-x: auto !important', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('.admin-ambient', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('overflow: hidden !important', markerIndex)).toBeGreaterThan(markerIndex);
+  });
+
+  it('shows prompt starter examples as examples instead of mixing them into template counts', () => {
+    const promptCenter = promptCenterVue();
+
+    expect(promptCenter).toContain('真实模板总数');
+    expect(promptCenter).toContain('样例仅用于预览');
+    expect(promptCenter).toContain('真实模板 0 个');
+  });
 });

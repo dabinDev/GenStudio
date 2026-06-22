@@ -547,4 +547,45 @@ describe("workbench style application", () => {
     expect(styles).not.toMatch(/\.admin-/);
     expect(styles).not.toMatch(/--admin/);
   });
+
+  it("uses a compact mobile workbench shell instead of a squeezed desktop sidebar", () => {
+    const styles = stylesCss();
+    const markerIndex = styles.indexOf("Creative Workshop mobile shell containment v38");
+
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf("@media (max-width: 720px)", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf(".shell .sidebar", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf("max-width: 100vw !important", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf(".shell .model-list", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf("overflow-x: auto !important", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf(".shell .main", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf("min-width: 0 !important", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf(".shell .studio-ambient", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf("overflow: hidden !important", markerIndex)).toBeGreaterThan(markerIndex);
+  });
+
+  it("keeps mobile settings model rows contained inside the viewport", () => {
+    const styles = stylesCss();
+    const markerIndex = styles.indexOf("Creative Workshop mobile shell containment v38");
+
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf(".shell .settings-board-head,", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf(".shell .settings-model-row {", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf("grid-template-columns: minmax(0, 1fr) !important", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf(".shell .settings-model-row > *", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf(".shell .settings-primary-model,", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf(".shell .inline-model-select", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf(".shell .settings-row-actions-primary", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf(".shell .settings-row-actions-more", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf("width: 100% !important", markerIndex)).toBeGreaterThan(markerIndex);
+  });
+
+  it("marks account pages separately from the model workspace in the sidebar", () => {
+    const source = appVue();
+
+    expect(source).toContain("primaryNavSection");
+    expect(source).toContain("primary-item-active");
+    expect(source).toContain("primaryNavSection === 'models'");
+    expect(source).toContain("primaryNavSection === 'account'");
+  });
 });

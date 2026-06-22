@@ -84,6 +84,7 @@
     </el-alert>
 
     <section class="admin-user-credits__table">
+      <div class="admin-user-credits__table-scroll">
       <el-table v-loading="isLoading" :data="filteredUsers" row-key="id">
         <el-table-column label="用户" min-width="250">
           <template #default="{ row }">
@@ -164,6 +165,7 @@
           </template>
         </el-table-column>
       </el-table>
+      </div>
     </section>
 
     <el-drawer v-model="drawerVisible" size="min(560px, 100vw)" :title="drawerTitle" destroy-on-close>

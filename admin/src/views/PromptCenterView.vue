@@ -25,7 +25,7 @@
 
     <section class="admin-prompt-center__overview">
       <article>
-        <span>模板总数</span>
+        <span>真实模板总数</span>
         <strong>{{ templates.length }}</strong>
         <small>{{ capability === 'all' ? '全部创作类型' : capabilityLabel(capability) }}</small>
       </article>
@@ -50,7 +50,7 @@
       <div class="admin-prompt-center__starter-head">
         <div>
           <h3>模板样例</h3>
-          <p>先用样例理解模板结构，再进入真实模板调整启用状态、内容和模型覆盖。</p>
+          <p>样例仅用于预览，不计入真实模板总数；进入真实模板后再调整启用状态、内容和模型覆盖。</p>
         </div>
         <div class="admin-prompt-center__starter-signal">
           <span>运营校验</span>
@@ -121,7 +121,7 @@
     </section>
     <section v-else class="admin-prompt-center__empty">
       <strong>还没有匹配的提示语模板</strong>
-      <p>可以先查看上方模板样例，确认结构后在已有默认模板中编辑，或切换筛选条件查看其它类型。</p>
+      <p>当前筛选下真实模板 0 个；可以先查看上方模板样例，确认结构后切换筛选条件查看其它类型。</p>
       <div class="admin-prompt-center__empty-steps">
         <article>
           <span>01</span>

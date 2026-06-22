@@ -37,6 +37,7 @@ describe('admin router guards', () => {
       'records',
       'audit',
       'settings',
+      'forbidden',
     ]);
     expect(router.resolve('/models').matched.some((record) => (
       record.meta.permission === ADMIN_PERMISSIONS.modelView
@@ -54,6 +55,7 @@ describe('admin router guards', () => {
       '创作记录',
       '审计日志',
       '系统设置',
+      '无权访问',
     ]);
   });
 

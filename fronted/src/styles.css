@@ -12880,3 +12880,271 @@ button:disabled {
 .shell .composer-topline .credit-balance {
   margin-left: auto !important;
 }
+
+/* Creative Workshop mobile shell containment v38 */
+.shell,
+.shell .main,
+.shell .sidebar,
+.shell .studio-panel,
+.shell .settings-page,
+.shell .profile-page,
+.shell .auth-page {
+  max-width: 100vw;
+}
+
+.shell::before,
+.shell::after,
+.shell .studio-ambient {
+  overflow: hidden !important;
+}
+
+@media (max-width: 720px) {
+  html,
+  body,
+  #app {
+    overflow: hidden !important;
+  }
+
+  .shell {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-rows: auto minmax(0, 1fr) !important;
+    width: 100vw !important;
+    max-width: 100vw !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+    overflow: hidden !important;
+  }
+
+  .shell .sidebar {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    width: 100% !important;
+    max-width: 100vw !important;
+    height: auto !important;
+    max-height: 172px !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+    padding: 8px !important;
+    border-right: 0 !important;
+    border-bottom: 1px solid var(--line) !important;
+  }
+
+  .shell .sidebar-logo {
+    min-height: 40px !important;
+    padding: 6px 8px !important;
+  }
+
+  .shell .sidebar-logo > div:last-child,
+  .shell .sidebar-account {
+    display: none !important;
+  }
+
+  .shell .category-tabs {
+    min-width: 0 !important;
+    gap: 6px !important;
+  }
+
+  .shell .primary-selector,
+  .shell .secondary-selector,
+  .shell .model-list {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    scrollbar-width: none;
+  }
+
+  .shell .primary-selector::-webkit-scrollbar,
+  .shell .secondary-selector::-webkit-scrollbar,
+  .shell .model-list::-webkit-scrollbar {
+    display: none;
+  }
+
+  .shell .primary-selector,
+  .shell .secondary-selector {
+    display: flex !important;
+    grid-template-columns: none !important;
+    gap: 6px !important;
+  }
+
+  .shell .primary-item,
+  .shell .secondary-item {
+    flex: 0 0 auto !important;
+    min-height: 32px !important;
+    padding: 0 10px !important;
+    white-space: nowrap !important;
+  }
+
+  .shell .model-list {
+    display: flex !important;
+    gap: 7px !important;
+    max-height: 52px !important;
+    padding-bottom: 2px !important;
+  }
+
+  .shell .model-divider {
+    display: none !important;
+  }
+
+  .shell .sidebar-model-item {
+    flex: 0 0 min(230px, 72vw) !important;
+    width: min(230px, 72vw) !important;
+    min-width: 0 !important;
+    min-height: 48px !important;
+    grid-template-columns: 32px minmax(0, 1fr) auto !important;
+    gap: 7px !important;
+    padding: 7px !important;
+  }
+
+  .shell .sidebar-model-item .model-avatar {
+    width: 32px !important;
+    height: 32px !important;
+  }
+
+  .shell .sidebar-model-item .model-info span:nth-of-type(n + 2),
+  .shell .sidebar-model-item .model-tag,
+  .shell .sidebar-public-tag,
+  .shell .parameter-source-chip {
+    display: none !important;
+  }
+
+  .shell .main {
+    display: flex !important;
+    flex-direction: column !important;
+    width: 100% !important;
+    max-width: 100vw !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    height: auto !important;
+    overflow: hidden !important;
+  }
+
+  .shell .workspace-topbar {
+    flex: 0 0 auto !important;
+    align-items: stretch !important;
+    flex-direction: column !important;
+    gap: 6px !important;
+    min-height: 0 !important;
+    padding: 7px 8px !important;
+  }
+
+  .shell .workspace-topbar-actions {
+    width: 100% !important;
+    min-width: 0 !important;
+    overflow-x: auto !important;
+    padding-bottom: 1px !important;
+  }
+
+  .shell .workspace-topbar-actions:first-child {
+    order: 2;
+  }
+
+  .shell .workspace-topbar-actions:last-child {
+    order: 1;
+    justify-content: space-between !important;
+  }
+
+  .shell .topbar-conversation-name {
+    min-width: 180px !important;
+    max-width: none !important;
+  }
+
+  .shell .topbar-model-label {
+    display: none !important;
+  }
+
+  .shell .studio-panel,
+  .shell .settings-page,
+  .shell .profile-page,
+  .shell .auth-page {
+    flex: 1 1 auto !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    height: auto !important;
+    overflow: auto !important;
+  }
+
+  .shell .studio-panel {
+    grid-template-rows: minmax(0, 1fr) auto !important;
+  }
+
+  .shell .studio-canvas,
+  .shell .settings-page,
+  .shell .profile-page,
+  .shell .auth-page {
+    max-width: 100vw !important;
+    padding: 10px !important;
+  }
+
+  .shell .conversation-timeline,
+  .shell .settings-hero,
+  .shell .settings-list-panel,
+  .shell .settings-model-board,
+  .shell .profile-grid,
+  .shell .profile-editor,
+  .shell .auth-panel {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .shell .settings-board-head,
+  .shell .settings-model-row {
+    grid-template-columns: minmax(0, 1fr) !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+
+  .shell .settings-board-head {
+    display: none !important;
+  }
+
+  .shell .settings-model-row > * {
+    grid-column: 1 / -1 !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+
+  .shell .settings-primary-model,
+  .shell .inline-model-select,
+  .shell .inline-model-select .model-select-trigger,
+  .shell .settings-row-actions,
+  .shell .settings-row-actions-primary,
+  .shell .settings-row-actions-more {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+
+  .shell .composer-card,
+  .shell .composer-card-collapsed {
+    width: calc(100% - 12px) !important;
+    max-width: calc(100vw - 12px) !important;
+  }
+
+  .shell .composer-footer-bar,
+  .shell .media-composer-grid,
+  .shell .profile-form-grid,
+  .shell .profile-grid,
+  .shell .auth-panel {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .shell .settings-row-actions,
+  .shell .settings-row-actions-primary,
+  .shell .settings-bulk-actions,
+  .shell .profile-actions {
+    justify-content: stretch !important;
+  }
+
+  .shell .settings-row-actions button,
+  .shell .settings-bulk-actions button,
+  .shell .profile-actions button {
+    width: 100% !important;
+  }
+}

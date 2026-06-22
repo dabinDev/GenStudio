@@ -38,6 +38,17 @@
           <el-button type="primary" plain @click="handleLogout">退出</el-button>
         </div>
       </header>
+      <nav class="admin-mobile-nav" aria-label="后台移动导航">
+        <RouterLink
+          v-for="item in menuItems"
+          :key="item.path"
+          :class="['admin-mobile-nav__item', activePath === item.path ? 'is-active' : '']"
+          :to="item.path"
+        >
+          <el-icon><component :is="iconFor(item.path)" /></el-icon>
+          <span>{{ item.label }}</span>
+        </RouterLink>
+      </nav>
       <main class="admin-content">
         <router-view />
       </main>
@@ -59,7 +70,7 @@ import {
 } from '@element-plus/icons-vue';
 import { gsap } from 'gsap';
 import { computed, nextTick, onMounted, onUnmounted, watch, type Component } from 'vue';
-import { useRoute } from 'vue-router';
+import { RouterLink, useRoute } from 'vue-router';
 
 import { visibleAdminMenuItems } from '@/adminNavigation';
 import { useAdminAuthStore } from '@/stores/auth';

@@ -402,6 +402,11 @@ const activeCapability = computed<Capability | null>(() => {
   if (view.value === "text") return "text";
   return null;
 });
+const primaryNavSection = computed<"models" | "account">(() =>
+  view.value === "settings" || view.value === "profile" || view.value === "auth" || view.value === "auth-error"
+    ? "account"
+    : "models",
+);
 
 const effectiveSidebarFilter = computed(() => resolveSidebarFilter(store.models.value, sidebarFilter.value));
 
@@ -926,6 +931,16 @@ function requireLoginForAction(nextView: ViewName = currentReturnView()): boolea
 
 function handleHashChange() {
   const nextView = getViewFromHash();
+  if (auth.state.user && nextView === "auth") {
+    const target = resolvePostAuthTarget(window.location.hash, window.location.origin);
+    if (target.type === "external") {
+      window.location.href = target.href;
+      return;
+    }
+    window.location.hash = `/${target.view}`;
+    setView(target.view);
+    return;
+  }
   if (!requireLoginForView(nextView)) return;
   setView(nextView);
 }
@@ -942,6 +957,22 @@ function navigate(nextView: ViewName) {
   if (!requireLoginForView(nextView)) return;
   window.location.hash = `/${nextView}`;
   setView(nextView);
+}
+
+function navigateModelHome() {
+  if (view.value === "text" || view.value === "images" || view.value === "videos") {
+    navigate(view.value);
+    return;
+  }
+  if (effectiveSidebarFilter.value === "text") {
+    navigate("text");
+    return;
+  }
+  if (effectiveSidebarFilter.value === "video") {
+    navigate("videos");
+    return;
+  }
+  navigate("images");
 }
 
 function authErrorMessage(): string {
@@ -3644,8 +3675,8 @@ async function removeUnavailableModels() {
 
       <div class="category-tabs">
         <div class="primary-selector">
-          <button class="primary-item primary-item-active">大模型</button>
-          <button class="primary-item" @click="navigate('profile')">个人信息</button>
+          <button :class="['primary-item', primaryNavSection === 'models' ? 'primary-item-active' : '']" @click="navigateModelHome">大模型</button>
+          <button :class="['primary-item', primaryNavSection === 'account' ? 'primary-item-active' : '']" @click="navigate('profile')">个人信息</button>
         </div>
         <div class="secondary-selector">
           <button

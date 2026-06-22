@@ -85,13 +85,13 @@ export const adminRoutes = [
           alternatePermissions: [ADMIN_PERMISSIONS.maintenanceUserMerge],
         },
       },
+      {
+        path: 'forbidden',
+        name: 'admin-forbidden',
+        component: ForbiddenView,
+        meta: { public: true, title: '无权访问' },
+      },
     ],
-  },
-  {
-    path: '/forbidden',
-    name: 'admin-forbidden',
-    component: ForbiddenView,
-    meta: { public: true, title: '无权访问' },
   },
 ];
 

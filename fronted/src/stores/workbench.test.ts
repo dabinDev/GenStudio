@@ -130,6 +130,131 @@ describe("useWorkbenchStore", () => {
     });
   });
 
+  it("deduplicates server models that expose the same public primary model", async () => {
+    const { useWorkbenchStore } = await import("./workbench");
+    const store = useWorkbenchStore();
+
+    store.applyServerModels([
+      {
+        id: "mdl-private-gpt55",
+        name: "gpt-5.5 文案",
+        vendor: "OpenAI",
+        capability: "text",
+        adapter: "text-chat",
+        description: "个人模型",
+        apiKeyId: "key-private",
+        baseUrl: "https://token.example.com",
+        primarySubModelId: "sub-private-gpt55",
+        primaryModelName: "gpt-5.5",
+        isPublic: false,
+        canEdit: true,
+        subModels: [
+          {
+            id: "sub-private-gpt55",
+            modelName: "gpt-5.5",
+            displayName: "gpt-5.5",
+            capability: "text",
+            adapter: "text-chat",
+            isPrimary: true,
+            status: "active",
+          },
+        ],
+      },
+      {
+        id: "mdl-public-gpt55",
+        name: "gpt-5.5 文案",
+        vendor: "OpenAI",
+        capability: "text",
+        adapter: "text-chat",
+        description: "公共模型",
+        apiKeyId: "key-public",
+        baseUrl: "",
+        primarySubModelId: "sub-public-gpt55",
+        primaryModelName: "gpt-5.5",
+        isPublic: true,
+        canEdit: false,
+        publicDisplayName: "GPT 5.5 公用大模型",
+        subModels: [
+          {
+            id: "sub-public-gpt55",
+            modelName: "gpt-5.5",
+            displayName: "gpt-5.5",
+            capability: "text",
+            adapter: "text-chat",
+            isPrimary: true,
+            status: "active",
+          },
+        ],
+      },
+    ]);
+
+    expect(store.models.value.map((model) => model.id)).toEqual(["mdl-public-gpt55"]);
+    expect(store.models.value[0]).toMatchObject({
+      isPublic: true,
+      publicDisplayName: "GPT 5.5 公用大模型",
+    });
+  });
+
+  it("keeps separate private server models even when they use the same primary model name", async () => {
+    const { useWorkbenchStore } = await import("./workbench");
+    const store = useWorkbenchStore();
+
+    store.applyServerModels([
+      {
+        id: "mdl-private-a",
+        name: "工作区 A",
+        vendor: "OpenAI",
+        capability: "text",
+        adapter: "text-chat",
+        description: "个人模型 A",
+        apiKeyId: "key-a",
+        baseUrl: "https://token-a.example.com",
+        primarySubModelId: "sub-private-a",
+        primaryModelName: "gpt-5.5",
+        isPublic: false,
+        canEdit: true,
+        subModels: [
+          {
+            id: "sub-private-a",
+            modelName: "gpt-5.5",
+            displayName: "gpt-5.5",
+            capability: "text",
+            adapter: "text-chat",
+            isPrimary: true,
+            status: "active",
+          },
+        ],
+      },
+      {
+        id: "mdl-private-b",
+        name: "工作区 B",
+        vendor: "OpenAI",
+        capability: "text",
+        adapter: "text-chat",
+        description: "个人模型 B",
+        apiKeyId: "key-b",
+        baseUrl: "https://token-b.example.com",
+        primarySubModelId: "sub-private-b",
+        primaryModelName: "gpt-5.5",
+        isPublic: false,
+        canEdit: true,
+        subModels: [
+          {
+            id: "sub-private-b",
+            modelName: "gpt-5.5",
+            displayName: "gpt-5.5",
+            capability: "text",
+            adapter: "text-chat",
+            isPrimary: true,
+            status: "active",
+          },
+        ],
+      },
+    ]);
+
+    expect(store.models.value.map((model) => model.id)).toEqual(["mdl-private-a", "mdl-private-b"]);
+  });
+
   it("stays in server-managed mode even when the signed-in user has no models", async () => {
     const { useWorkbenchStore } = await import("./workbench");
     const store = useWorkbenchStore();

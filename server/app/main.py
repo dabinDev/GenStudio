@@ -9,7 +9,7 @@ from pathlib import Path
 import time
 from uuid import uuid4
 from typing import Any
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, unquote, urlparse
 
 import httpx
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile
@@ -676,12 +676,12 @@ def local_asset_public_url(value: str, settings: Settings | None = None) -> str:
     for prefix, directory in path_prefixes.items():
         if not candidate.startswith(prefix):
             continue
-        file_name = Path(candidate.removeprefix(prefix)).name
+        file_name = Path(unquote(Path(candidate.removeprefix(prefix)).name)).name
         file_path = directory / file_name
         if not file_path.is_file():
             raise HTTPException(status_code=404, detail={"message": "Reference image not found."})
         app_settings = settings or get_settings()
-        return f"{app_settings.frontend_url.rstrip('/')}{prefix}{file_name}"
+        return f"{app_settings.frontend_url.rstrip('/')}{prefix}{quote(file_name)}"
     return value
 
 

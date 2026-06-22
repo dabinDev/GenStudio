@@ -496,6 +496,39 @@ def test_seedance_2_start_end_frames_use_openapi_metadata_fields(monkeypatch) ->
     assert "lastFrameUrl" not in body
 
 
+def test_seedance_2_encoded_local_frame_urls_use_existing_uploads(monkeypatch) -> None:
+    (main_module.LOCAL_UPLOAD_DIR / "first frame.png").write_bytes(b"fake-first")
+    (main_module.LOCAL_UPLOAD_DIR / "last frame.png").write_bytes(b"fake-last")
+    settings = main_module.get_settings()
+    monkeypatch.setattr(settings, "frontend_url", "https://studio.cylonai.cn")
+    with SessionLocal() as db:
+        catalog_model = upsert_catalog_model_detail(db, kkyi_video_detail())
+        sub_model = SubModel(
+            model_group_id="model-1",
+            api_key_id="key-1",
+            catalog_model_id=catalog_model.id,
+            model_name="seedance-2.0-fast-image-to-video",
+            display_name="Seed2.0-Fast",
+            capability="video",
+            adapter="video-unified-generic",
+        )
+        sub_model.catalog_model = catalog_model
+        body = main_module.normalize_kkyi_video_body(
+            {
+                "model": "seedance-2.0-fast-image-to-video",
+                "prompt": "video test",
+                "video_mode": "first_last_frame",
+                "first_frame": "/api/assets/uploads/first%20frame.png",
+                "last_frame": "/api/assets/uploads/last%20frame.png",
+            },
+            "seedance-2.0-fast-image-to-video",
+            sub_model,
+        )
+
+    assert body["metadata"]["firstFrameUrl"] == "https://studio.cylonai.cn/api/assets/uploads/first%20frame.png"
+    assert body["metadata"]["lastFrameUrl"] == "https://studio.cylonai.cn/api/assets/uploads/last%20frame.png"
+
+
 def test_catalog_video_model_uses_kkyi_generation_path_and_flat_parameters(monkeypatch) -> None:
     with SessionLocal() as db:
         upsert_catalog_model_detail(db, kkyi_video_detail())

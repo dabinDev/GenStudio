@@ -454,6 +454,24 @@ def test_catalog_video_parameters_are_clamped_before_forwarding(monkeypatch) -> 
     }
 
 
+def test_catalog_video_start_end_frames_use_runninghub_url_fields() -> None:
+    body = main_module.normalize_kkyi_video_body(
+        {
+            "model": "seedance-2.0-fast-image-to-video",
+            "prompt": "video test",
+            "video_mode": "first_last_frame",
+            "first_frame": "/api/assets/uploads/first.png",
+            "last_frame": "/api/assets/uploads/last.png",
+        },
+        "seedance-2.0-fast-image-to-video",
+    )
+
+    assert body["firstFrameUrl"] == "/api/assets/uploads/first.png"
+    assert body["lastFrameUrl"] == "/api/assets/uploads/last.png"
+    assert "first_frame" not in body
+    assert "last_frame" not in body
+
+
 def test_catalog_video_model_uses_kkyi_generation_path_and_flat_parameters(monkeypatch) -> None:
     with SessionLocal() as db:
         upsert_catalog_model_detail(db, kkyi_video_detail())

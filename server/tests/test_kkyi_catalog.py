@@ -457,7 +457,7 @@ def test_catalog_video_parameters_are_clamped_before_forwarding(monkeypatch) -> 
     }
 
 
-def test_catalog_video_start_end_frames_use_catalog_url_fields(monkeypatch) -> None:
+def test_seedance_2_start_end_frames_use_openapi_metadata_fields(monkeypatch) -> None:
     (main_module.LOCAL_UPLOAD_DIR / "first.png").write_bytes(b"fake-first")
     (main_module.LOCAL_UPLOAD_DIR / "last.png").write_bytes(b"fake-last")
     settings = main_module.get_settings()
@@ -486,9 +486,12 @@ def test_catalog_video_start_end_frames_use_catalog_url_fields(monkeypatch) -> N
             sub_model,
         )
 
-    assert body["model"] == "kuaikuai-2-flash-pro"
-    assert body["first_frame"] == "https://studio.cylonai.cn/api/assets/uploads/first.png"
-    assert body["last_frame"] == "https://studio.cylonai.cn/api/assets/uploads/last.png"
+    assert body["model"] == "seedance-2.0-fast-image-to-video"
+    assert body["size"] == "720p"
+    assert body["metadata"]["firstFrameUrl"] == "https://studio.cylonai.cn/api/assets/uploads/first.png"
+    assert body["metadata"]["lastFrameUrl"] == "https://studio.cylonai.cn/api/assets/uploads/last.png"
+    assert "first_frame" not in body
+    assert "last_frame" not in body
     assert "firstFrameUrl" not in body
     assert "lastFrameUrl" not in body
 
@@ -559,16 +562,14 @@ def test_catalog_video_model_uses_kkyi_generation_path_and_flat_parameters(monke
     assert response.status_code == 200
     assert captured["url"] == "https://ai-api.kkidc.com/v1/video/generations"
     assert captured["body"] == {
-        "model": "kuaikuai-2-flash-pro",
+        "model": "seedance-2.0-fast-image-to-video",
         "prompt": "video test",
-        "ratio": "16:9",
         "duration": 4,
-        "resolution": "720p",
-        "generate_audio": False,
-        "quantity": 1,
-        "video_mode": "first_last_frame",
-        "first_frame": f"https://studio.cylonai.cn/api/assets/uploads/{first_frame}",
-        "last_frame": f"https://studio.cylonai.cn/api/assets/uploads/{last_frame}",
+        "size": "720p",
+        "metadata": {
+            "firstFrameUrl": f"https://studio.cylonai.cn/api/assets/uploads/{first_frame}",
+            "lastFrameUrl": f"https://studio.cylonai.cn/api/assets/uploads/{last_frame}",
+        },
     }
 
 

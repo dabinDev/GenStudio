@@ -568,6 +568,24 @@ def is_veo_video_model_name(model_name: str) -> bool:
     return "veo" in model_name.strip().lower()
 
 
+def is_seedance_2_video_model_name(model_name: str) -> bool:
+    return model_name.strip().lower().startswith("seedance-2.0-")
+
+
+def kkyi_video_request_model_name(request_body: dict[str, Any], model_name: str, sub_model: Any | None) -> str:
+    requested_model = str(request_body.get("model") or "").strip()
+    if is_seedance_2_video_model_name(requested_model):
+        return requested_model
+    if is_seedance_2_video_model_name(model_name):
+        return model_name
+    sub_model_name = str(getattr(sub_model, "model_name", "") or "").strip()
+    if is_seedance_2_video_model_name(sub_model_name):
+        return sub_model_name
+    catalog_model = getattr(sub_model, "catalog_model", None)
+    catalog_model_name = str(getattr(catalog_model, "model_name", "") or "").strip()
+    return catalog_model_name or requested_model or model_name
+
+
 def normalize_veo_duration(value: Any) -> Any:
     try:
         duration = int(value)
@@ -672,6 +690,8 @@ def local_asset_public_urls(value: Any, settings: Settings) -> Any:
         return local_asset_public_url(value, settings)
     if isinstance(value, list):
         return [local_asset_public_urls(item, settings) for item in value]
+    if isinstance(value, dict):
+        return {key: local_asset_public_urls(item, settings) for key, item in value.items()}
     return value
 
 
@@ -683,12 +703,47 @@ def normalize_kkyi_video_url_fields(normalized: dict[str, Any]) -> dict[str, Any
     return normalized
 
 
+def normalize_seedance_2_openapi_video_body(normalized: dict[str, Any], request_body: dict[str, Any]) -> dict[str, Any]:
+    metadata = copy.deepcopy(request_body.get("metadata")) if isinstance(request_body.get("metadata"), dict) else {}
+    for key in ("seed", "watermark", "camera_fixed", "callback_url"):
+        if key in request_body and request_body[key] not in (None, ""):
+            metadata[key] = request_body[key]
+    first_frame = normalized.get("firstFrameUrl") or normalized.get("first_frame")
+    last_frame = normalized.get("lastFrameUrl") or normalized.get("last_frame")
+    if first_frame not in (None, ""):
+        metadata["firstFrameUrl"] = local_asset_public_urls(first_frame, get_settings())
+    if last_frame not in (None, ""):
+        metadata["lastFrameUrl"] = local_asset_public_urls(last_frame, get_settings())
+
+    body: dict[str, Any] = {
+        "model": normalized.get("model"),
+        "prompt": normalized.get("prompt"),
+    }
+    if normalized.get("duration") not in (None, ""):
+        body["duration"] = normalized["duration"]
+    size = normalized.get("size") or normalized.get("resolution")
+    if size not in (None, ""):
+        body["size"] = size
+    image = normalized.get("image")
+    images = normalized.get("images") or normalized.get("img_url")
+    if image not in (None, ""):
+        body["image"] = local_asset_public_urls(image, get_settings())
+    elif isinstance(images, list) and images:
+        body["images"] = local_asset_public_urls(images, get_settings())
+    elif isinstance(images, str) and images:
+        body["image"] = local_asset_public_urls(images, get_settings())
+    video_url = normalized.get("video_url") or normalized.get("input_reference")
+    if video_url not in (None, ""):
+        body["input_reference"] = local_asset_public_urls(video_url, get_settings())
+    if metadata:
+        body["metadata"] = local_asset_public_urls(metadata, get_settings())
+    return {key: value for key, value in body.items() if value not in (None, "")}
+
+
 def normalize_kkyi_video_body(request_body: dict[str, Any], model_name: str, sub_model: Any | None = None) -> dict[str, Any]:
     prompt = extract_video_prompt(request_body)
-    catalog_model = getattr(sub_model, "catalog_model", None)
-    catalog_model_name = str(getattr(catalog_model, "model_name", "") or "").strip()
     normalized: dict[str, Any] = {
-        "model": catalog_model_name or str(request_body.get("model") or model_name).strip(),
+        "model": kkyi_video_request_model_name(request_body, model_name, sub_model),
         "prompt": prompt,
     }
     first_frame_key = "first_frame" if catalog_parameter_for_key(sub_model, ("first_frame",)) else "firstFrameUrl"
@@ -722,6 +777,8 @@ def normalize_kkyi_video_body(request_body: dict[str, Any], model_name: str, sub
     if is_veo_video_model_name(str(normalized.get("model") or model_name)) and "duration" in normalized:
         normalized["duration"] = normalize_veo_duration(normalized["duration"])
     normalized = normalize_kkyi_video_url_fields(normalized)
+    if is_seedance_2_video_model_name(str(normalized.get("model") or "")):
+        return normalize_seedance_2_openapi_video_body(normalized, request_body)
     normalized.setdefault("quantity", 1)
     return {key: value for key, value in normalized.items() if value not in (None, "")}
 

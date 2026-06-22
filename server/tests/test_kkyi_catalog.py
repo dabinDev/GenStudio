@@ -27,6 +27,7 @@ def setup_function() -> None:
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     main_module.rate_limiter.clear()
+    main_module.get_settings.cache_clear()
 
 
 def csrf_headers(client: TestClient) -> dict[str, str]:
@@ -454,7 +455,11 @@ def test_catalog_video_parameters_are_clamped_before_forwarding(monkeypatch) -> 
     }
 
 
-def test_catalog_video_start_end_frames_use_runninghub_url_fields() -> None:
+def test_catalog_video_start_end_frames_use_runninghub_url_fields(monkeypatch) -> None:
+    (main_module.LOCAL_UPLOAD_DIR / "first.png").write_bytes(b"fake-first")
+    (main_module.LOCAL_UPLOAD_DIR / "last.png").write_bytes(b"fake-last")
+    settings = main_module.get_settings()
+    monkeypatch.setattr(settings, "frontend_url", "https://studio.cylonai.cn")
     body = main_module.normalize_kkyi_video_body(
         {
             "model": "seedance-2.0-fast-image-to-video",
@@ -466,8 +471,8 @@ def test_catalog_video_start_end_frames_use_runninghub_url_fields() -> None:
         "seedance-2.0-fast-image-to-video",
     )
 
-    assert body["firstFrameUrl"] == "/api/assets/uploads/first.png"
-    assert body["lastFrameUrl"] == "/api/assets/uploads/last.png"
+    assert body["firstFrameUrl"] == "https://studio.cylonai.cn/api/assets/uploads/first.png"
+    assert body["lastFrameUrl"] == "https://studio.cylonai.cn/api/assets/uploads/last.png"
     assert "first_frame" not in body
     assert "last_frame" not in body
 
@@ -477,12 +482,18 @@ def test_catalog_video_model_uses_kkyi_generation_path_and_flat_parameters(monke
         upsert_catalog_model_detail(db, kkyi_video_detail())
         db.commit()
 
+    first_frame = "kk-first-frame.png"
+    last_frame = "kk-last-frame.png"
+    (main_module.LOCAL_UPLOAD_DIR / first_frame).write_bytes(b"fake-first-frame")
+    (main_module.LOCAL_UPLOAD_DIR / last_frame).write_bytes(b"fake-last-frame")
     captured: dict[str, object] = {}
 
     async def fake_forward_json(method, url, api_key, body=None):
         captured.update({"method": method, "url": url, "body": body})
         return httpx.Response(200, json={"id": "task-1", "status": "queued"}), {"id": "task-1", "status": "queued"}
 
+    settings = main_module.get_settings()
+    monkeypatch.setattr(settings, "frontend_url", "https://studio.cylonai.cn")
     monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
     client = TestClient(app)
     client.post("/api/auth/dev-login", json={"externalUserId": "official-1"})
@@ -516,6 +527,9 @@ def test_catalog_video_model_uses_kkyi_generation_path_and_flat_parameters(monke
                 "resolution": "720p",
                 "audio": False,
                 "n": 1,
+                "video_mode": "first_last_frame",
+                "first_frame": f"/api/assets/uploads/{first_frame}",
+                "last_frame": f"/api/assets/uploads/{last_frame}",
             },
         },
     )
@@ -530,6 +544,9 @@ def test_catalog_video_model_uses_kkyi_generation_path_and_flat_parameters(monke
         "resolution": "720p",
         "generate_audio": False,
         "quantity": 1,
+        "video_mode": "first_last_frame",
+        "firstFrameUrl": f"https://studio.cylonai.cn/api/assets/uploads/{first_frame}",
+        "lastFrameUrl": f"https://studio.cylonai.cn/api/assets/uploads/{last_frame}",
     }
 
 
@@ -542,6 +559,8 @@ def test_kkyi_video_model_without_catalog_link_uses_generation_path(monkeypatch)
         captured.update({"method": method, "url": url, "body": body})
         return httpx.Response(200, json={"id": "task-kk-veo", "status": "queued"}), {"id": "task-kk-veo", "status": "queued"}
 
+    settings = main_module.get_settings()
+    monkeypatch.setattr(settings, "frontend_url", "https://studio.cylonai.cn")
     monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
     client = TestClient(app)
     client.post("/api/auth/dev-login", json={"externalUserId": "official-1"})
@@ -591,7 +610,7 @@ def test_kkyi_video_model_without_catalog_link_uses_generation_path(monkeypatch)
         "generate_audio": True,
         "quantity": 1,
         "video_mode": "reference",
-        "img_url": ["data:image/jpeg;base64,ZmFrZS1ray1yZWZlcmVuY2U="],
+        "img_url": [f"https://studio.cylonai.cn/api/assets/uploads/{upload_name}"],
     }
 
 

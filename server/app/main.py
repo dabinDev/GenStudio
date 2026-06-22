@@ -633,6 +633,48 @@ def apply_catalog_video_constraints(normalized: dict[str, Any], sub_model: Any) 
     return normalized
 
 
+KKYI_VIDEO_PUBLIC_URL_FIELDS = {"img_url", "firstFrameUrl", "lastFrameUrl", "video_url", "audio_url"}
+
+
+def local_asset_public_url(value: str, settings: Settings | None = None) -> str:
+    candidate = value.strip()
+    if not candidate:
+        return value
+    parsed = urlparse(candidate)
+    if parsed.scheme or parsed.netloc or candidate.startswith("//"):
+        return value
+    path_prefixes = {
+        "/api/assets/uploads/": LOCAL_UPLOAD_DIR,
+        "/api/assets/generated/": GENERATED_ASSET_DIR,
+    }
+    for prefix, directory in path_prefixes.items():
+        if not candidate.startswith(prefix):
+            continue
+        file_name = Path(candidate.removeprefix(prefix)).name
+        file_path = directory / file_name
+        if not file_path.is_file():
+            raise HTTPException(status_code=404, detail={"message": "Reference image not found."})
+        app_settings = settings or get_settings()
+        return f"{app_settings.frontend_url.rstrip('/')}{prefix}{file_name}"
+    return value
+
+
+def local_asset_public_urls(value: Any, settings: Settings) -> Any:
+    if isinstance(value, str):
+        return local_asset_public_url(value, settings)
+    if isinstance(value, list):
+        return [local_asset_public_urls(item, settings) for item in value]
+    return value
+
+
+def normalize_kkyi_video_url_fields(normalized: dict[str, Any]) -> dict[str, Any]:
+    settings = get_settings()
+    for key in KKYI_VIDEO_PUBLIC_URL_FIELDS:
+        if key in normalized:
+            normalized[key] = local_asset_public_urls(normalized[key], settings)
+    return normalized
+
+
 def normalize_kkyi_video_body(request_body: dict[str, Any], model_name: str, sub_model: Any | None = None) -> dict[str, Any]:
     prompt = extract_video_prompt(request_body)
     normalized: dict[str, Any] = {
@@ -667,6 +709,7 @@ def normalize_kkyi_video_body(request_body: dict[str, Any], model_name: str, sub
     normalized = apply_catalog_video_constraints(normalized, sub_model)
     if is_veo_video_model_name(str(normalized.get("model") or model_name)) and "duration" in normalized:
         normalized["duration"] = normalize_veo_duration(normalized["duration"])
+    normalized = normalize_kkyi_video_url_fields(normalized)
     normalized.setdefault("quantity", 1)
     return {key: value for key, value in normalized.items() if value not in (None, "")}
 
@@ -4835,11 +4878,13 @@ async def proxy_video_create(
 
     request_body = payload.get("requestBody") or {}
     reference_assets = collect_reference_image_assets(request_body if isinstance(request_body, dict) else {})
+    kkyi_video = is_kkyi_video_model(sub_model, base_url)
     if isinstance(request_body, dict):
-        request_body = expand_local_video_references(copy.deepcopy(request_body))
-        if is_kkyi_video_model(sub_model, base_url):
+        if kkyi_video:
             request_body = normalize_kkyi_video_body(request_body, sub_model.model_name, sub_model)
-    target_path = "/v1/video/generations" if is_kkyi_video_model(sub_model, base_url) else resolve_video_create_path(adapter)
+        else:
+            request_body = expand_local_video_references(copy.deepcopy(request_body))
+    target_path = "/v1/video/generations" if kkyi_video else resolve_video_create_path(adapter)
     target_url = resolve_url(base_url, target_path)
     prompt = extract_video_prompt(request_body if isinstance(request_body, dict) else {})
     if current_user and model_group and sub_model:

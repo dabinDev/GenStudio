@@ -123,6 +123,14 @@ class Settings(BaseModel):
     object_storage_access_key_id: str = os.getenv("OBJECT_STORAGE_ACCESS_KEY_ID", "").strip()
     object_storage_secret_access_key: str = os.getenv("OBJECT_STORAGE_SECRET_ACCESS_KEY", "").strip()
     object_storage_key_prefix: str = os.getenv("OBJECT_STORAGE_KEY_PREFIX", "genstudio").strip().strip("/")
+    build_version: str = Field(
+        default_factory=lambda: os.getenv("GENSTUDIO_VERSION", os.getenv("APP_VERSION", "dev")).strip() or "dev"
+    )
+    commit_sha: str = Field(
+        default_factory=lambda: os.getenv("GENSTUDIO_COMMIT_SHA", os.getenv("COMMIT_SHA", "unknown")).strip()
+        or "unknown"
+    )
+    build_time: str = Field(default_factory=lambda: os.getenv("GENSTUDIO_BUILD_TIME", "").strip())
     kkyi_catalog_base_url: str = os.getenv("KKYI_CATALOG_BASE_URL", "https://www.kkyi.com").strip()
     kkyi_catalog_bearer_token: str = os.getenv("KKYI_CATALOG_BEARER_TOKEN", "").strip()
     admin_emails: list[str] = Field(

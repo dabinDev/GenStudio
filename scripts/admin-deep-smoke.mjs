@@ -5,6 +5,13 @@ import path from 'node:path';
 
 export const RECORD_TAB_NAMES = ['文案记录', '生图记录', '视频记录'];
 
+export const ADMIN_SMOKE_ROUTES = ['dashboard', 'models', 'users', 'forbidden'];
+export const ADMIN_SMOKE_VIEWPORTS = [
+  { name: 'desktop', width: 1440, height: 1100 },
+  { name: 'mobile', width: 390, height: 844 },
+];
+export const SMOKE_WAIT_UNTIL = 'load';
+
 export function safeName(value) {
   const raw = String(value);
   const ascii = raw.replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase();
@@ -24,6 +31,18 @@ export function adminRouteUrl(adminBase, route) {
   const base = String(adminBase || '').replace(/\/+$/, '');
   const nextRoute = String(route || '').replace(/^\/+/, '');
   return `${base}/${nextRoute}`;
+}
+
+export function isAdminRouteActive(currentUrl, route) {
+  try {
+    const url = new URL(currentUrl);
+    const targetRoute = String(route || '').replace(/^\/+/, '').split(/[?#]/, 1)[0].replace(/\/+$/, '');
+    if (!targetRoute) return false;
+    const path = url.pathname.replace(/\/+$/, '');
+    return path.endsWith(`/admin/${targetRoute}`);
+  } catch {
+    return false;
+  }
 }
 
 const REQUIRED_IMAGE_VIEWER_CHECKS = [
@@ -159,9 +178,15 @@ async function addPageResult(page, name, extra = {}) {
 
 async function gotoAndCapture(page, route, name) {
   const url = route.startsWith('http') ? route : adminRouteUrl(ADMIN, route);
-  await page.goto(url, { waitUntil: 'networkidle', timeout: 60000 }).catch(async () => {
+  await page.goto(url, { waitUntil: SMOKE_WAIT_UNTIL, timeout: 60000 }).catch(async () => {
     await page.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => null);
   });
+  if (!route.startsWith('http')) {
+    await page.waitForURL((currentUrl) => isAdminRouteActive(String(currentUrl), route), {
+      waitUntil: SMOKE_WAIT_UNTIL,
+      timeout: 15000,
+    }).catch(() => null);
+  }
   await page.waitForTimeout(700);
   return addPageResult(page, name);
 }
@@ -193,7 +218,7 @@ async function clickFirst(page, locator, name, options = {}) {
 }
 
 async function waitForPageIdle(page, name = 'page:idle') {
-  await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => null);
+  await page.waitForLoadState(SMOKE_WAIT_UNTIL, { timeout: 15000 }).catch(() => null);
   await page
     .locator('.el-loading-mask')
     .first()
@@ -445,10 +470,17 @@ async function exerciseRecords(page) {
 
 async function exerciseAudit(page) {
   await gotoAndCapture(page, 'audit', 'admin-audit-initial');
+  const detailCount = await page.getByRole('button', { name: /详情/ }).count().catch(() => 0);
+  if (detailCount) {
+    await clickFirst(page, page.getByRole('button', { name: /详情/ }), 'audit:open-detail');
+    await addPageResult(page, 'admin-audit-detail-drawer');
+    await page.keyboard.press('Escape').catch(() => null);
+    await page.waitForTimeout(300);
+  } else {
+    pushCheck('audit:open-detail', true, { reason: 'no-audit-rows', skipped: true });
+  }
   await fillFirst(page, page.locator('.admin-content-page__filters--audit input').first(), 'model', 'audit:search-action');
   await addPageResult(page, 'admin-audit-after-search');
-  await clickFirst(page, page.getByRole('button', { name: /详情/ }), 'audit:open-detail');
-  await addPageResult(page, 'admin-audit-detail-drawer');
 }
 
 async function exerciseSettings(page) {
@@ -463,6 +495,16 @@ async function exerciseForbidden(page) {
   await gotoAndCapture(page, 'forbidden?reason=system', 'admin-forbidden-system');
   await clickFirst(page, page.getByRole('button', { name: /返回仪表盘|返回/ }), 'forbidden:return-dashboard');
   await addPageResult(page, 'admin-forbidden-after-return');
+}
+
+async function exerciseReleaseCriticalRoutes(page) {
+  for (const viewport of ADMIN_SMOKE_VIEWPORTS) {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    pushCheck(`viewport:${viewport.name}`, true, { width: viewport.width, height: viewport.height });
+    for (const route of ADMIN_SMOKE_ROUTES) {
+      await gotoAndCapture(page, route, `${viewport.name}-admin-${route}`);
+    }
+  }
 }
 
 const browser = await chromium.launch({ headless: process.env.HEADLESS !== 'false' });
@@ -485,6 +527,8 @@ try {
     throw new Error('Admin smoke login failed.');
   }
 
+  await exerciseReleaseCriticalRoutes(page);
+  await page.setViewportSize({ width: ADMIN_SMOKE_VIEWPORTS[0].width, height: ADMIN_SMOKE_VIEWPORTS[0].height });
   await exerciseDashboard(page);
   await exerciseModels(page);
   await exercisePrompts(page);

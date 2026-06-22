@@ -68,6 +68,29 @@ def test_dev_login_creates_session_and_me_returns_user() -> None:
     assert me.json()["user"]["email"] == "u@example.com"
 
 
+def test_version_endpoint_reports_build_identity(monkeypatch) -> None:
+    import app.config as config_module
+
+    monkeypatch.setenv("GENSTUDIO_VERSION", "2026.06.23")
+    monkeypatch.setenv("GENSTUDIO_COMMIT_SHA", "abc1234")
+    monkeypatch.setenv("GENSTUDIO_BUILD_TIME", "2026-06-23T10:20:30Z")
+    config_module.get_settings.cache_clear()
+    try:
+        client = TestClient(app)
+
+        response = client.get("/api/version")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "version": "2026.06.23",
+            "commitSha": "abc1234",
+            "buildTime": "2026-06-23T10:20:30Z",
+            "environment": "development",
+        }
+    finally:
+        config_module.get_settings.cache_clear()
+
+
 def test_dev_login_reuses_existing_email_user_when_external_id_changes() -> None:
     client = TestClient(app)
 

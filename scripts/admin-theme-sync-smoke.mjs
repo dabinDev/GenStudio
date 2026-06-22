@@ -36,6 +36,17 @@ export function adminEntryUrl(value) {
   return url.toString().replace(/\/$/, url.pathname.endsWith('/admin/') ? '/' : '');
 }
 
+export function defaultAdminEntryUrl(front) {
+  const url = new URL(front);
+  if (/^(127\.0\.0\.1|localhost)$/i.test(url.hostname) && ['5173', '5175'].includes(url.port)) {
+    url.port = '5174';
+  }
+  url.pathname = '/admin/';
+  url.search = '';
+  url.hash = '';
+  return adminEntryUrl(url.toString());
+}
+
 export function adminThemeUrl(value, theme) {
   const url = new URL(adminEntryUrl(value));
   if (normalizeThemeValue(theme) === theme) {
@@ -44,9 +55,15 @@ export function adminThemeUrl(value, theme) {
   return url.toString();
 }
 
+export function isAdminConsoleState(state) {
+  const title = String(state?.title || '');
+  const bodyText = String(state?.bodyText || '');
+  return title.includes('管理后台') || bodyText.includes('后台控制台');
+}
+
 if (process.env.ADMIN_THEME_SYNC_UNIT_ONLY !== '1') {
 const FRONT = process.env.FRONT_URL || 'http://127.0.0.1:5175';
-const ADMIN = adminEntryUrl(process.env.ADMIN_URL || new URL('/admin/', FRONT).toString());
+const ADMIN = adminEntryUrl(process.env.ADMIN_URL || defaultAdminEntryUrl(FRONT));
 const SMOKE_EMAIL = process.env.SMOKE_EMAIL || '';
 const SMOKE_PASSWORD = process.env.SMOKE_PASSWORD || '';
 const outDir = path.resolve(
@@ -124,6 +141,7 @@ async function verifyAdminTheme(page, theme) {
   }));
   const screenshot = await shot(page, `admin-theme-${theme}`);
   results.push({ theme, url: page.url(), screenshot, ...state });
+  pushCheck(`admin:console:${theme}`, isAdminConsoleState(state), state);
   pushCheck(`admin:dataset-theme:${theme}`, normalizeThemeValue(state.datasetTheme) === theme, state);
   pushCheck(`admin:shared-theme:${theme}`, normalizeThemeValue(state.sharedTheme) === theme, state);
   pushCheck(`admin:legacy-theme:${theme}`, normalizeThemeValue(state.legacyAdminTheme) === theme, state);

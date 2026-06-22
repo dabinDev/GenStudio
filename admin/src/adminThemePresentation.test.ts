@@ -10,6 +10,8 @@ const promptCenterVue = () => readFileSync(resolve(process.cwd(), 'src/views/Pro
 const recordsVue = () => readFileSync(resolve(process.cwd(), 'src/views/RecordsView.vue'), 'utf8');
 const modelCenterVue = () => readFileSync(resolve(process.cwd(), 'src/views/ModelCenterView.vue'), 'utf8');
 const auditLogsVue = () => readFileSync(resolve(process.cwd(), 'src/views/AuditLogsView.vue'), 'utf8');
+const viteConfig = () => readFileSync(resolve(process.cwd(), 'vite.config.ts'), 'utf8');
+const mainTs = () => readFileSync(resolve(process.cwd(), 'src/main.ts'), 'utf8');
 const stylesCss = () => readFileSync(resolve(process.cwd(), 'src/styles/global.css'), 'utf8');
 const packageJson = () => readFileSync(resolve(process.cwd(), 'package.json'), 'utf8');
 
@@ -508,6 +510,48 @@ describe('admin theme presentation', () => {
     expect(styles.indexOf('overflow-x: auto !important', markerIndex)).toBeGreaterThan(markerIndex);
     expect(styles.indexOf('.admin-ambient', markerIndex)).toBeGreaterThan(markerIndex);
     expect(styles.indexOf('overflow: hidden !important', markerIndex)).toBeGreaterThan(markerIndex);
+  });
+
+  it('adds mobile scroll affordances to admin navigation and wide data tables', () => {
+    const layout = layoutVue();
+    const users = readFileSync(resolve(process.cwd(), 'src/views/UserCreditsView.vue'), 'utf8');
+    const styles = stylesCss();
+    const markerIndex = styles.indexOf('Admin mobile scroll affordances v17');
+
+    expect(layout).toContain('admin-mobile-nav__track');
+    expect(layout).toContain(":aria-current=\"activePath === item.path ? 'page' : undefined\"");
+    expect(layout).toContain('ref="mobileNavTrackRef"');
+    expect(layout).toContain('scrollActiveMobileNavIntoView');
+    expect(layout).toContain('track.scrollTo({');
+    expect(layout).toContain('activeItem.offsetLeft + activeItem.offsetWidth / 2 - track.clientWidth / 2');
+    expect(layout).toContain('track.scrollLeft = targetLeft');
+    expect(layout).toContain('requestAnimationFrame(alignActiveMobileNav)');
+    expect(layout).toContain('window.setTimeout(alignActiveMobileNav');
+    expect(layout).toContain('watch(() => menuItems.value.length');
+    expect(users).toContain('data-scroll-hint=');
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf('.admin-mobile-nav::before', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('.admin-mobile-nav::after', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('pointer-events: none', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('.admin-mobile-nav__item.is-active::after', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('.admin-user-credits__table-scroll::after', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('content: attr(data-scroll-hint)', markerIndex)).toBeGreaterThan(markerIndex);
+  });
+
+  it('keeps heavy admin runtime libraries split away from the entry chunk', () => {
+    const dashboard = readFileSync(resolve(process.cwd(), 'src/views/DashboardView.vue'), 'utf8');
+    const config = viteConfig();
+    const main = mainTs();
+
+    expect(dashboard).not.toContain("import * as echarts from 'echarts'");
+    expect(dashboard).toContain("import('echarts/core')");
+    expect(dashboard).toContain("import('echarts/lib/chart/bar')");
+    expect(dashboard).not.toContain("import('echarts/charts')");
+    expect(config).toContain('manualChunks');
+    expect(config).toContain("'admin-ui'");
+    expect(config).toContain("'admin-charts'");
+    expect(main).not.toContain("import ElementPlus from 'element-plus'");
+    expect(main).toContain("element-plus/es/components/button/index.mjs");
   });
 
   it('shows prompt starter examples as examples instead of mixing them into template counts', () => {

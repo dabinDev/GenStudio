@@ -24,6 +24,18 @@ test('front smoke routes cover the creative workspace and account surfaces', () 
   );
 });
 
+test('front smoke viewports cover desktop and mobile before release', () => {
+  assert.deepEqual(
+    smoke.FRONT_SMOKE_VIEWPORTS.map((item) => item.name),
+    ['desktop', 'mobile'],
+  );
+  assert.deepEqual(smoke.FRONT_SMOKE_VIEWPORTS[1], { name: 'mobile', width: 390, height: 844 });
+});
+
+test('front smoke uses load-oriented waits instead of networkidle for long polling pages', () => {
+  assert.equal(smoke.SMOKE_WAIT_UNTIL, 'load');
+});
+
 test('summarizeSmokeFailures combines failed checks, failed responses and console errors', () => {
   const summary = smoke.summarizeSmokeFailures({
     failedChecks: [{ name: 'front-images:no-mojibake' }],

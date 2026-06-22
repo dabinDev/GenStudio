@@ -21,6 +21,19 @@ test('record tab labels stay readable for role-based browser locators', () => {
   }
 });
 
+test('admin smoke routes and viewports cover release-critical desktop and mobile paths', () => {
+  assert.deepEqual(smoke.ADMIN_SMOKE_ROUTES, ['dashboard', 'models', 'users', 'forbidden']);
+  assert.deepEqual(
+    smoke.ADMIN_SMOKE_VIEWPORTS.map((item) => item.name),
+    ['desktop', 'mobile'],
+  );
+  assert.deepEqual(smoke.ADMIN_SMOKE_VIEWPORTS[1], { name: 'mobile', width: 390, height: 844 });
+});
+
+test('admin smoke uses load-oriented waits instead of networkidle for dashboard charts', () => {
+  assert.equal(smoke.SMOKE_WAIT_UNTIL, 'load');
+});
+
 test('mojibake detector catches broken placeholder labels', () => {
   assert.equal(smoke.hasMojibake('????????'), true);
   assert.equal(smoke.hasMojibake('�'), true);
@@ -39,6 +52,29 @@ test('admin route URLs are joined without double slash blank pages', () => {
   assert.equal(
     smoke.adminRouteUrl('https://studio.cylonai.cn/admin/', '/settings'),
     'https://studio.cylonai.cn/admin/settings',
+  );
+});
+
+test('route wait helper recognizes only the target admin route', () => {
+  assert.equal(
+    smoke.isAdminRouteActive('https://studio.cylonai.cn/admin/dashboard', 'dashboard'),
+    true,
+  );
+  assert.equal(
+    smoke.isAdminRouteActive('https://studio.cylonai.cn/admin/dashboard?foo=bar', 'dashboard'),
+    true,
+  );
+  assert.equal(
+    smoke.isAdminRouteActive('http://127.0.0.1:5174/admin/models', 'models'),
+    true,
+  );
+  assert.equal(
+    smoke.isAdminRouteActive('http://127.0.0.1:5174/admin/dashboard', 'models'),
+    false,
+  );
+  assert.equal(
+    smoke.isAdminRouteActive('not a url', 'models'),
+    false,
   );
 });
 
@@ -87,6 +123,29 @@ test('buildAdminDeepSmokeSummary adds the image viewer coverage gate before fail
 
   assert.equal(summary.failedChecks.some((check) => check.name === 'records:image-viewer-coverage-required'), true);
   assert.equal(summary.checks.some((check) => check.name === 'records:image-viewer-coverage-required'), true);
+});
+
+test('buildAdminDeepSmokeSummary treats skipped audit detail checks as passing', () => {
+  const summary = smoke.buildAdminDeepSmokeSummary({
+    front: 'http://127.0.0.1:5175',
+    admin: 'http://127.0.0.1:5174/admin',
+    api: 'http://127.0.0.1:8000',
+    outDir: 'output/test',
+    results: [],
+    checks: [
+      { name: 'records:image-tab-selected', ok: true },
+      { name: 'records:image-table-mode', ok: true },
+      { name: 'records:image-record-media-visible', ok: true },
+      { name: 'records:image-viewer-visible', ok: true },
+      { name: 'records:image-viewer-actions-visible', ok: true },
+      { name: 'audit:open-detail', ok: true, skipped: true, reason: 'no-audit-rows' },
+    ],
+    failedResponses: [],
+    consoleErrors: [],
+    nonAuthConsoleErrors: [],
+  });
+
+  assert.deepEqual(summary.failedChecks, []);
 });
 
 test('buildImageViewerActionChecks scopes every control lookup to the image viewer', async () => {

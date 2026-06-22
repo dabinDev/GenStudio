@@ -23,4 +23,30 @@ export default defineConfig({
       },
     },
   },
+  build: {
+    chunkSizeWarningLimit: 1024,
+    rollupOptions: {
+      output: {
+        manualChunks(rawId) {
+          const id = rawId.replace(/\\/g, '/');
+          if (!id.includes('node_modules')) {
+            return undefined;
+          }
+          if (id.includes('/echarts/') || id.includes('/zrender/')) {
+            return 'admin-charts';
+          }
+          if (id.includes('/element-plus/') || id.includes('/@element-plus/')) {
+            return 'admin-ui';
+          }
+          if (id.includes('/vue') || id.includes('/pinia/') || id.includes('/vue-router/')) {
+            return 'admin-vue';
+          }
+          if (id.includes('/gsap/')) {
+            return 'admin-motion';
+          }
+          return 'admin-vendor';
+        },
+      },
+    },
+  },
 });

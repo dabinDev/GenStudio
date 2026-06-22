@@ -29,6 +29,7 @@ from app.db_models import (
     SessionRecord,
     TaskEvent,
     User,
+    utcnow,
 )
 from app.model_service import catalog_loader_options
 from app.schemas import AdminModelUpdate, AdminUserUpdate, PromptTemplateUpdate
@@ -765,7 +766,7 @@ def _bucket_start(value: datetime, period: str) -> datetime:
 
 
 def _trend_buckets(logs: list[CallLog], *, period: str, count: int) -> list[dict[str, Any]]:
-    now = datetime.utcnow()
+    now = utcnow()
     if period == "month":
         starts = []
         year = now.year
@@ -819,7 +820,7 @@ def _trend_buckets(logs: list[CallLog], *, period: str, count: int) -> list[dict
 
 def _metrics_range_start(range_key: str) -> datetime:
     days = {"7d": 7, "30d": 30, "90d": 90}.get((range_key or "").strip().lower(), 30)
-    return datetime.utcnow() - timedelta(days=days)
+    return utcnow() - timedelta(days=days)
 
 
 def _metrics_trend_counts(range_key: str) -> dict[str, int]:
@@ -1644,7 +1645,7 @@ def serialize_admin_user(
     settings: Settings | None = None,
     duplicate_identity: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    active_sessions = [item for item in getattr(user, "sessions", []) if item.expires_at > datetime.utcnow()]
+    active_sessions = [item for item in getattr(user, "sessions", []) if item.expires_at > utcnow()]
     last_seen = max((item.last_seen_at for item in getattr(user, "sessions", [])), default=None)
     recent_session = max(
         getattr(user, "sessions", []),

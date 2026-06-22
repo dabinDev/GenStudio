@@ -12,6 +12,13 @@ export const FRONT_SMOKE_ROUTES = [
   { route: '/#/profile', name: 'front-profile' },
 ];
 
+export const FRONT_SMOKE_VIEWPORTS = [
+  { name: 'desktop', width: 1440, height: 1000 },
+  { name: 'mobile', width: 390, height: 844 },
+];
+
+export const SMOKE_WAIT_UNTIL = 'load';
+
 export function safeName(value) {
   const raw = String(value);
   const ascii = raw.replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase();
@@ -69,7 +76,7 @@ async function shot(page, name) {
 }
 
 async function capture(page, route, name) {
-  await page.goto(`${FRONT}${route}`, { waitUntil: 'networkidle', timeout: 60000 }).catch(async () => {
+  await page.goto(`${FRONT}${route}`, { waitUntil: SMOKE_WAIT_UNTIL, timeout: 60000 }).catch(async () => {
     await page.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => null);
   });
   await page.waitForTimeout(1200);
@@ -153,33 +160,33 @@ async function login(context) {
   return response.ok();
 }
 
-async function exerciseFrontWorkspace(page) {
-  await capture(page, '/', 'front-home');
+async function exerciseFrontWorkspace(page, viewportName = 'desktop') {
+  await capture(page, '/', `${viewportName}-front-home`);
   await clickVisible(page, page.getByRole('button', { name: /后台|管理/ }), 'front:admin-button', true);
 
-  await capture(page, '/#/text', 'front-text');
+  await capture(page, '/#/text', `${viewportName}-front-text`);
   await assertVisible(page, promptAiButton(page), 'front:text-prompt-polish-button-visible');
   await clickVisible(page, page.getByRole('button', { name: /历史|记录/ }), 'front:text-history-button', true);
-  await shot(page, 'front-text-history-popover');
+  await shot(page, `${viewportName}-front-text-history-popover`);
   await page.keyboard.press('Escape').catch(() => null);
   await page.keyboard.press('Escape').catch(() => null);
 
-  await capture(page, '/#/images', 'front-images');
+  await capture(page, '/#/images', `${viewportName}-front-images`);
   await clickVisible(page, page.getByRole('button', { name: /上传|参考|图片/ }), 'front:image-upload-entry-visible', true);
   await page.keyboard.press('Escape').catch(() => null);
 
-  await capture(page, '/#/videos', 'front-videos');
+  await capture(page, '/#/videos', `${viewportName}-front-videos`);
   await clickVisible(page, page.getByRole('button', { name: /上传|参考|图片|首帧|尾帧/ }), 'front:video-upload-entry-visible', true);
   await page.keyboard.press('Escape').catch(() => null);
 
-  await capture(page, '/#/settings', 'front-settings');
+  await capture(page, '/#/settings', `${viewportName}-front-settings`);
   await clickVisible(page, page.getByRole('button', { name: /添加模型/ }), 'front:settings-add-model', true);
-  await shot(page, 'front-settings-add-model-dialog');
+  await shot(page, `${viewportName}-front-settings-add-model-dialog`);
   await page.keyboard.press('Escape').catch(() => null);
   await assertVisible(page, page.getByRole('button', { name: /批量测试/ }), 'front:settings-batch-test-button-visible');
   await page.keyboard.press('Escape').catch(() => null);
 
-  await capture(page, '/#/profile', 'front-profile');
+  await capture(page, '/#/profile', `${viewportName}-front-profile`);
 }
 
 const browser = await chromium.launch({ headless: process.env.HEADLESS !== 'false' });
@@ -202,7 +209,11 @@ try {
     throw new Error('Fronted smoke login failed.');
   }
 
-  await exerciseFrontWorkspace(page);
+  for (const viewport of FRONT_SMOKE_VIEWPORTS) {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    pushCheck(`viewport:${viewport.name}`, true, { width: viewport.width, height: viewport.height });
+    await exerciseFrontWorkspace(page, viewport.name);
+  }
 } finally {
   await browser.close();
 }

@@ -580,6 +580,25 @@ describe("workbench style application", () => {
     expect(styles.indexOf("width: 100% !important", markerIndex)).toBeGreaterThan(markerIndex);
   });
 
+  it("lifts mobile inline model menus above the settings list so switching models is not covered", () => {
+    const styles = stylesCss();
+    const markerIndex = styles.indexOf("Creative Workshop mobile model select overlay v39");
+
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf("@media (max-width: 720px)", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf(".shell .settings-model-row-select-open", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf("z-index: 260 !important", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf(".shell .settings-model-row-select-open .model-select-scrim", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf("background: rgba(4, 12, 20, 0.18) !important", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf(".shell .settings-model-row-select-open .model-select-menu", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf("position: fixed !important", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf("left: 10px !important", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf("right: 10px !important", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf("bottom: calc(env(safe-area-inset-bottom, 0px) + 12px) !important", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf("max-height: min(58vh, 430px) !important", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf("overscroll-behavior: contain !important", markerIndex)).toBeGreaterThan(markerIndex);
+  });
+
   it("marks account pages separately from the model workspace in the sidebar", () => {
     const source = appVue();
 

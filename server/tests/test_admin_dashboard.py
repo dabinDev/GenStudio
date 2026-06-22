@@ -20,7 +20,7 @@ os.environ["GENSTUDIO_SECRET_KEY"] = "test-secret"
 
 from app.admin_service import admin_dashboard_metrics
 from app.database import Base
-from app.db_models import ApiKey, CallLog, Conversation, ConversationMessage, CreditTransaction, GeneratedAsset, ModelGroup, User
+from app.db_models import ApiKey, CallLog, Conversation, ConversationMessage, CreditTransaction, GeneratedAsset, ModelGroup, User, utcnow
 
 
 def make_db() -> Session:
@@ -72,7 +72,7 @@ def test_admin_dashboard_metrics_counts_calls_timeouts_and_reserved_credits() ->
     db.add(model)
     db.commit()
     db.refresh(model)
-    now = datetime.utcnow()
+    now = utcnow()
     captured_reserve = CreditTransaction(
         user_id=user.id,
         type="generation_reserve",
@@ -164,7 +164,7 @@ def test_admin_dashboard_trend_day_bucket_count_follows_selected_range() -> None
             endpoint="/api/proxy/text",
             status="success",
             duration_ms=100,
-            created_at=datetime.utcnow() - timedelta(days=89),
+            created_at=utcnow() - timedelta(days=89),
         )
     )
     db.commit()

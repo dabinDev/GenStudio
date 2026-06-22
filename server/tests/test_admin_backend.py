@@ -41,6 +41,7 @@ from app.db_models import (
     User,
     UserCreditAccount,
     UserCredential,
+    utcnow,
 )
 from app.schemas import AdminModelUpdate
 from app.security import encrypt_secret
@@ -1451,7 +1452,7 @@ def test_admin_creation_records_non_success_status_matches_error_and_processing(
                 capability="image",
                 content="done",
                 status="success",
-                created_at=datetime.utcnow(),
+                created_at=utcnow(),
             ),
             ConversationMessage(
                 conversation_id=conversation.id,
@@ -1460,7 +1461,7 @@ def test_admin_creation_records_non_success_status_matches_error_and_processing(
                 capability="image",
                 content="still running",
                 status="processing",
-                created_at=datetime.utcnow() + timedelta(seconds=1),
+                created_at=utcnow() + timedelta(seconds=1),
             ),
             ConversationMessage(
                 conversation_id=conversation.id,
@@ -1470,7 +1471,7 @@ def test_admin_creation_records_non_success_status_matches_error_and_processing(
                 content="",
                 status="error",
                 error_message="upstream failed",
-                created_at=datetime.utcnow() + timedelta(seconds=2),
+                created_at=utcnow() + timedelta(seconds=2),
             ),
         ]
     )
@@ -1725,23 +1726,32 @@ def test_admin_user_serialization_uses_latest_session_ip() -> None:
 
     db = make_db()
     user = make_user(db, "recent-ip@example.com", external_id="recent-ip")
+    now = utcnow()
     db.add_all(
         [
             SessionRecord(
                 user_id=user.id,
                 token_hash="older-token",
-                expires_at=datetime.utcnow() + timedelta(days=1),
-                created_at=datetime.utcnow() - timedelta(hours=2),
-                last_seen_at=datetime.utcnow() - timedelta(hours=2),
+                expires_at=now + timedelta(days=1),
+                created_at=now - timedelta(hours=2),
+                last_seen_at=now - timedelta(hours=2),
                 client_ip="10.0.0.1",
             ),
             SessionRecord(
                 user_id=user.id,
                 token_hash="newer-token",
-                expires_at=datetime.utcnow() + timedelta(days=1),
-                created_at=datetime.utcnow() - timedelta(hours=1),
-                last_seen_at=datetime.utcnow() - timedelta(minutes=5),
+                expires_at=now + timedelta(days=1),
+                created_at=now - timedelta(hours=1),
+                last_seen_at=now - timedelta(minutes=5),
                 client_ip="203.0.113.8",
+            ),
+            SessionRecord(
+                user_id=user.id,
+                token_hash="expired-token",
+                expires_at=now - timedelta(minutes=1),
+                created_at=now - timedelta(minutes=30),
+                last_seen_at=now - timedelta(minutes=1),
+                client_ip="198.51.100.10",
             ),
         ]
     )
@@ -1750,7 +1760,8 @@ def test_admin_user_serialization_uses_latest_session_ip() -> None:
 
     payload = serialize_admin_user(user)
 
-    assert payload["recentLoginIp"] == "203.0.113.8"
+    assert payload["sessionCount"] == 2
+    assert payload["recentLoginIp"] == "198.51.100.10"
 
 
 def test_admin_users_route_applies_role_and_status_filters() -> None:
@@ -2062,7 +2073,7 @@ def test_admin_audit_logs_filter_by_actor_status_target_and_time_range() -> None
     db = make_db()
     admin = make_user(db, "cage_ben@sina.com", external_id="audit-filter-admin")
     other_admin = make_user(db, "audit-other@example.com", external_id="audit-filter-other")
-    now = datetime.utcnow()
+    now = utcnow()
     db.add_all(
         [
             AdminOperationLog(
@@ -2240,7 +2251,7 @@ def test_admin_audit_logs_apply_risk_filter_before_limit() -> None:
 
     db = make_db()
     admin = make_user(db, "cage_ben@sina.com", external_id="audit-risk-limit")
-    now = datetime.utcnow()
+    now = utcnow()
     db.add_all(
         [
             AdminOperationLog(
@@ -2288,7 +2299,7 @@ def test_admin_audit_logs_risk_filter_searches_beyond_default_limit_window() -> 
 
     db = make_db()
     admin = make_user(db, "cage_ben@sina.com", external_id="audit-risk-window")
-    now = datetime.utcnow()
+    now = utcnow()
     rows = [
         AdminOperationLog(
             admin_user_id=admin.id,
@@ -2340,7 +2351,7 @@ def test_admin_audit_logs_export_requires_permission_and_respects_filters() -> N
     db = make_db()
     owner = make_user(db, "cage_ben@sina.com", external_id="audit-export-owner")
     viewer = make_user(db, "viewer-audit-export@example.com", external_id="audit-export-viewer")
-    now = datetime.utcnow()
+    now = utcnow()
     db.add_all(
         [
             AdminRoleAssignment(user_id=viewer.id, role="viewer", assigned_by=owner.id),

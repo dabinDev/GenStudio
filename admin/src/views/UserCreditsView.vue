@@ -84,7 +84,7 @@
     </el-alert>
 
     <section class="admin-user-credits__table">
-      <div class="admin-user-credits__table-scroll">
+      <div class="admin-user-credits__table-scroll" data-scroll-hint="左右滑动查看更多">
       <el-table v-loading="isLoading" :data="filteredUsers" row-key="id">
         <el-table-column label="用户" min-width="250">
           <template #default="{ row }">

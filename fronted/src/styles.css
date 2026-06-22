@@ -13148,3 +13148,41 @@ button:disabled {
     width: 100% !important;
   }
 }
+
+/* Creative Workshop mobile model select overlay v39
+   On phones the row-level primary model picker uses a fixed bottom sheet so
+   the settings row and surrounding panels cannot cover the option list. */
+@media (max-width: 720px) {
+  .shell .settings-model-row-select-open {
+    position: relative !important;
+    z-index: 260 !important;
+  }
+
+  .shell .settings-model-row-select-open .model-select-scrim {
+    position: fixed !important;
+    inset: 0 !important;
+    z-index: 240 !important;
+    background: rgba(4, 12, 20, 0.18) !important;
+    backdrop-filter: blur(1px) !important;
+    -webkit-backdrop-filter: blur(1px) !important;
+  }
+
+  .shell .settings-model-row-select-open .model-select-menu {
+    position: fixed !important;
+    top: auto !important;
+    left: 10px !important;
+    right: 10px !important;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 12px) !important;
+    z-index: 280 !important;
+    width: auto !important;
+    max-width: none !important;
+    max-height: min(58vh, 430px) !important;
+    border-radius: 16px !important;
+    overscroll-behavior: contain !important;
+  }
+
+  .shell .settings-model-row-select-open .model-select-list {
+    max-height: min(44vh, 340px) !important;
+    overscroll-behavior: contain !important;
+  }
+}

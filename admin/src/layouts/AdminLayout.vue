@@ -39,15 +39,18 @@
         </div>
       </header>
       <nav class="admin-mobile-nav" aria-label="后台移动导航">
-        <RouterLink
-          v-for="item in menuItems"
-          :key="item.path"
-          :class="['admin-mobile-nav__item', activePath === item.path ? 'is-active' : '']"
-          :to="item.path"
-        >
-          <el-icon><component :is="iconFor(item.path)" /></el-icon>
-          <span>{{ item.label }}</span>
-        </RouterLink>
+        <div ref="mobileNavTrackRef" class="admin-mobile-nav__track">
+          <RouterLink
+            v-for="item in menuItems"
+            :key="item.path"
+            :class="['admin-mobile-nav__item', activePath === item.path ? 'is-active' : '']"
+            :to="item.path"
+            :aria-current="activePath === item.path ? 'page' : undefined"
+          >
+            <el-icon><component :is="iconFor(item.path)" /></el-icon>
+            <span>{{ item.label }}</span>
+          </RouterLink>
+        </div>
       </nav>
       <main class="admin-content">
         <router-view />
@@ -69,7 +72,7 @@ import {
   MagicStick,
 } from '@element-plus/icons-vue';
 import { gsap } from 'gsap';
-import { computed, nextTick, onMounted, onUnmounted, watch, type Component } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch, type Component } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 
 import { visibleAdminMenuItems } from '@/adminNavigation';
@@ -99,6 +102,7 @@ const activePath = computed(() => route.path);
 const displayName = computed(() =>
   safeIdentityLabel(auth.user?.displayName || auth.user?.nickname, auth.user?.email || '管理员'),
 );
+const mobileNavTrackRef = ref<HTMLElement | null>(null);
 
 let adminAmbientAnimations: gsap.core.Animation[] = [];
 
@@ -148,6 +152,31 @@ function setupAdminAmbientAnimation() {
   });
 }
 
+function scrollActiveMobileNavIntoView() {
+  const alignActiveMobileNav = () => {
+    const track = mobileNavTrackRef.value;
+    if (!track || track.clientWidth <= 0) return;
+
+    const activeItem = track.querySelector<HTMLElement>('.admin-mobile-nav__item.is-active');
+    if (!activeItem) return;
+    const targetLeft = Math.max(
+      0,
+      activeItem.offsetLeft + activeItem.offsetWidth / 2 - track.clientWidth / 2,
+    );
+    track.scrollLeft = targetLeft;
+    track.scrollTo({
+      left: targetLeft,
+      behavior: 'smooth',
+    });
+  };
+
+  void nextTick(() => {
+    alignActiveMobileNav();
+    requestAnimationFrame(alignActiveMobileNav);
+    window.setTimeout(alignActiveMobileNav, 180);
+  });
+}
+
 function safeIdentityLabel(value: string | null | undefined, fallback: string) {
   const normalized = (value || '').trim();
   if (!normalized) return fallback;
@@ -158,6 +187,7 @@ function safeIdentityLabel(value: string | null | undefined, fallback: string) {
 onMounted(() => {
   theme.init();
   setupAdminAmbientAnimation();
+  scrollActiveMobileNavIntoView();
 });
 
 onUnmounted(() => {
@@ -165,6 +195,8 @@ onUnmounted(() => {
 });
 
 watch(() => theme.theme, () => setupAdminAmbientAnimation());
+watch(activePath, () => scrollActiveMobileNavIntoView(), { flush: 'post' });
+watch(() => menuItems.value.length, () => scrollActiveMobileNavIntoView(), { flush: 'post' });
 
 async function handleLogout() {
   await auth.logout();

@@ -169,7 +169,6 @@
 </template>
 
 <script setup lang="ts">
-import * as echarts from 'echarts';
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 
 import AdminMetricCard from '@/components/AdminMetricCard.vue';
@@ -186,7 +185,11 @@ import {
 } from './dashboardState';
 
 const trendChartRef = ref<HTMLElement | null>(null);
-let trendChart: { setOption: (option: unknown) => void; dispose: () => void; resize?: () => void } | null = null;
+type TrendChart = { setOption: (option: unknown) => void; dispose: () => void; resize?: () => void };
+type EChartsCore = { init: (element: HTMLElement) => TrendChart };
+
+let trendChart: TrendChart | null = null;
+let echartsCorePromise: Promise<EChartsCore> | null = null;
 
 const {
   selectedRange,
@@ -208,9 +211,32 @@ const {
   activeUserRecordLink,
   loadDashboard,
   handleRangeChange,
-} = createDashboardState(undefined, undefined, undefined, undefined, renderTrendChart);
+} = createDashboardState(undefined, undefined, undefined, undefined, () => {
+  void renderTrendChart();
+});
 
-function renderTrendChart() {
+async function loadEChartsCore(): Promise<EChartsCore> {
+  if (!echartsCorePromise) {
+    echartsCorePromise = Promise.all([
+      import('echarts/core'),
+      import('echarts/lib/chart/bar'),
+      import('echarts/lib/chart/line'),
+      import('echarts/lib/component/grid'),
+      import('echarts/lib/component/tooltip'),
+      import('echarts/lib/renderer/installCanvasRenderer.js'),
+    ]).then(([core, _bar, _line, _grid, _tooltip, canvasRenderer]) => {
+      core.use([canvasRenderer.install]);
+      return core;
+    });
+  }
+  return echartsCorePromise;
+}
+
+async function renderTrendChart() {
+  if (!trendChartRef.value || !metrics.value) {
+    return;
+  }
+  const echarts = await loadEChartsCore();
   if (!trendChartRef.value || !metrics.value) {
     return;
   }

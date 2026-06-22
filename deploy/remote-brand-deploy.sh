@@ -48,6 +48,46 @@ p.write_text('\n'.join(updated) + '\n')
 PY
 fi
 
+commit_sha=""
+if [ -f "$release/RELEASE_VERSION" ]; then
+  commit_sha=$(sed -n 's/^GENSTUDIO_COMMIT_SHA=//p' "$release/RELEASE_VERSION" | head -n 1)
+fi
+if [ -z "$commit_sha" ] && [ -d "$release/.git" ]; then
+  commit_sha=$(git -C "$release" rev-parse --short=12 HEAD 2>/dev/null || true)
+fi
+if [ -z "$commit_sha" ]; then
+  commit_sha=$(date -u +release-%Y%m%d%H%M%S)
+fi
+build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+version=$(date -u +%Y.%m.%d.%H%M%S)
+
+python3 - "$version" "$commit_sha" "$build_time" <<'PY'
+from pathlib import Path
+import sys
+
+version, commit_sha, build_time = sys.argv[1:4]
+p = Path('/opt/genstudio/deploy/.env')
+lines = p.read_text().splitlines() if p.exists() else []
+updates = {
+    'GENSTUDIO_VERSION': version,
+    'GENSTUDIO_COMMIT_SHA': commit_sha,
+    'GENSTUDIO_BUILD_TIME': build_time,
+}
+seen = set()
+next_lines = []
+for line in lines:
+    key = line.split('=', 1)[0] if '=' in line else ''
+    if key in updates:
+        next_lines.append(f'{key}={updates[key]}')
+        seen.add(key)
+    else:
+        next_lines.append(line)
+for key, value in updates.items():
+    if key not in seen:
+        next_lines.append(f'{key}={value}')
+p.write_text('\n'.join(next_lines) + '\n')
+PY
+
 docker compose build genstudio-api
 docker compose up -d genstudio-api
 sleep 5

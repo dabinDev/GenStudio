@@ -167,7 +167,7 @@ Canonical release order:
 1. Review `git status --short` and confirm only intended source/documentation files are modified.
 2. Run the relevant frontend/admin tests for the changed areas.
 3. Build `fronted/dist` and `admin/dist` from a clean local working tree.
-4. Package only `server/`, `docs/`, `.dockerignore`, `fronted/dist`, and `admin/dist` into `.deploy-stage/genstudio-brand-release.tar.gz`.
+4. Package only `server/`, `docs/`, `.dockerignore`, `fronted/dist`, `admin/dist`, and optional `RELEASE_VERSION` into `.deploy-stage/genstudio-brand-release.tar.gz`.
 5. Upload the release package and `deploy/remote-brand-deploy.sh` to the Guangzhou host.
 6. Run the remote helper, which backs up current server/static files before replacing them.
 7. Verify backend health, Nginx config, frontend route, and admin route.
@@ -230,6 +230,8 @@ New-Item -ItemType Directory -Path (Join-Path $stageRoot 'fronted') | Out-Null
 Copy-Item -LiteralPath 'fronted\dist' -Destination (Join-Path $stageRoot 'fronted\dist') -Recurse
 New-Item -ItemType Directory -Path (Join-Path $stageRoot 'admin') | Out-Null
 Copy-Item -LiteralPath 'admin\dist' -Destination (Join-Path $stageRoot 'admin\dist') -Recurse
+$commitSha = (git rev-parse --short=12 HEAD).Trim()
+"GENSTUDIO_COMMIT_SHA=$commitSha" | Set-Content -Encoding ascii -Path (Join-Path $stageRoot 'RELEASE_VERSION')
 if (Test-Path -LiteralPath $pkg) { Remove-Item -LiteralPath $pkg -Force }
 tar -czf $pkg -C $stageRoot .
 ```
@@ -249,6 +251,7 @@ The remote deploy helper should:
 - `rsync --delete` the new `server`, `docs`, `.dockerignore`, `fronted/dist`, and `admin/dist`;
 - publish the independent admin console to `/opt/nginx/html/genstudio-admin` and ensure Nginx has a `/admin/` history fallback;
 - keep `/opt/genstudio/deploy/.env` in place and ensure `GENSTUDIO_ADMIN_IDENTIFIERS` contains `cylonai`;
+- write `GENSTUDIO_VERSION`, `GENSTUDIO_COMMIT_SHA`, and `GENSTUDIO_BUILD_TIME` into `/opt/genstudio/deploy/.env`;
 - run `docker compose build genstudio-api`;
 - run `docker compose up -d genstudio-api`;
 - run `docker exec nginx nginx -t` and `docker exec nginx nginx -s reload`;
@@ -259,6 +262,7 @@ Post-deploy checks:
 ```powershell
 ssh -F NUL -i G:/my-linux/guangzhou.pem root@175.178.189.234 "curl -fsS http://127.0.0.1:18082/api/health && docker ps --format '{{.Names}} {{.Status}} {{.Ports}}' | grep -E 'genstudio|nginx'"
 curl.exe -fsS --resolve studio.cylonai.cn:443:175.178.189.234 https://studio.cylonai.cn/api/health
+curl.exe -fsS --resolve studio.cylonai.cn:443:175.178.189.234 https://studio.cylonai.cn/api/version
 curl.exe -fsS --resolve studio.cylonai.cn:443:175.178.189.234 https://studio.cylonai.cn/
 curl.exe -fsS --resolve studio.cylonai.cn:443:175.178.189.234 https://studio.cylonai.cn/admin/
 ```

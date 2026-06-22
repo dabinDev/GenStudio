@@ -5,6 +5,7 @@ import binascii
 import asyncio
 import copy
 import json
+from contextlib import asynccontextmanager
 from pathlib import Path
 import time
 from uuid import uuid4
@@ -188,7 +189,17 @@ from app.security import decrypt_secret
 from app.storage import create_presigned_put_url
 from app.user_maintenance import merge_duplicate_users_by_identity
 
-app = FastAPI(title="创意工坊 Server")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    settings = get_settings()
+    settings.validate_startup()
+    if settings.auto_create_tables:
+        init_db()
+    yield
+
+
+app = FastAPI(title="创意工坊 Server", lifespan=lifespan)
 GENERATED_ASSET_DIR = Path(__file__).resolve().parents[2] / "generated_assets"
 GENERATED_ASSET_DIR.mkdir(parents=True, exist_ok=True)
 LOCAL_UPLOAD_DIR = Path(__file__).resolve().parents[2] / "uploaded_assets"
@@ -2172,14 +2183,6 @@ async def clean_http_exception(_request: Request, exc: HTTPException) -> JSONRes
     return JSONResponse(status_code=exc.status_code, content=jsonable_encoder({"detail": detail}), headers=exc.headers)
 
 
-@app.on_event("startup")
-async def startup() -> None:
-    settings = get_settings()
-    settings.validate_startup()
-    if settings.auto_create_tables:
-        init_db()
-
-
 @app.get("/api/health")
 async def health(db: Session = Depends(get_db), settings: Settings = Depends(get_settings)) -> dict[str, str]:
     database_status = "ok"
@@ -2191,6 +2194,16 @@ async def health(db: Session = Depends(get_db), settings: Settings = Depends(get
         "status": "ok" if database_status == "ok" else "degraded",
         "database": database_status,
         "storage": "configured" if settings.object_storage_enabled else "not_configured",
+    }
+
+
+@app.get("/api/version")
+async def version(settings: Settings = Depends(get_settings)) -> dict[str, str]:
+    return {
+        "version": settings.build_version,
+        "commitSha": settings.commit_sha,
+        "buildTime": settings.build_time,
+        "environment": settings.environment,
     }
 
 

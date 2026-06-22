@@ -31,6 +31,21 @@ describe('admin theme sync smoke helpers', () => {
     );
   });
 
+  it('derives the local independent admin app from creative workspace ports', () => {
+    assert.equal(
+      smoke.defaultAdminEntryUrl('http://127.0.0.1:5175'),
+      'http://127.0.0.1:5174/admin/',
+    );
+    assert.equal(
+      smoke.defaultAdminEntryUrl('http://localhost:5173/'),
+      'http://localhost:5174/admin/',
+    );
+    assert.equal(
+      smoke.defaultAdminEntryUrl('https://studio.cylonai.cn'),
+      'https://studio.cylonai.cn/admin/',
+    );
+  });
+
   it('adds a theme bridge query for local split-origin admin testing', () => {
     assert.equal(
       smoke.adminThemeUrl('http://127.0.0.1:5174/admin/', 'dark'),
@@ -43,6 +58,23 @@ describe('admin theme sync smoke helpers', () => {
     assert.equal(
       smoke.adminThemeUrl('https://studio.cylonai.cn/admin/?foo=bar', 'dark'),
       'https://studio.cylonai.cn/admin/?foo=bar&theme=dark',
+    );
+  });
+
+  it('marks a theme check as wrong when it lands in the creative workspace', () => {
+    assert.equal(
+      smoke.isAdminConsoleState({
+        title: '创意工坊',
+        bodyText: '创意工坊\n多模型创作工作台',
+      }),
+      false,
+    );
+    assert.equal(
+      smoke.isAdminConsoleState({
+        title: '创意工坊管理后台',
+        bodyText: '后台控制台\n仪表盘',
+      }),
+      true,
     );
   });
 

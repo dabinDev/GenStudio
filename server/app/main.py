@@ -685,8 +685,10 @@ def normalize_kkyi_video_url_fields(normalized: dict[str, Any]) -> dict[str, Any
 
 def normalize_kkyi_video_body(request_body: dict[str, Any], model_name: str, sub_model: Any | None = None) -> dict[str, Any]:
     prompt = extract_video_prompt(request_body)
+    catalog_model = getattr(sub_model, "catalog_model", None)
+    catalog_model_name = str(getattr(catalog_model, "model_name", "") or "").strip()
     normalized: dict[str, Any] = {
-        "model": str(request_body.get("model") or model_name).strip(),
+        "model": catalog_model_name or str(request_body.get("model") or model_name).strip(),
         "prompt": prompt,
     }
     first_frame_key = "first_frame" if catalog_parameter_for_key(sub_model, ("first_frame",)) else "firstFrameUrl"

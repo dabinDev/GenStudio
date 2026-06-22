@@ -486,6 +486,7 @@ def test_catalog_video_start_end_frames_use_catalog_url_fields(monkeypatch) -> N
             sub_model,
         )
 
+    assert body["model"] == "kuaikuai-2-flash-pro"
     assert body["first_frame"] == "https://studio.cylonai.cn/api/assets/uploads/first.png"
     assert body["last_frame"] == "https://studio.cylonai.cn/api/assets/uploads/last.png"
     assert "firstFrameUrl" not in body
@@ -522,12 +523,18 @@ def test_catalog_video_model_uses_kkyi_generation_path_and_flat_parameters(monke
             "adapter": "video-unified-generic",
             "baseUrl": "https://ai-api.kkidc.com",
             "apiKey": "sk-test",
-            "primaryModelName": "kuaikuai-2-flash-pro",
+            "primaryModelName": "seedance-2.0-fast-image-to-video",
             "catalogModelId": "10028",
         },
     )
     assert created.status_code == 200
     sub_model_id = created.json()["model"]["primarySubModelId"]
+    with SessionLocal() as db:
+        catalog_model = db.query(CatalogModel).filter(CatalogModel.external_id == "10028").one()
+        sub_model = db.get(SubModel, sub_model_id)
+        assert sub_model is not None
+        sub_model.catalog_model_id = catalog_model.id
+        db.commit()
 
     response = client.post(
         "/api/proxy/video/create",
@@ -535,7 +542,7 @@ def test_catalog_video_model_uses_kkyi_generation_path_and_flat_parameters(monke
         json={
             "subModelId": sub_model_id,
             "requestBody": {
-                "model": "kuaikuai-2-flash-pro",
+                "model": "seedance-2.0-fast-image-to-video",
                 "prompt": "video test",
                 "aspect_ratio": "16:9",
                 "duration": 4,

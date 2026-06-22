@@ -12822,3 +12822,61 @@ button:disabled {
 .shell .retry-button:hover:not(:disabled) {
   background: var(--primary-hover) !important;
 }
+
+/* =====================================================================
+   底部 composer 面板美化：去冗余文案 + 标签统一 + 浮标低调
+   ===================================================================== */
+/* 去掉啰嗦的右侧说明 */
+.shell .composer-template-heading > small {
+  display: none !important;
+}
+/* 模板 chip 去分类前缀，只留标题，更干净 */
+.shell .composer-template-card-top small {
+  display: none !important;
+}
+.shell .composer-template-card-top strong {
+  font-size: 12.5px !important;
+  font-weight: 500 !important;
+}
+/* 信息条：分组对齐统一 */
+.shell .composer-topline {
+  gap: 12px !important;
+}
+.shell .composer-status-stack {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  flex-wrap: wrap !important;
+}
+/* 模板标题更克制 */
+.shell .composer-template-heading strong {
+  font-size: 12.5px !important;
+  letter-spacing: 0 !important;
+}
+/* "收起输入" 浮标：小巧低调 */
+.shell .composer-handle-row {
+  top: -14px !important;
+}
+.shell .composer-collapse-toggle {
+  min-height: 26px !important;
+  padding: 0 11px !important;
+  gap: 5px !important;
+  font-size: 11.5px !important;
+  color: var(--muted) !important;
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--line) !important;
+  box-shadow: var(--shadow-sm) !important;
+}
+.shell .composer-collapse-icon {
+  color: var(--accent) !important;
+}
+
+/* 信息条分组：当前模型 + 状态 左聚，积分 右对齐 */
+.shell .composer-topline {
+  justify-content: flex-start !important;
+  gap: 10px !important;
+  flex-wrap: wrap !important;
+}
+.shell .composer-topline .credit-balance {
+  margin-left: auto !important;
+}

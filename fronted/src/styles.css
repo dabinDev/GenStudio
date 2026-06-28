@@ -12018,6 +12018,19 @@ button:disabled {
   background: var(--panel-strong) !important;
   box-shadow: var(--shadow-lg) !important;
 }
+.shell .composer-popover-anchor:has(.composer-popover) {
+  z-index: 320 !important;
+}
+.shell .composer-surface:has(.composer-popover) {
+  overflow: visible !important;
+  isolation: auto !important;
+}
+.shell .composer-footer-bar:has(.composer-popover) {
+  z-index: 310 !important;
+}
+.shell .composer-popover {
+  z-index: 330 !important;
+}
 .shell .media-preview-panel {
   border: 1px solid var(--line) !important;
   border-radius: var(--radius-xl) !important;
@@ -13184,5 +13197,75 @@ button:disabled {
   .shell .settings-model-row-select-open .model-select-list {
     max-height: min(44vh, 340px) !important;
     overscroll-behavior: contain !important;
+  }
+}
+
+/* Image 4K toggle — its own full-width row inside the image params popover so it
+   never gets squeezed next to the quantity/size controls. The "双倍积分" note is a
+   quiet accent badge rather than a loud warning, matching the existing pill design. */
+.shell .image-options-popover .image-4k-toggle {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 10px !important;
+  width: 100% !important;
+  min-height: 38px !important;
+  margin: 0 !important;
+  padding: 7px 11px !important;
+  border: 1px solid var(--line) !important;
+  border-radius: var(--radius-md) !important;
+  background: rgba(125, 204, 22, 0.06) !important;
+  cursor: pointer !important;
+}
+.shell .image-options-popover .image-4k-toggle-main {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 9px !important;
+  min-width: 0 !important;
+}
+.shell .image-options-popover .image-4k-toggle-main input {
+  width: 17px !important;
+  height: 17px !important;
+  margin: 0 !important;
+  accent-color: var(--accent) !important;
+  flex: 0 0 auto !important;
+}
+.shell .image-options-popover .image-4k-toggle-label {
+  color: var(--text) !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.01em !important;
+}
+.shell .image-options-popover .image-4k-badge {
+  flex: 0 0 auto !important;
+  padding: 2px 9px !important;
+  color: var(--accent-strong) !important;
+  border: 1px solid rgba(125, 204, 22, 0.32) !important;
+  border-radius: 999px !important;
+  background: var(--primary-subtle) !important;
+  font-size: 11px !important;
+  line-height: 1.5 !important;
+  white-space: nowrap !important;
+}
+@media (max-width: 720px) {
+  .shell .image-options-popover .image-4k-toggle {
+    min-height: 42px !important;
+  }
+  /* On phones the image params popover is anchored to a far-right pill, so the
+     absolutely-positioned panel overflowed the viewport edge and got clipped.
+     Pin it to the viewport as a bottom sheet (same approach as the model picker)
+     so every control stays reachable. */
+  .shell .image-options-popover {
+    position: fixed !important;
+    left: 10px !important;
+    right: 10px !important;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 12px) !important;
+    top: auto !important;
+    width: auto !important;
+    max-width: none !important;
+    max-height: min(72vh, 560px) !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain !important;
+    z-index: 340 !important;
   }
 }

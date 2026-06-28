@@ -6,6 +6,7 @@ import tempfile
 import base64
 import asyncio
 import time
+import json
 
 import httpx
 from fastapi.testclient import TestClient
@@ -46,6 +47,33 @@ def csrf_headers(client: TestClient) -> dict[str, str]:
     response = client.get("/api/auth/csrf")
     assert response.status_code == 200
     return {"X-CSRF-Token": response.json()["csrfToken"]}
+
+
+def png_bytes(width: int, height: int) -> bytes:
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + b"\x00\x00\x00\rIHDR"
+        + width.to_bytes(4, "big")
+        + height.to_bytes(4, "big")
+        + b"\x08\x02\x00\x00\x00"
+        + b"\x00\x00\x00\x00"
+        + b"\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+
+
+def test_image_4k_size_for_ratio_maps_ratios_and_sizes() -> None:
+    # Canonical aspect ratios map to their fixed 4K sizes.
+    assert main_module.image_4k_size_for_ratio("16:9") == "3840x2160"
+    assert main_module.image_4k_size_for_ratio("9:16") == "2160x3840"
+    assert main_module.image_4k_size_for_ratio("1:1") == "4096x4096"
+    # An already-4K explicit "WxH" size (what the frontend sends) is preserved
+    # rather than collapsing to a 4096 square, keeping the requested aspect ratio.
+    assert main_module.image_4k_size_for_ratio("3840x2160") == "3840x2160"
+    assert main_module.image_4k_size_for_ratio("2160x3840") == "2160x3840"
+    # A non-4K size still scales up while preserving its aspect ratio.
+    assert main_module.image_4k_size_for_ratio("1024x512") == "4096x2048"
+    # Garbage falls back to a safe square.
+    assert main_module.image_4k_size_for_ratio("not-a-size") == "4096x4096"
 
 
 def wait_for_completed_task(client: TestClient, endpoint: str, headers: dict[str, str], body: dict, *, timeout: float = 2.0) -> dict:
@@ -467,6 +495,451 @@ def test_public_image_model_records_generated_asset_for_non_admin_user(monkeypat
     payload = response.json()
     conversation = normal.get(f"/api/conversations/{payload['conversation']['id']}").json()["conversation"]
     assert conversation["messages"][-1]["assets"][0]["url"] == "https://cdn.example.com/public-image.png"
+
+
+def test_public_image_model_charges_double_credits_for_4k_batch(monkeypatch) -> None:
+    from app.database import SessionLocal
+    from app.credit_service import admin_adjust_credits, set_capability_price
+    from app.db_models import CreditTransaction, User
+
+    calls: list[dict] = []
+
+    async def fake_forward_json(method, url, api_key, body=None):
+        calls.append(dict(body or {}))
+        image_number = len(calls)
+        return httpx.Response(200, json={"data": [{"url": f"https://cdn.example.com/4k-{image_number}.png"}]}), {
+            "data": [{"url": f"https://cdn.example.com/4k-{image_number}.png"}]
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+
+    async def fake_remote_dimensions(url):
+        return (3840, 2160)
+
+    monkeypatch.setattr(main_module, "remote_image_dimensions", fake_remote_dimensions)
+    admin = TestClient(app)
+    login(admin, "admin")
+    admin.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": "admin-public", "email": "cage_ben@sina.com", "nickname": "Admin"},
+    )
+    public_model = create_public_model(admin, "image", "image-openai", "gpt-image-2")
+
+    normal = TestClient(app)
+    login(normal, "normal-4k-user")
+    with SessionLocal() as db:
+        admin_user = db.query(User).filter(User.email == "cage_ben@sina.com").one()
+        normal_user = db.query(User).filter(User.external_user_id == "normal-4k-user").one()
+        set_capability_price(db, "image", 3, admin=admin_user)
+        admin_adjust_credits(db, admin=admin_user, target_user=normal_user, amount=20, reason="test seed")
+    visible_public = next(item for item in normal.get("/api/models").json()["models"] if item["id"] == public_model["id"])
+    headers = csrf_headers(normal)
+
+    response = normal.post(
+        "/api/proxy/image",
+        headers=headers,
+        json={
+            "subModelId": visible_public["primarySubModelId"],
+            "enable4k": True,
+            "requestBody": {"prompt": "4k batch", "quantity": 2, "ratio": "16:9"},
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    completed = wait_for_completed_task(
+        normal,
+        "/api/proxy/image/query",
+        headers,
+        {
+            "subModelId": visible_public["primarySubModelId"],
+            "conversationId": payload["conversation"]["id"],
+            "taskId": payload["taskId"],
+        },
+    )
+    assert completed["credits"]["account"]["balance"] == 8
+    assert [call["size"] for call in calls] == ["3840x2160", "3840x2160"]
+    with SessionLocal() as db:
+        reserve = (
+            db.query(CreditTransaction)
+            .filter(CreditTransaction.type == "generation_reserve")
+            .order_by(CreditTransaction.created_at.desc())
+            .first()
+        )
+        assert reserve is not None
+        assert reserve.amount == -12
+        metadata = json.loads(reserve.metadata_json)
+        assert metadata["is4k"] is True
+        assert metadata["multiplier"] == 2
+        assert metadata["targetSize"] == "3840x2160"
+        assert metadata["effectiveUnitPrice"] == 6
+
+
+def test_public_image_model_charges_regular_credits_without_4k(monkeypatch) -> None:
+    from app.database import SessionLocal
+    from app.credit_service import admin_adjust_credits, set_capability_price
+    from app.db_models import CreditTransaction, User
+
+    async def fake_forward_json(method, url, api_key, body=None):
+        return httpx.Response(200, json={"data": [{"url": "https://cdn.example.com/regular.png"}]}), {
+            "data": [{"url": "https://cdn.example.com/regular.png"}]
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    admin = TestClient(app)
+    login(admin, "admin")
+    admin.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": "admin-public", "email": "cage_ben@sina.com", "nickname": "Admin"},
+    )
+    public_model = create_public_model(admin, "image", "image-openai", "gpt-image-2")
+
+    normal = TestClient(app)
+    login(normal, "normal-regular-user")
+    with SessionLocal() as db:
+        admin_user = db.query(User).filter(User.email == "cage_ben@sina.com").one()
+        normal_user = db.query(User).filter(User.external_user_id == "normal-regular-user").one()
+        set_capability_price(db, "image", 3, admin=admin_user)
+        admin_adjust_credits(db, admin=admin_user, target_user=normal_user, amount=20, reason="test seed")
+    visible_public = next(item for item in normal.get("/api/models").json()["models"] if item["id"] == public_model["id"])
+
+    response = normal.post(
+        "/api/proxy/image",
+        headers=csrf_headers(normal),
+        json={
+            "subModelId": visible_public["primarySubModelId"],
+            "requestBody": {"prompt": "regular batch", "quantity": 2},
+        },
+    )
+
+    assert response.status_code == 200
+    with SessionLocal() as db:
+        reserve = (
+            db.query(CreditTransaction)
+            .filter(CreditTransaction.type == "generation_reserve")
+            .order_by(CreditTransaction.created_at.desc())
+            .first()
+        )
+        assert reserve is not None
+        assert reserve.amount == -6
+        assert '"is4k":true' not in reserve.metadata_json
+
+
+def test_manual_4k_size_is_charged_as_4k(monkeypatch) -> None:
+    from app.database import SessionLocal
+    from app.credit_service import admin_adjust_credits, set_capability_price
+    from app.db_models import CreditTransaction, User
+
+    async def fake_forward_json(method, url, api_key, body=None):
+        return httpx.Response(200, json={"data": [{"url": "https://cdn.example.com/manual-4k.png"}]}), {
+            "data": [{"url": "https://cdn.example.com/manual-4k.png"}]
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+
+    async def fake_remote_dimensions(url):
+        return (4096, 4096)
+
+    monkeypatch.setattr(main_module, "remote_image_dimensions", fake_remote_dimensions)
+    admin = TestClient(app)
+    login(admin, "admin")
+    admin.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": "admin-public", "email": "cage_ben@sina.com", "nickname": "Admin"},
+    )
+    public_model = create_public_model(admin, "image", "image-openai", "gpt-image-2")
+
+    normal = TestClient(app)
+    login(normal, "manual-4k-user")
+    with SessionLocal() as db:
+        admin_user = db.query(User).filter(User.email == "cage_ben@sina.com").one()
+        normal_user = db.query(User).filter(User.external_user_id == "manual-4k-user").one()
+        set_capability_price(db, "image", 3, admin=admin_user)
+        admin_adjust_credits(db, admin=admin_user, target_user=normal_user, amount=20, reason="test seed")
+    visible_public = next(item for item in normal.get("/api/models").json()["models"] if item["id"] == public_model["id"])
+
+    response = normal.post(
+        "/api/proxy/image",
+        headers=csrf_headers(normal),
+        json={
+            "subModelId": visible_public["primarySubModelId"],
+            "requestBody": {"prompt": "manual 4k", "size": "4096x4096"},
+        },
+    )
+
+    assert response.status_code == 200
+    with SessionLocal() as db:
+        reserve = (
+            db.query(CreditTransaction)
+            .filter(CreditTransaction.type == "generation_reserve")
+            .order_by(CreditTransaction.created_at.desc())
+            .first()
+        )
+        assert reserve is not None
+        assert reserve.amount == -6
+        assert json.loads(reserve.metadata_json)["is4k"] is True
+
+
+def test_4k_local_output_below_target_passes_through(monkeypatch) -> None:
+    from app.database import SessionLocal
+    from app.credit_service import admin_adjust_credits, set_capability_price
+    from app.db_models import CreditTransaction, User
+
+    small_image = base64.b64encode(png_bytes(1983, 793)).decode("ascii")
+
+    async def fake_forward_json(method, url, api_key, body=None):
+        assert body["size"] == "3840x2160"
+        return httpx.Response(200, json={"data": [{"b64_json": small_image}]}), {
+            "data": [{"b64_json": small_image}]
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    admin = TestClient(app)
+    login(admin, "admin")
+    admin.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": "admin-public", "email": "cage_ben@sina.com", "nickname": "Admin"},
+    )
+    public_model = create_public_model(admin, "image", "image-openai", "gpt-image-2")
+
+    normal = TestClient(app)
+    login(normal, "small-4k-user")
+    with SessionLocal() as db:
+        admin_user = db.query(User).filter(User.email == "cage_ben@sina.com").one()
+        normal_user = db.query(User).filter(User.external_user_id == "small-4k-user").one()
+        set_capability_price(db, "image", 3, admin=admin_user)
+        admin_adjust_credits(db, admin=admin_user, target_user=normal_user, amount=20, reason="test seed")
+    visible_public = next(item for item in normal.get("/api/models").json()["models"] if item["id"] == public_model["id"])
+
+    response = normal.post(
+        "/api/proxy/image",
+        headers=csrf_headers(normal),
+        json={
+            "subModelId": visible_public["primarySubModelId"],
+            "enable4k": True,
+            "requestBody": {"prompt": "4k too small", "ratio": "16:9"},
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    # Non-blocking: image is shown even when output is below 4K; _4kMismatch flag present
+    assert payload.get("status") != "failed"
+    assert len(payload["images"]) == 1
+    assert payload["images"][0].get("_4kMismatch") is True
+    assert not payload["assistantMessage"]["errorMessage"]
+    assert payload["credits"]["account"]["balance"] == 14  # 20 - 6 captured
+    with SessionLocal() as db:
+        reserve = (
+            db.query(CreditTransaction)
+            .filter(CreditTransaction.type == "generation_reserve")
+            .order_by(CreditTransaction.created_at.desc())
+            .first()
+        )
+        assert reserve is not None
+        assert reserve.amount == -6
+        assert reserve.status == "captured"
+
+
+def test_4k_remote_url_below_target_passes_through(monkeypatch) -> None:
+    """Non-blocking: upstream returns a remote URL pointing at a non-4K image.
+    The probe measures it, attaches _4kMismatch, but the image is still shown
+    and credits are captured rather than refunded."""
+    from app.database import SessionLocal
+    from app.credit_service import admin_adjust_credits, set_capability_price
+    from app.db_models import CreditTransaction, User
+
+    async def fake_forward_json(method, url, api_key, body=None):
+        assert body["size"] == "3840x2160"
+        return httpx.Response(200, json={"data": [{"url": "https://cdn.example.com/not-really-4k.png"}]}), {
+            "data": [{"url": "https://cdn.example.com/not-really-4k.png"}]
+        }
+
+    async def fake_remote_dimensions(url):
+        return (1983, 793)
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    monkeypatch.setattr(main_module, "remote_image_dimensions", fake_remote_dimensions)
+    admin = TestClient(app)
+    login(admin, "admin")
+    admin.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": "admin-public", "email": "cage_ben@sina.com", "nickname": "Admin"},
+    )
+    public_model = create_public_model(admin, "image", "image-openai", "gpt-image-2")
+
+    normal = TestClient(app)
+    login(normal, "remote-small-4k-user")
+    with SessionLocal() as db:
+        admin_user = db.query(User).filter(User.email == "cage_ben@sina.com").one()
+        normal_user = db.query(User).filter(User.external_user_id == "remote-small-4k-user").one()
+        set_capability_price(db, "image", 3, admin=admin_user)
+        admin_adjust_credits(db, admin=admin_user, target_user=normal_user, amount=20, reason="test seed")
+    visible_public = next(item for item in normal.get("/api/models").json()["models"] if item["id"] == public_model["id"])
+
+    response = normal.post(
+        "/api/proxy/image",
+        headers=csrf_headers(normal),
+        json={
+            "subModelId": visible_public["primarySubModelId"],
+            "enable4k": True,
+            "requestBody": {"prompt": "remote 4k too small", "ratio": "16:9"},
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload.get("status") != "failed"
+    assert len(payload["images"]) == 1
+    assert payload["images"][0].get("_4kMismatch") is True
+    assert not payload["assistantMessage"]["errorMessage"]
+    assert payload["credits"]["account"]["balance"] == 14  # 20 - 6 captured
+    with SessionLocal() as db:
+        reserve = (
+            db.query(CreditTransaction)
+            .filter(CreditTransaction.type == "generation_reserve")
+            .order_by(CreditTransaction.created_at.desc())
+            .first()
+        )
+        assert reserve is not None
+        assert reserve.amount == -6
+        assert reserve.status == "captured"
+
+
+def test_4k_remote_url_unreachable_passes_open(monkeypatch) -> None:
+    """When the probe cannot measure a remote image (network failure), the 4K
+    output is not rejected — we only fail when we positively measure a too-small
+    image, so a transient infra blip never nukes a paid generation."""
+    from app.database import SessionLocal
+    from app.credit_service import admin_adjust_credits, set_capability_price
+    from app.db_models import User
+
+    async def fake_forward_json(method, url, api_key, body=None):
+        return httpx.Response(200, json={"data": [{"url": "https://cdn.example.com/unreachable-4k.png"}]}), {
+            "data": [{"url": "https://cdn.example.com/unreachable-4k.png"}]
+        }
+
+    async def fake_remote_dimensions(url):
+        return None
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    monkeypatch.setattr(main_module, "remote_image_dimensions", fake_remote_dimensions)
+    admin = TestClient(app)
+    login(admin, "admin")
+    admin.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": "admin-public", "email": "cage_ben@sina.com", "nickname": "Admin"},
+    )
+    public_model = create_public_model(admin, "image", "image-openai", "gpt-image-2")
+
+    normal = TestClient(app)
+    login(normal, "remote-blip-4k-user")
+    with SessionLocal() as db:
+        admin_user = db.query(User).filter(User.email == "cage_ben@sina.com").one()
+        normal_user = db.query(User).filter(User.external_user_id == "remote-blip-4k-user").one()
+        set_capability_price(db, "image", 3, admin=admin_user)
+        admin_adjust_credits(db, admin=admin_user, target_user=normal_user, amount=20, reason="test seed")
+    visible_public = next(item for item in normal.get("/api/models").json()["models"] if item["id"] == public_model["id"])
+
+    response = normal.post(
+        "/api/proxy/image",
+        headers=csrf_headers(normal),
+        json={
+            "subModelId": visible_public["primarySubModelId"],
+            "enable4k": True,
+            "requestBody": {"prompt": "remote 4k unreachable", "ratio": "16:9"},
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload.get("status") != "failed"
+    assert len(payload["images"]) == 1
+    assert payload["credits"]["account"]["balance"] == 14
+
+
+def test_remote_image_url_is_probeable_blocks_internal_targets() -> None:
+    assert main_module.remote_image_url_is_probeable("https://cdn.example.com/a.png") is True
+    assert main_module.remote_image_url_is_probeable("http://127.0.0.1/a.png") is False
+    assert main_module.remote_image_url_is_probeable("http://localhost:8000/a.png") is False
+    assert main_module.remote_image_url_is_probeable("http://169.254.169.254/latest/meta-data") is False
+    assert main_module.remote_image_url_is_probeable("http://10.0.0.5/a.png") is False
+    assert main_module.remote_image_url_is_probeable("http://192.168.1.10/a.png") is False
+    assert main_module.remote_image_url_is_probeable("ftp://cdn.example.com/a.png") is False
+    assert main_module.remote_image_url_is_probeable("/api/assets/generated/x.png") is False
+
+
+def test_image_dimensions_from_bytes_sniffs_formats() -> None:
+    assert main_module.image_dimensions_from_bytes(png_bytes(3840, 2160)) == (3840, 2160)
+    # Minimal lossy WEBP (VP8) header advertising 3840x2160.
+    width, height = 3840, 2160
+    vp8 = (
+        b"RIFF" + (0).to_bytes(4, "little") + b"WEBP" + b"VP8 "
+        + (0).to_bytes(4, "little") + b"\x00\x00\x00" + b"\x9d\x01\x2a"
+        + (width & 0x3FFF).to_bytes(2, "little") + (height & 0x3FFF).to_bytes(2, "little")
+    )
+    assert main_module.image_dimensions_from_bytes(vp8) == (3840, 2160)
+    assert main_module.image_dimensions_from_bytes(b"not an image") is None
+
+
+def test_enable_4k_rejects_non_openai_image_adapter() -> None:
+    client = TestClient(app)
+    login(client, "alice")
+    sub_model_id = create_model(client, "image", "video-unified-generic", "not-openai-image")
+
+    response = client.post(
+        "/api/proxy/image",
+        headers=csrf_headers(client),
+        json={
+            "subModelId": sub_model_id,
+            "enable4k": True,
+            "requestBody": {"prompt": "unsupported 4k"},
+        },
+    )
+
+    assert response.status_code == 400
+    assert "4K" in response.json()["detail"]["message"]
+
+
+def test_4k_credit_check_uses_doubled_total(monkeypatch) -> None:
+    from app.database import SessionLocal
+    from app.credit_service import admin_adjust_credits, set_capability_price
+    from app.db_models import User
+
+    async def fake_forward_json(method, url, api_key, body=None):
+        return httpx.Response(200, json={"data": [{"url": "https://cdn.example.com/too-expensive.png"}]}), {
+            "data": [{"url": "https://cdn.example.com/too-expensive.png"}]
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    admin = TestClient(app)
+    login(admin, "admin")
+    admin.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": "admin-public", "email": "cage_ben@sina.com", "nickname": "Admin"},
+    )
+    public_model = create_public_model(admin, "image", "image-openai", "gpt-image-2")
+
+    normal = TestClient(app)
+    login(normal, "short-balance-4k-user")
+    with SessionLocal() as db:
+        admin_user = db.query(User).filter(User.email == "cage_ben@sina.com").one()
+        normal_user = db.query(User).filter(User.external_user_id == "short-balance-4k-user").one()
+        set_capability_price(db, "image", 3, admin=admin_user)
+        admin_adjust_credits(db, admin=admin_user, target_user=normal_user, amount=5, reason="test seed")
+    visible_public = next(item for item in normal.get("/api/models").json()["models"] if item["id"] == public_model["id"])
+
+    response = normal.post(
+        "/api/proxy/image",
+        headers=csrf_headers(normal),
+        json={
+            "subModelId": visible_public["primarySubModelId"],
+            "enable4k": True,
+            "requestBody": {"prompt": "not enough credits"},
+        },
+    )
+
+    assert response.status_code == 402
 
 
 def test_prompt_optimize_uses_public_gpt_model_without_creating_conversation(monkeypatch) -> None:

@@ -70,6 +70,7 @@ import {
   hasCatalogParameters,
   getModelIdentifierError,
   getMissingModelMessage,
+  imageGenerationCreditCost,
   imageGenerationSummary,
   isGeneratedModelDisplayName,
   isPrivateView,
@@ -102,6 +103,7 @@ import {
   shouldContinuePollingTask,
   shortText,
   supportsCatalogParameter,
+  supportsImage4k,
   testResultSummary,
   toggleThemeMode,
   updateLocalConversationMessage,
@@ -280,6 +282,7 @@ const imageState = reactive({
   resolution: "2k",
   quality: "auto",
   count: "1",
+  enable4k: false,
   extraJson: "",
   uploading: false,
   optimizing: false,
@@ -518,8 +521,8 @@ const activeModelParameterSourceLabel = computed(() => modelParameterSourceLabel
 const currentCreditAccount = computed(() => auth.state.user?.credits || null);
 const availableCredits = computed(() => currentCreditAccount.value?.balance ?? 0);
 const reservedCredits = computed(() => currentCreditAccount.value?.reservedBalance ?? 0);
-const activeCreditCost = computed(() => creditCostForModel(activeModel.value));
-const activeCreditCostLabel = computed(() => creditCostLabel(activeModel.value));
+const activeCreditCost = computed(() => effectiveCreditCostForCapability(activeModel.value, activeCapability.value));
+const activeCreditCostLabel = computed(() => creditCostLabel(activeModel.value, activeCapability.value));
 const activeCreditSourceLabel = computed(() => creditPriceSourceLabel(activeModel.value?.creditPriceSource || ""));
 const textComposerPlaceholder = computed(() =>
   modelCatalogInputHint(activeModel.value, "输入你想生成的文案、脚本、提示词或结构化内容..."),
@@ -566,6 +569,7 @@ const imageUsesRatioControls = computed(() => !imageUsesSizeControls.value && su
 const imageUsesResolutionControls = computed(() => !imageUsesSizeControls.value && supportsCatalogParameter(activeModel.value, "resolution", "size"));
 const imageUsesQualityControls = computed(() => supportsCatalogParameter(activeModel.value, "quality"));
 const imageUsesQuantityControls = computed(() => supportsCatalogParameter(activeModel.value, "quantity"));
+const imageSupports4k = computed(() => supportsImage4k(activeModel.value));
 const imageRatioOptions = computed(() => catalogOptionItems(activeModel.value, ["ratio", "aspect_ratio"], IMAGE_RATIO_OPTIONS));
 const imageResolutionOptions = computed(() => catalogOptionItems(activeModel.value, ["resolution", "size"], IMAGE_RESOLUTION_OPTIONS));
 const videoModeOptions = computed(() => {
@@ -603,8 +607,9 @@ const videoDropHint = computed(() => {
 const imageControlSummary = computed(() =>
   imageGenerationSummary({
     ratio: imageUsesSizeControls.value ? imageState.size : imageUsesRatioControls.value ? imageState.ratio : "",
-    resolution: imageUsesQualityControls.value ? imageState.quality : imageUsesResolutionControls.value ? imageState.resolution : "",
+    resolution: (imageSupports4k.value && imageState.enable4k) ? "" : imageUsesQualityControls.value ? imageState.quality : imageUsesResolutionControls.value ? imageState.resolution : "",
     count: imageUsesQuantityControls.value ? imageState.count : "",
+    enable4k: imageSupports4k.value && imageState.enable4k,
   }),
 );
 
@@ -895,6 +900,14 @@ watch(
   { immediate: true },
 );
 
+watch(
+  imageSupports4k,
+  (supported) => {
+    if (!supported) imageState.enable4k = false;
+  },
+  { immediate: true },
+);
+
 function getViewFromHash(): ViewName {
   const hash = window.location.hash.replace(/^#\/?/, "");
   const route = hash.split("?", 1)[0];
@@ -997,6 +1010,17 @@ function creditCostForModel(model: ModelDefinition | null | undefined): number {
   return Math.max(0, Number(model.creditPrice || 0));
 }
 
+function effectiveCreditCostForCapability(model: ModelDefinition | null | undefined, capability: Capability | null | undefined): number {
+  if ((capability || model?.capability) === "image") {
+    return imageGenerationCreditCost(
+      creditCostForModel(model),
+      imageUsesQuantityControls.value ? imageState.count : "1",
+      imageState.enable4k && supportsImage4k(model),
+    );
+  }
+  return creditCostForModel(model);
+}
+
 function creditPriceSourceLabel(source: string): string {
   if (source === "model_override") return "模型单独定价";
   if (source === "capability_default") return "能力默认定价";
@@ -1004,8 +1028,8 @@ function creditPriceSourceLabel(source: string): string {
   return "积分定价";
 }
 
-function creditCostLabel(model: ModelDefinition | null | undefined): string {
-  const cost = creditCostForModel(model);
+function creditCostLabel(model: ModelDefinition | null | undefined, capability: Capability | null | undefined = activeCapability.value): string {
+  const cost = effectiveCreditCostForCapability(model, capability);
   if (!cost) return model?.isPublic ? "本次不扣积分" : "私有模型不扣积分";
   return `本次预计扣 ${cost} 积分`;
 }
@@ -1038,7 +1062,7 @@ async function refreshCreditsQuietly() {
 }
 
 function ensureEnoughCreditsForModel(model: ModelDefinition | null, capability: Capability): boolean {
-  const cost = creditCostForModel(model);
+  const cost = effectiveCreditCostForCapability(model, capability);
   if (cost <= 0) return true;
   if (!auth.state.user) {
     setCapabilityError(capability, "该公用模型需要积分，请先登录后再生成。");
@@ -1242,6 +1266,7 @@ function buildImageRequestBody(model: ModelDefinition, finalPrompt: string, extr
       ratio: imageState.ratio,
       resolution: imageState.resolution,
       quality: imageState.quality,
+      enable4k: imageSupports4k.value && imageState.enable4k,
     },
     finalPrompt,
     extra,
@@ -2512,6 +2537,7 @@ async function handleImageSubmit() {
     const extra = parseJsonInput(imageState.extraJson);
     imageState.result = await postProxyWithSignal<ImageResult>("/api/proxy/image", buildModelProxyPayload(model, setting, {
       conversationId: persistedConversationIdFor("image"),
+      enable4k: imageSupports4k.value && imageState.enable4k,
       requestBody: buildImageRequestBody(model, finalPrompt, extra),
     }), controller.signal);
     applyCreditsFromResponse(imageState.result);
@@ -4116,7 +4142,7 @@ async function removeUnavailableModels() {
                         </button>
                       </div>
                     </div>
-                    <div v-if="imageUsesResolutionControls" class="popover-section">
+                    <div v-if="imageUsesResolutionControls && !(imageSupports4k && imageState.enable4k)" class="popover-section">
                       <span>分辨率</span>
                       <div class="segmented-grid segmented-grid-compact">
                         <button
@@ -4129,7 +4155,7 @@ async function removeUnavailableModels() {
                         </button>
                       </div>
                     </div>
-                    <div v-if="imageUsesSizeControls" class="popover-section">
+                    <div v-if="imageUsesSizeControls && !(imageSupports4k && imageState.enable4k)" class="popover-section">
                       <span>尺寸</span>
                       <div class="segmented-grid">
                         <button
@@ -4154,6 +4180,15 @@ async function removeUnavailableModels() {
                           {{ quality.label }}
                         </button>
                       </div>
+                    </div>
+                    <div v-if="imageSupports4k" class="popover-section">
+                      <label class="image-4k-toggle">
+                        <span class="image-4k-toggle-main">
+                          <input v-model="imageState.enable4k" type="checkbox" />
+                          <span class="image-4k-toggle-label">4K 生成</span>
+                        </span>
+                        <small class="image-4k-badge">双倍积分</small>
+                      </label>
                     </div>
                     <div v-if="imageUsesQuantityControls || (!imageHasCatalogParameters && !imageUsesSizeControls)" class="popover-section popover-two-col">
                       <label v-if="imageUsesQuantityControls">

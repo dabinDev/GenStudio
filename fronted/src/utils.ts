@@ -438,6 +438,44 @@ export interface ImageGenerationRequestInput {
   ratio: string;
   resolution: string;
   quality: string;
+  enable4k?: boolean;
+}
+
+export function supportsImage4k(model: ModelDefinition | null | undefined): boolean {
+  return model?.capability === "image" && model.adapter === "image-openai";
+}
+
+function parseAspectRatio(value: string): { width: number; height: number } | null {
+  const match = value.trim().match(/^(\d+(?:\.\d+)?)\s*[:/]\s*(\d+(?:\.\d+)?)$/);
+  if (!match) return null;
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+  return { width, height };
+}
+
+export function image4kSizeForRatio(ratio: string): string {
+  const normalized = ratio.trim().toLowerCase().replace(/\s+/g, "");
+  if (normalized === "16:9") return "3840x2160";
+  if (normalized === "9:16") return "2160x3840";
+  if (normalized === "1:1") return "4096x4096";
+  if (normalized === "4:3") return "4096x3072";
+  if (normalized === "3:4") return "3072x4096";
+
+  const parsed = parseAspectRatio(normalized);
+  if (!parsed) return "4096x4096";
+  if (parsed.width >= parsed.height) {
+    const height = Math.max(1, Math.round((4096 * parsed.height) / parsed.width));
+    return `4096x${height}`;
+  }
+  const width = Math.max(1, Math.round((4096 * parsed.width) / parsed.height));
+  return `${width}x4096`;
+}
+
+export function imageGenerationCreditCost(unitPrice: number, count: string, enable4k: boolean): number {
+  const price = Math.max(0, Number(unitPrice || 0));
+  const quantity = Math.max(1, Math.floor(Number(count) || 1));
+  return price * quantity * (enable4k ? 2 : 1);
 }
 
 export function catalogOptionMaxCount(
@@ -569,7 +607,11 @@ export function buildImageGenerationRequestBody(
   addCatalogField(body, model, ["ratio", "aspect_ratio"], "ratio", input.ratio);
   addCatalogField(body, model, "resolution", "resolution", input.resolution);
   addCatalogField(body, model, "quality", "quality", input.quality);
-  return { ...body, ...extra };
+  const merged = { ...body, ...extra };
+  if (input.enable4k && supportsImage4k(model)) {
+    merged.size = image4kSizeForRatio(String(merged.ratio || merged.aspect_ratio || input.ratio || "1:1"));
+  }
+  return merged;
 }
 
 export function buildVideoMediaFields(
@@ -1025,10 +1067,12 @@ export function imageGenerationSummary(input: {
   ratio: string;
   resolution: string;
   count: string;
+  enable4k?: boolean;
 }): string {
   return [
     input.ratio,
     input.resolution,
+    input.enable4k ? "4K" : "",
     input.count ? `${input.count}张` : "",
   ].filter(Boolean).join("  ") || "参数";
 }

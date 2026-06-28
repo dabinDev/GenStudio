@@ -4,6 +4,7 @@ import base64
 import binascii
 import asyncio
 import copy
+import ipaddress
 import json
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -980,6 +981,16 @@ def load_message_response(message: ConversationMessage) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def load_message_request(message: ConversationMessage | None) -> dict[str, Any]:
+    if not message:
+        return {}
+    try:
+        parsed = json.loads(message.request_json or "{}")
+    except ValueError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def response_matches_task(response: dict[str, Any], task_id: str) -> bool:
     return task_id in {
         str(response.get("taskId") or ""),
@@ -1118,6 +1129,8 @@ def prepare_generation_credit(
     message_id: str = "",
     task_id: str = "",
     quantity: int = 1,
+    multiplier: int = 1,
+    metadata: dict[str, Any] | None = None,
 ) -> Any | None:
     estimate = estimate_credit_price(
         db,
@@ -1130,17 +1143,28 @@ def prepare_generation_credit(
         return None
     if not user:
         raise HTTPException(status_code=401, detail={"message": "请先登录后再使用该模型。"})
+    clean_quantity = max(1, int(quantity or 1))
+    clean_multiplier = max(1, int(multiplier or 1))
+    reserve_metadata = {
+        "priceSource": estimate.source,
+        "unitPrice": estimate.price,
+        "quantity": clean_quantity,
+        **(metadata or {}),
+    }
+    if clean_multiplier > 1:
+        reserve_metadata["multiplier"] = clean_multiplier
+        reserve_metadata["effectiveUnitPrice"] = estimate.price * clean_multiplier
     return reserve_generation_credits(
         db,
         user=user,
         capability=capability,
-        price=estimate.price * max(1, int(quantity or 1)),
+        price=estimate.price * clean_quantity * clean_multiplier,
         model_group_id=getattr(model_group, "id", "") if model_group else "",
         sub_model_id=getattr(sub_model, "id", "") if sub_model else "",
         conversation_id=conversation_id,
         message_id=message_id,
         task_id=task_id,
-        metadata={"priceSource": estimate.source, "unitPrice": estimate.price, "quantity": max(1, int(quantity or 1))},
+        metadata=reserve_metadata,
     )
 
 
@@ -1490,11 +1514,23 @@ async def complete_image_long_task(
                 "upstream": safe_raw,
             })
         else:
+            failures: list[dict[str, Any]] = []
+            if images and image_request_is_4k(body):
+                images, failures = await validate_4k_images(images, str(body.get("size") or ""))
             message.content = "completed" if images else ""
             message.status = "success" if images else "error"
             message.error_message = "" if images else "图片请求没有返回有效图片。"
+            if failures and not images:
+                message.error_message = failures[0]["message"]
             message.can_retry = not images
             message.response_json = dumps_for_storage({"taskId": task_id, "status": "completed" if images else "failed", "upstream": safe_raw})
+            if failures:
+                message.response_json = dumps_for_storage({
+                    "taskId": task_id,
+                    "status": "completed" if images else "failed",
+                    "upstream": safe_raw,
+                    "failures": failures[:5],
+                })
             if images:
                 capture_credit_for_message(db, message, task_id=task_id, conversation_id=conversation_id)
             else:
@@ -1620,6 +1656,9 @@ async def complete_image_batch_task(
                 extracted, safe_raw = extract_images_from_response(raw)
                 remaining = max(0, requested_count - len(images))
                 call_images = extracted[:remaining]
+                validation_failures: list[dict[str, Any]] = []
+                if call_images and image_request_is_4k(body):
+                    call_images, validation_failures = await validate_4k_images(call_images, str(body.get("size") or ""))
                 for image in call_images:
                     images.append(image)
                     add_asset(
@@ -1635,7 +1674,15 @@ async def complete_image_batch_task(
                             "revisedPrompt": image.get("revisedPrompt"),
                         },
                     )
-                if not call_images:
+                for failure in validation_failures:
+                    failures.append(
+                        {
+                            "index": index + 1,
+                            **failure,
+                            "statusCode": response.status_code,
+                        }
+                    )
+                if not call_images and not validation_failures:
                     failures.append(
                         {
                             "index": index + 1,
@@ -1917,6 +1964,272 @@ def expand_local_image_references(body: dict[str, Any]) -> dict[str, Any]:
 
 
 IMAGE_COUNT_KEYS = ("quantity", "n", "count", "num_images", "numImages")
+FOUR_K_MIN_SIDE = 2160
+FOUR_K_MIN_LONG_SIDE = 3840
+FOUR_K_MAX_SIDE = 4096
+FOUR_K_OUTPUT_MISMATCH_MESSAGE = "4K 生成未返回 4K 图片，请检查上游 4K Image API 网关配置。"
+FOUR_K_PROBE_TIMEOUT_SECONDS = 6.0
+FOUR_K_PROBE_MAX_BYTES = 5 * 1024 * 1024
+
+
+def parse_image_size(value: Any) -> tuple[int, int] | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower().replace(" ", "").replace("*", "x")
+    if "x" not in normalized:
+        return None
+    left, right = normalized.split("x", 1)
+    try:
+        width = int(float(left))
+        height = int(float(right))
+    except (TypeError, ValueError):
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    return width, height
+
+
+def parse_image_ratio(value: Any) -> tuple[float, float] | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower().replace(" ", "").replace("/", ":")
+    if ":" not in normalized:
+        return None
+    left, right = normalized.split(":", 1)
+    try:
+        width = float(left)
+        height = float(right)
+    except (TypeError, ValueError):
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    return width, height
+
+
+def image_4k_size_for_ratio(value: Any) -> str:
+    normalized = str(value or "").strip().lower().replace(" ", "")
+    fixed = {
+        "16:9": "3840x2160",
+        "9:16": "2160x3840",
+        "1:1": "4096x4096",
+        "4:3": "4096x3072",
+        "3:4": "3072x4096",
+    }
+    if normalized in fixed:
+        return fixed[normalized]
+    # A value may arrive as an explicit "WxH" size (the frontend already maps the
+    # selected ratio to a 4K size before sending). Preserve an already-4K size as-is
+    # so we keep the requested aspect ratio instead of collapsing to a 4096 square,
+    # otherwise fall back to deriving the aspect ratio from the size.
+    explicit = parse_image_size(normalized)
+    if explicit and min(explicit) >= FOUR_K_MIN_SIDE and max(explicit) >= FOUR_K_MIN_LONG_SIDE:
+        return f"{explicit[0]}x{explicit[1]}"
+    ratio = parse_image_ratio(normalized) or explicit
+    if not ratio:
+        return "4096x4096"
+    width, height = ratio
+    if width >= height:
+        return f"4096x{max(1, round(FOUR_K_MAX_SIDE * height / width))}"
+    return f"{max(1, round(FOUR_K_MAX_SIDE * width / height))}x4096"
+
+
+def image_request_is_4k(body: dict[str, Any]) -> bool:
+    size = parse_image_size(body.get("size"))
+    if not size:
+        return False
+    width, height = size
+    return min(width, height) >= FOUR_K_MIN_SIDE and max(width, height) >= FOUR_K_MIN_LONG_SIDE
+
+
+def local_generated_image_path(src: str) -> Path | None:
+    prefix = "/api/assets/generated/"
+    if not isinstance(src, str) or not src.startswith(prefix):
+        return None
+    file_name = Path(src.removeprefix(prefix)).name
+    if not file_name:
+        return None
+    path = GENERATED_ASSET_DIR / file_name
+    return path if path.is_file() else None
+
+
+def jpeg_dimensions_from_bytes(data: bytes) -> tuple[int, int] | None:
+    if len(data) < 4 or data[:2] != b"\xff\xd8":
+        return None
+    index = 2
+    while index + 9 < len(data):
+        if data[index] != 0xFF:
+            index += 1
+            continue
+        marker = data[index + 1]
+        index += 2
+        if marker in {0xD8, 0xD9}:
+            continue
+        if index + 2 > len(data):
+            return None
+        segment_length = int.from_bytes(data[index:index + 2], "big")
+        if segment_length < 2:
+            return None
+        if marker in {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}:
+            if index + 7 > len(data):
+                return None
+            height = int.from_bytes(data[index + 3:index + 5], "big")
+            width = int.from_bytes(data[index + 5:index + 7], "big")
+            return width, height
+        index += segment_length
+    return None
+
+
+def webp_dimensions_from_bytes(data: bytes) -> tuple[int, int] | None:
+    if len(data) < 30 or data[:4] != b"RIFF" or data[8:12] != b"WEBP":
+        return None
+    fourcc = data[12:16]
+    try:
+        if fourcc == b"VP8 ":
+            if data[23:26] != b"\x9d\x01\x2a":
+                return None
+            width = int.from_bytes(data[26:28], "little") & 0x3FFF
+            height = int.from_bytes(data[28:30], "little") & 0x3FFF
+            return width, height
+        if fourcc == b"VP8L":
+            if data[20] != 0x2F:
+                return None
+            bits = int.from_bytes(data[21:25], "little")
+            width = (bits & 0x3FFF) + 1
+            height = ((bits >> 14) & 0x3FFF) + 1
+            return width, height
+        if fourcc == b"VP8X":
+            width = int.from_bytes(data[24:27], "little") + 1
+            height = int.from_bytes(data[27:30], "little") + 1
+            return width, height
+    except (IndexError, ValueError):
+        return None
+    return None
+
+
+def image_dimensions_from_bytes(data: bytes) -> tuple[int, int] | None:
+    if len(data) >= 24 and data[:8] == b"\x89PNG\r\n\x1a\n" and data[12:16] == b"IHDR":
+        return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+    if len(data) >= 4 and data[:2] == b"\xff\xd8":
+        return jpeg_dimensions_from_bytes(data)
+    if len(data) >= 30 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return webp_dimensions_from_bytes(data)
+    return None
+
+
+def local_image_dimensions(src: str) -> tuple[int, int] | None:
+    path = local_generated_image_path(src)
+    if not path:
+        return None
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    return image_dimensions_from_bytes(data)
+
+
+def remote_image_url_is_probeable(url: str) -> bool:
+    """Whether a returned image URL is safe to fetch for a 4K dimension check.
+
+    Image URLs come from the operator-configured upstream gateway, but we still
+    refuse obviously-internal targets (loopback / private / metadata ranges) given
+    as literal IPs so a misconfigured upstream cannot turn the probe into an SSRF
+    against the host. Hostnames are trusted (they must be publicly reachable for the
+    browser to render them); DNS-rebinding is out of scope for this trusted source.
+    """
+    if not isinstance(url, str):
+        return False
+    parsed = urlparse(url.strip())
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    host = (parsed.hostname or "").strip()
+    if not host:
+        return False
+    if host.lower() in {"localhost", "ip6-localhost", "ip6-loopback"}:
+        return False
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return True
+    return not (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    )
+
+
+async def remote_image_dimensions(url: str) -> tuple[int, int] | None:
+    if not remote_image_url_is_probeable(url):
+        return None
+    try:
+        async with httpx.AsyncClient(
+            timeout=FOUR_K_PROBE_TIMEOUT_SECONDS,
+            trust_env=False,
+            follow_redirects=True,
+        ) as client:
+            async with client.stream("GET", url) as response:
+                if response.status_code >= 400:
+                    return None
+                buffer = bytearray()
+                async for chunk in response.aiter_bytes():
+                    buffer.extend(chunk)
+                    if len(buffer) >= FOUR_K_PROBE_MAX_BYTES:
+                        break
+    except (httpx.HTTPError, OSError, ValueError):
+        return None
+    return image_dimensions_from_bytes(bytes(buffer))
+
+
+async def resolve_image_dimensions(src: str) -> tuple[int, int] | None:
+    local = local_image_dimensions(src)
+    if local:
+        return local
+    return await remote_image_dimensions(src)
+
+
+def image_dimensions_match_4k(dimensions: tuple[int, int] | None, target_size: str) -> bool:
+    if not dimensions:
+        return True
+    target = parse_image_size(target_size)
+    if not target:
+        width, height = dimensions
+        return min(width, height) >= FOUR_K_MIN_SIDE and max(width, height) >= FOUR_K_MIN_LONG_SIDE
+    width, height = dimensions
+    target_width, target_height = target
+    return width >= target_width and height >= target_height
+
+
+async def validate_4k_images(images: list[dict[str, Any]], target_size: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Enrich images with measured dimensions. Non-blocking: images are always passed
+    through regardless of whether actual output matches the requested 4K size.
+    A _4kMismatch flag is attached for observability when the output falls short."""
+    valid: list[dict[str, Any]] = []
+    for image in images:
+        src = str(image.get("src") or "")
+        dimensions = await resolve_image_dimensions(src)
+        enriched = dict(image)
+        if dimensions:
+            enriched["width"], enriched["height"] = dimensions
+            if not image_dimensions_match_4k(dimensions, target_size):
+                enriched["_4kMismatch"] = True
+        valid.append(enriched)
+    return valid, []
+
+
+def normalize_image_4k_request(body: dict[str, Any], *, adapter: str, enable_4k: bool) -> tuple[dict[str, Any], bool, str]:
+    if enable_4k and adapter != "image-openai":
+        raise HTTPException(status_code=400, detail={"message": "当前图片模型不支持 4K 生成。"})
+    normalized = copy.deepcopy(body)
+    if enable_4k:
+        target_size = image_4k_size_for_ratio(normalized.get("ratio") or normalized.get("aspect_ratio") or normalized.get("size") or "1:1")
+        normalized["size"] = target_size
+        return normalized, True, target_size
+    if adapter == "image-openai" and image_request_is_4k(normalized):
+        width, height = parse_image_size(normalized.get("size")) or (0, 0)
+        return normalized, True, f"{width}x{height}"
+    return normalized, False, ""
 
 
 def requested_image_count(body: dict[str, Any]) -> int:
@@ -4257,6 +4570,11 @@ async def proxy_image(
     request_body = copy.deepcopy(payload.get("requestBody") or {})
     body = {"model": model, **request_body}
     body = normalize_image_reference_fields_for_adapter(body, adapter)
+    body, is_4k_image, image_4k_target_size = normalize_image_4k_request(
+        body,
+        adapter=adapter,
+        enable_4k=payload.get("enable4k") is True,
+    )
     image_count = requested_image_count(body)
     reference_assets = collect_reference_image_assets(body)
     edit_references = collect_image_edit_references(body)
@@ -4307,6 +4625,10 @@ async def proxy_image(
             sub_model=sub_model,
             conversation_id=conversation.id if conversation else "",
             quantity=image_count,
+            multiplier=2 if is_4k_image else 1,
+            metadata={
+                **({"is4k": True, "targetSize": image_4k_target_size} if is_4k_image else {}),
+            },
         )
     if current_user and conversation and image_count > 1:
         task_id = new_long_task_id(IMAGE_LONG_TASK_PREFIX)
@@ -4342,7 +4664,10 @@ async def proxy_image(
             conversation_id=conversation.id,
             message_id=assistant_message.id,
             task_id=task_id,
-            metadata={"quantity": image_count},
+            metadata={
+                "quantity": image_count,
+                **({"is4k": True, "targetSize": image_4k_target_size, "multiplier": 2} if is_4k_image else {}),
+            },
         )
         record_generation_task_event(
             db,
@@ -4586,6 +4911,13 @@ async def proxy_image(
         ],
     )
     task_status = normalize_task_status(str(task_status_source or "processing"))
+    validation_failures: list[dict[str, Any]] = []
+    if images and image_request_is_4k(body):
+        images, validation_failures = await validate_4k_images(images, str(body.get("size") or ""))
+        if validation_failures and isinstance(safe_raw, dict):
+            safe_raw = {**safe_raw, "status": "failed", "failures": validation_failures[:5]}
+        if validation_failures:
+            task_status = "failed"
     is_async_image_task = bool(task_id and not images and task_status != "failed")
     if credit_reserve and not is_async_image_task:
         if images:
@@ -4603,8 +4935,9 @@ async def proxy_image(
                 role="assistant",
                 capability="image",
                 content=task_id if is_async_image_task else "",
-                status="processing" if is_async_image_task else "success",
-                can_retry=False,
+                status="processing" if is_async_image_task else "error" if validation_failures else "success",
+                error_message=validation_failures[0]["message"] if validation_failures else "",
+                can_retry=bool(validation_failures),
                 model_group_id=model_group.id if model_group else None,
                 sub_model_id=sub_model.id if sub_model else None,
                 request=body,
@@ -4653,8 +4986,9 @@ async def proxy_image(
                 sub_model_id=sub_model.id,
                 capability="image",
                 endpoint="/api/proxy/image",
-                status="success",
+                status="error" if validation_failures else "success",
                 duration_ms=duration_ms,
+                error_message=validation_failures[0]["message"] if validation_failures else "",
                 prompt_summary=str(body.get("prompt", ""))[:512],
                 usage=raw.get("usage"),
             )
@@ -4663,6 +4997,7 @@ async def proxy_image(
         "images": images,
         "raw": safe_raw,
         **({"taskId": task_id, "status": "processing"} if is_async_image_task else {}),
+        **({"status": "failed", "failures": validation_failures[:5]} if validation_failures else {}),
     }
     attach_credit_payload(result, db, current_user)
     if conversation and current_user:
@@ -4766,6 +5101,20 @@ async def proxy_image_query(
     result = pick_image_query_payload(raw, task_id)
     if current_user and model_group and sub_model and conversation_id:
         conversation = get_conversation(db, current_user, conversation_id)
+        existing_message = find_image_task_message(conversation, task_id)
+        original_request = load_message_request(existing_message)
+        query_validation_failures: list[dict[str, Any]] = []
+        if result.get("images") and image_request_is_4k(original_request):
+            valid_images, query_validation_failures = await validate_4k_images(
+                result["images"] if isinstance(result["images"], list) else [],
+                str(original_request.get("size") or ""),
+            )
+            result["images"] = valid_images
+            if query_validation_failures:
+                result["status"] = "failed"
+                result["failures"] = query_validation_failures[:5]
+                if isinstance(result.get("raw"), dict):
+                    result["raw"] = {**result["raw"], "status": "failed", "failures": query_validation_failures[:5]}
         task_status = str(result.get("status") or "")
         message_status = (
             "success"
@@ -4779,6 +5128,8 @@ async def proxy_image_query(
             if message_status == "error"
             else ""
         )
+        if query_validation_failures:
+            task_error_message = query_validation_failures[0]["message"]
         assistant_message = mark_image_task_message(
             db,
             conversation,
@@ -4790,8 +5141,8 @@ async def proxy_image_query(
             content=str(result.get("status") or task_id) if message_status == "success" else task_id,
             error_message=task_error_message,
             can_retry=message_status == "error",
-            request={"taskId": task_id},
-            response=raw,
+            request=original_request or {"taskId": task_id},
+            response=result.get("raw") if isinstance(result.get("raw"), dict) else raw,
         )
         if message_status == "success":
             capture_credit_for_message(db, assistant_message, task_id=task_id, conversation_id=conversation.id)

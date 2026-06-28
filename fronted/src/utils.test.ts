@@ -18,6 +18,7 @@ import {
   findPromptBeforeMessage,
   getModelIdentifierError,
   getMissingModelMessage,
+  imageGenerationCreditCost,
   imageGenerationSummary,
   canEditModel,
   deleteConfirmationSummary,
@@ -56,6 +57,8 @@ import {
   safeModelDescription,
   shouldResetConversationForModelSwitch,
   shouldContinuePollingTask,
+  supportsImage4k,
+  image4kSizeForRatio,
   conversationAssetsFromImageQueryResult,
   mergeImageQueryAssets,
   conversationAssetFromVideoQueryResult,
@@ -96,6 +99,38 @@ describe("reference upload helpers", () => {
     ];
 
     expect(filterReferenceImageFiles(files).map((file) => file.name)).toEqual(["scene.png", "car.JPG", "texture.webp"]);
+  });
+});
+
+describe("image 4K helpers", () => {
+  const imageOpenAIModel: ModelDefinition = {
+    ...textModel,
+    id: "image-openai",
+    capability: "image",
+    adapter: "image-openai",
+    model: "gpt-image-2",
+  };
+
+  it("allows 4K only for OpenAI-compatible image models", () => {
+    expect(supportsImage4k(imageOpenAIModel)).toBe(true);
+    expect(supportsImage4k({ ...imageOpenAIModel, adapter: "video-unified-generic", capability: "video" })).toBe(false);
+    expect(supportsImage4k({ ...imageOpenAIModel, adapter: "text-chat", capability: "text" })).toBe(false);
+    expect(supportsImage4k(null)).toBe(false);
+  });
+
+  it("maps common aspect ratios to explicit 4K sizes", () => {
+    expect(image4kSizeForRatio("16:9")).toBe("3840x2160");
+    expect(image4kSizeForRatio("9:16")).toBe("2160x3840");
+    expect(image4kSizeForRatio("1:1")).toBe("4096x4096");
+    expect(image4kSizeForRatio("4:3")).toBe("4096x3072");
+    expect(image4kSizeForRatio("3:4")).toBe("3072x4096");
+    expect(image4kSizeForRatio("2:1")).toBe("4096x2048");
+  });
+
+  it("doubles image credit cost after applying quantity for 4K", () => {
+    expect(imageGenerationCreditCost(3, "2", true)).toBe(12);
+    expect(imageGenerationCreditCost(3, "2", false)).toBe(6);
+    expect(imageGenerationCreditCost(3, "", true)).toBe(6);
   });
 });
 
@@ -1046,6 +1081,69 @@ describe("model selection helpers", () => {
     expect(body.size).not.toBe("2k");
   });
 
+  it("writes explicit 4K size while preserving image request parameters", () => {
+    const imageModel: ModelDefinition = {
+      ...textModel,
+      id: "gpt-image-4k",
+      capability: "image",
+      adapter: "image-openai",
+      model: "gpt-image-2",
+    };
+
+    const body = buildImageGenerationRequestBody(
+      imageModel,
+      {
+        references: ["/api/assets/uploads/person.jpg"],
+        count: "2",
+        size: "1024x1024",
+        ratio: "16:9",
+        resolution: "2k",
+        quality: "hd",
+        enable4k: true,
+      },
+      "restore the same person",
+      { background: "transparent" },
+    );
+
+    expect(body).toMatchObject({
+      prompt: "restore the same person",
+      response_format: "url",
+      image: ["/api/assets/uploads/person.jpg"],
+      n: 2,
+      size: "3840x2160",
+      quality: "hd",
+      background: "transparent",
+    });
+  });
+
+  it("keeps 4K size authoritative over advanced JSON size overrides", () => {
+    const imageModel: ModelDefinition = {
+      ...textModel,
+      id: "gpt-image-4k-extra",
+      capability: "image",
+      adapter: "image-openai",
+      model: "gpt-image-2",
+    };
+
+    const body = buildImageGenerationRequestBody(
+      imageModel,
+      {
+        references: [],
+        count: "1",
+        size: "1024x1024",
+        ratio: "9:16",
+        resolution: "2k",
+        quality: "auto",
+        enable4k: true,
+      },
+      "vertical poster",
+      { size: "1024x1024", seed: 42 },
+    );
+
+    expect(body.size).toBe("2160x3840");
+    expect(body.seed).toBe(42);
+  });
+
   it("sends image-openai reference uploads on the edit image field even when catalog calls it images", () => {
     const imageModel: ModelDefinition = {
       ...textModel,
@@ -1577,6 +1675,7 @@ describe("conversation helpers", () => {
 
   it("summarizes generation controls without scheduler priority labels", () => {
     const imageSummary = imageGenerationSummary({ ratio: "16:9", resolution: "2k", count: "1" });
+    const imageSummaryWith4k = imageGenerationSummary({ ratio: "16:9", resolution: "2k", count: "1", enable4k: true });
     const videoSummary = videoGenerationSummary({
       mode: "reference",
       aspectRatio: "9:16",
@@ -1584,6 +1683,8 @@ describe("conversation helpers", () => {
       duration: "5",
       count: "1",
     });
+
+    expect(imageSummaryWith4k).toContain("4K");
 
     expect(imageSummary).toBe("16:9  2k  1张");
     expect(videoSummary).toBe("全能参考  9:16  720p  5秒  1条");

@@ -680,7 +680,7 @@ def test_manual_4k_size_is_charged_as_4k(monkeypatch) -> None:
         assert json.loads(reserve.metadata_json)["is4k"] is True
 
 
-def test_4k_local_output_below_target_passes_through(monkeypatch) -> None:
+def test_4k_local_output_below_target_fails_and_refunds(monkeypatch) -> None:
     from app.database import SessionLocal
     from app.credit_service import admin_adjust_credits, set_capability_price
     from app.db_models import CreditTransaction, User
@@ -723,12 +723,11 @@ def test_4k_local_output_below_target_passes_through(monkeypatch) -> None:
 
     assert response.status_code == 200
     payload = response.json()
-    # Non-blocking: image is shown even when output is below 4K; _4kMismatch flag present
-    assert payload.get("status") != "failed"
-    assert len(payload["images"]) == 1
-    assert payload["images"][0].get("_4kMismatch") is True
-    assert not payload["assistantMessage"]["errorMessage"]
-    assert payload["credits"]["account"]["balance"] == 14  # 20 - 6 captured
+    # Strict: a below-4K local output fails, is not shown, and credits are refunded.
+    assert payload["status"] == "failed"
+    assert payload["images"] == []
+    assert "4K 生成未返回 4K 图片" in payload["assistantMessage"]["errorMessage"]
+    assert payload["credits"]["account"]["balance"] == 20  # refunded
     with SessionLocal() as db:
         reserve = (
             db.query(CreditTransaction)
@@ -738,13 +737,13 @@ def test_4k_local_output_below_target_passes_through(monkeypatch) -> None:
         )
         assert reserve is not None
         assert reserve.amount == -6
-        assert reserve.status == "captured"
+        assert reserve.status == "refunded"
 
 
-def test_4k_remote_url_below_target_passes_through(monkeypatch) -> None:
-    """Non-blocking: upstream returns a remote URL pointing at a non-4K image.
-    The probe measures it, attaches _4kMismatch, but the image is still shown
-    and credits are captured rather than refunded."""
+def test_4k_remote_url_below_target_fails_and_refunds(monkeypatch) -> None:
+    """Strict: the upstream returns a remote URL pointing at a non-4K image.
+    The probe measures it via HTTP, the generation fails, the image is not shown,
+    and credits are refunded — a non-4K output is never passed off as success."""
     from app.database import SessionLocal
     from app.credit_service import admin_adjust_credits, set_capability_price
     from app.db_models import CreditTransaction, User
@@ -789,11 +788,10 @@ def test_4k_remote_url_below_target_passes_through(monkeypatch) -> None:
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload.get("status") != "failed"
-    assert len(payload["images"]) == 1
-    assert payload["images"][0].get("_4kMismatch") is True
-    assert not payload["assistantMessage"]["errorMessage"]
-    assert payload["credits"]["account"]["balance"] == 14  # 20 - 6 captured
+    assert payload["status"] == "failed"
+    assert payload["images"] == []
+    assert "4K 生成未返回 4K 图片" in payload["assistantMessage"]["errorMessage"]
+    assert payload["credits"]["account"]["balance"] == 20  # refunded
     with SessionLocal() as db:
         reserve = (
             db.query(CreditTransaction)
@@ -803,7 +801,7 @@ def test_4k_remote_url_below_target_passes_through(monkeypatch) -> None:
         )
         assert reserve is not None
         assert reserve.amount == -6
-        assert reserve.status == "captured"
+        assert reserve.status == "refunded"
 
 
 def test_4k_remote_url_unreachable_passes_open(monkeypatch) -> None:

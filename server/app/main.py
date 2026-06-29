@@ -2202,20 +2202,32 @@ def image_dimensions_match_4k(dimensions: tuple[int, int] | None, target_size: s
 
 
 async def validate_4k_images(images: list[dict[str, Any]], target_size: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Enrich images with measured dimensions. Non-blocking: images are always passed
-    through regardless of whether actual output matches the requested 4K size.
-    A _4kMismatch flag is attached for observability when the output falls short."""
+    """Measure each image and split into (valid, failures). An image whose actual
+    resolution is below the requested 4K target is rejected as a failure so the
+    caller can fail the generation and refund credits — we never pass a non-4K
+    output off as a successful 4K result. Images we cannot measure (probe failed)
+    are passed through to avoid nuking a paid generation on a transient infra blip."""
     valid: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
     for image in images:
         src = str(image.get("src") or "")
         dimensions = await resolve_image_dimensions(src)
-        enriched = dict(image)
-        if dimensions:
-            enriched["width"], enriched["height"] = dimensions
-            if not image_dimensions_match_4k(dimensions, target_size):
-                enriched["_4kMismatch"] = True
-        valid.append(enriched)
-    return valid, []
+        if image_dimensions_match_4k(dimensions, target_size):
+            enriched = dict(image)
+            if dimensions:
+                enriched["width"], enriched["height"] = dimensions
+            valid.append(enriched)
+            continue
+        failures.append(
+            {
+                "src": src,
+                "width": dimensions[0],
+                "height": dimensions[1],
+                "targetSize": target_size,
+                "message": FOUR_K_OUTPUT_MISMATCH_MESSAGE,
+            }
+        )
+    return valid, failures
 
 
 def normalize_image_4k_request(body: dict[str, Any], *, adapter: str, enable_4k: bool) -> tuple[dict[str, Any], bool, str]:

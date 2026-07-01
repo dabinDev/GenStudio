@@ -25,6 +25,7 @@ export const ADMIN_PERMISSIONS = {
   settingsView: 'settings:view',
   settingsUpdate: 'settings:update',
   maintenanceUserMerge: 'maintenance:user_merge',
+  maintenanceAssetCleanup: 'maintenance:asset_cleanup',
 } as const;
 
 export function makePermissionChecker(permissions: readonly string[]): AdminPermissionChecker {

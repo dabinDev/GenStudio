@@ -209,6 +209,35 @@ export interface PromptTemplate {
   example?: string;
 }
 
+export interface PromptSceneRecommendation {
+  id: string;
+  externalId?: string;
+  categoryId?: string;
+  category?: string;
+  subcategory?: string;
+  title: string;
+  label?: string;
+  reason?: string;
+  promptText: string;
+  promptSummary?: string;
+  tags?: string[];
+  imageUrl?: string;
+  weight?: number;
+  enabled?: boolean;
+  useCount?: number;
+  clickCount?: number;
+  impressionCount?: number;
+}
+
+export type PromptLibraryEventType = "impression" | "click" | "use";
+
+export interface PromptSceneRecommendationPayload {
+  recommendations: PromptSceneRecommendation[];
+  reason: "ok" | "gpt55_not_configured" | "prompt_library_empty" | "no_match" | string;
+  modelGroupId?: string;
+  subModelId?: string;
+}
+
 export interface UploadedAsset {
   id: string;
   fileName: string;

@@ -187,6 +187,89 @@ def _create_prompt_template_versions_if_missing(connection, inspector) -> None:
     _create_index_if_missing(connection, "ix_prompt_template_versions_created_at", "prompt_template_versions", "created_at")
 
 
+def _create_prompt_scene_templates_if_missing(connection, inspector) -> None:
+    if not inspector.has_table("prompt_scene_templates"):
+        connection.execute(
+            text(
+                _column_ddl(
+                    connection,
+                    """
+                    CREATE TABLE prompt_scene_templates (
+                        id VARCHAR(64) NOT NULL,
+                        external_id VARCHAR(128) NOT NULL,
+                        category_id VARCHAR(128) NOT NULL DEFAULT '',
+                        document_title VARCHAR(255) NOT NULL DEFAULT '',
+                        document_url TEXT NOT NULL DEFAULT '',
+                        section VARCHAR(255) NOT NULL DEFAULT '',
+                        category VARCHAR(255) NOT NULL DEFAULT '',
+                        subcategory VARCHAR(255) NOT NULL DEFAULT '',
+                        title VARCHAR(255) NOT NULL DEFAULT '',
+                        prompt_text TEXT NOT NULL DEFAULT '',
+                        prompt_summary TEXT NOT NULL DEFAULT '',
+                        tags_json TEXT NOT NULL DEFAULT '[]',
+                        source VARCHAR(128) NOT NULL DEFAULT '',
+                        original_no VARCHAR(64) NOT NULL DEFAULT '',
+                        image_url TEXT NOT NULL DEFAULT '',
+                        model VARCHAR(128) NOT NULL DEFAULT '',
+                        likes INTEGER NOT NULL DEFAULT 0,
+                        views INTEGER NOT NULL DEFAULT 0,
+                        weight INTEGER NOT NULL DEFAULT 0,
+                        enabled BOOLEAN NOT NULL DEFAULT 1,
+                        raw_json TEXT NOT NULL DEFAULT '{}',
+                        use_count INTEGER NOT NULL DEFAULT 0,
+                        click_count INTEGER NOT NULL DEFAULT 0,
+                        impression_count INTEGER NOT NULL DEFAULT 0,
+                        imported_at DATETIME NOT NULL,
+                        created_at DATETIME NOT NULL,
+                        updated_at DATETIME NOT NULL,
+                        PRIMARY KEY (id),
+                        UNIQUE (external_id)
+                    )
+                    """,
+                )
+            )
+        )
+        for column_name in (
+            "external_id",
+            "category_id",
+            "section",
+            "category",
+            "subcategory",
+            "title",
+            "source",
+            "original_no",
+            "model",
+            "weight",
+            "enabled",
+        ):
+            _create_index_if_missing(connection, f"ix_prompt_scene_templates_{column_name}", "prompt_scene_templates", column_name)
+
+    if not inspector.has_table("prompt_scene_template_events"):
+        connection.execute(
+            text(
+                _column_ddl(
+                    connection,
+                    """
+                    CREATE TABLE prompt_scene_template_events (
+                        id VARCHAR(64) NOT NULL,
+                        template_id VARCHAR(64) NOT NULL,
+                        user_id VARCHAR(64),
+                        event_type VARCHAR(32) NOT NULL DEFAULT 'impression',
+                        image_url TEXT NOT NULL DEFAULT '',
+                        metadata_json TEXT NOT NULL DEFAULT '{}',
+                        created_at DATETIME NOT NULL,
+                        PRIMARY KEY (id),
+                        FOREIGN KEY(template_id) REFERENCES prompt_scene_templates (id) ON DELETE CASCADE,
+                        FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE SET NULL
+                    )
+                    """,
+                )
+            )
+        )
+        for column_name in ("template_id", "user_id", "event_type", "created_at"):
+            _create_index_if_missing(connection, f"ix_prompt_scene_template_events_{column_name}", "prompt_scene_template_events", column_name)
+
+
 def init_db() -> None:
     from app import db_models  # noqa: F401
 
@@ -197,6 +280,7 @@ def init_db() -> None:
         _create_model_health_checks_if_missing(connection, inspector)
         _create_task_events_if_missing(connection, inspector)
         _create_prompt_template_versions_if_missing(connection, inspector)
+        _create_prompt_scene_templates_if_missing(connection, inspector)
         if inspector.has_table("models"):
             columns = {column["name"] for column in inspector.get_columns("models")}
             if "is_public" not in columns:

@@ -22,6 +22,7 @@ describe('admin permission helpers', () => {
     expect(ADMIN_PERMISSIONS.settingsView).toBe('settings:view');
     expect(ADMIN_PERMISSIONS.settingsUpdate).toBe('settings:update');
     expect(ADMIN_PERMISSIONS.maintenanceUserMerge).toBe('maintenance:user_merge');
+    expect(ADMIN_PERMISSIONS.maintenanceAssetCleanup).toBe('maintenance:asset_cleanup');
   });
 
   it('checks model actions against permission points and editable state', () => {

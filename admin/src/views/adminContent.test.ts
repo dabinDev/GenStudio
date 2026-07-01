@@ -2,11 +2,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   fetchAdminRecords,
+  fetchAssetCleanupSettings,
   fetchAuditLogs,
   fetchCreditSettings,
+  previewAssetCleanup,
+  runAssetCleanup,
   fetchPromptTemplates,
   fetchPromptTemplateModelStatus,
   fetchPromptTemplateVersions,
+  fetchPromptSceneTemplates,
+  importPromptSceneTemplates,
+  updatePromptSceneTemplate,
+  batchUpdatePromptSceneTemplates,
+  saveAssetCleanupSettings,
   runUserMergeMaintenance,
   saveCreditSettings,
   savePromptTemplate,
@@ -45,6 +53,17 @@ describe('admin content api client', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     setAdminCsrfToken('');
+  });
+
+  it('parses the exported Yuque prompt library from JavaScript module text', async () => {
+    const { parseYuquePromptLibrarySource } = await import('./promptSceneLibraryState');
+
+    expect(parseYuquePromptLibrarySource('export const yuquePromptFullIndex = {"prompts":[{"title":"电影感","promptText":"生成头像"}]}; export default yuquePromptFullIndex;')).toEqual({
+      prompts: [{ title: '电影感', promptText: '生成头像' }],
+    });
+    expect(parseYuquePromptLibrarySource('{"prompts":[{"title":"产品海报","promptText":"生成海报"}]}')).toEqual({
+      prompts: [{ title: '产品海报', promptText: '生成海报' }],
+    });
   });
 
   it('loads and saves prompt templates', async () => {
@@ -123,6 +142,58 @@ describe('admin content api client', () => {
         body: JSON.stringify({ capability: 'image', content: '优化 {{prompt}}', prompts: ['生成车'] }),
       }),
     );
+  });
+
+  it('operates the image prompt scene library through the admin API', async () => {
+    const index = { prompts: [{ title: '电影感头像', promptText: '生成电影感头像' }] };
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => okJson({
+      templates: [{ id: 'pst_1', title: '电影感头像', promptText: '生成电影感头像', enabled: true }],
+      total: 1,
+      summary: { imported: 1, updated: 0, disabled: 0, total: 1 },
+      template: { id: 'pst_1', title: '电影感头像 2', promptText: '生成电影感头像', enabled: true },
+      updated: 1,
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    setAdminCsrfToken('csrf-token');
+
+    await fetchPromptSceneTemplates({ search: '头像', enabled: 'true', limit: 20, offset: 40 });
+    await importPromptSceneTemplates(index, true);
+    await updatePromptSceneTemplate('pst_1', { title: '电影感头像 2', weight: 900, enabled: true });
+    await batchUpdatePromptSceneTemplates(['pst_1'], { enabled: false });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      '/api/admin/prompt-library?search=%E5%A4%B4%E5%83%8F&enabled=true&limit=20&offset=40',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      '/api/admin/prompt-library/import',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ index, replace: true }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      '/api/admin/prompt-library/pst_1',
+      expect.objectContaining({
+        method: 'PUT',
+        body: JSON.stringify({ title: '电影感头像 2', weight: 900, enabled: true }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      4,
+      '/api/admin/prompt-library/batch',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ templateIds: ['pst_1'], enabled: false }),
+      }),
+    );
+    for (const call of fetchMock.mock.calls.slice(1)) {
+      const headers = (call[1] as RequestInit).headers as Headers;
+      expect(headers.get('X-CSRF-Token')).toBe('csrf-token');
+    }
   });
 
   it('maps record capability to backend collection paths and query filters', async () => {
@@ -244,6 +315,72 @@ describe('admin content api client', () => {
     );
     const headers = (fetchMock.mock.calls[0][1] as RequestInit).headers as Headers;
     expect(headers.get('X-CSRF-Token')).toBe('csrf-token');
+  });
+
+  it('loads, saves, previews, and runs asset cache cleanup through the admin API', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => okJson({
+      settings: {
+        enabled: true,
+        retentionDays: 7,
+        defaultRetentionDays: 7,
+        minRetentionDays: 1,
+        maxRetentionDays: 365,
+        lastRun: {},
+      },
+      summary: {
+        retentionDays: 7,
+        totalFiles: 4,
+        expiredFiles: 2,
+        totalBytes: 4096,
+        expiredBytes: 2048,
+        deletedFiles: 2,
+        deletedBytes: 2048,
+        failedFiles: 0,
+        targets: [],
+      },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    setAdminCsrfToken('csrf-token');
+
+    const settings = await fetchAssetCleanupSettings();
+    const saved = await saveAssetCleanupSettings({ enabled: true, retentionDays: 7 });
+    const preview = await previewAssetCleanup();
+    const run = await runAssetCleanup({ retentionDays: 7 });
+
+    expect(settings.defaultRetentionDays).toBe(7);
+    expect(saved.retentionDays).toBe(7);
+    expect(preview.summary.expiredFiles).toBe(2);
+    expect(run.summary.deletedFiles).toBe(2);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      '/api/admin/asset-cleanup/settings',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      '/api/admin/asset-cleanup/settings',
+      expect.objectContaining({
+        method: 'PUT',
+        body: JSON.stringify({ enabled: true, retentionDays: 7 }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      '/api/admin/asset-cleanup/preview',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      4,
+      '/api/admin/asset-cleanup/run',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ retentionDays: 7 }),
+      }),
+    );
+    for (const call of [fetchMock.mock.calls[1], fetchMock.mock.calls[3]]) {
+      const headers = (call[1] as RequestInit).headers as Headers;
+      expect(headers.get('X-CSRF-Token')).toBe('csrf-token');
+    }
   });
 });
 

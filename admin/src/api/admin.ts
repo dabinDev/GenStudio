@@ -1,6 +1,9 @@
 import { AdminApiError, adminRequest, setAdminCsrfToken } from './http';
 import type {
   AdminBatchModelHealthCheckResponse,
+  AssetCleanupPayload,
+  AssetCleanupSettings,
+  AssetCleanupSettingsUpdatePayload,
   AdminDashboardMetrics,
   AdminModel,
   AdminModelCreditPricingUpdate,
@@ -18,6 +21,11 @@ import type {
   AdminCreditAdjustmentPayload,
   PromptTemplate,
   PromptTemplateModelStatus,
+  PromptSceneTemplate,
+  PromptSceneTemplateImportSummary,
+  PromptSceneTemplateListPayload,
+  PromptSceneTemplateQuery,
+  PromptSceneTemplateUpdatePayload,
   PromptTemplateTestPayload,
   PromptTemplateTestResult,
   PromptTemplateUpdatePayload,
@@ -302,6 +310,48 @@ export async function testPromptTemplate(body: PromptTemplateTestPayload): Promi
   return payload.results || payload.prompt || '';
 }
 
+export async function fetchPromptSceneTemplates(
+  query: PromptSceneTemplateQuery = {},
+): Promise<PromptSceneTemplateListPayload> {
+  return adminRequest<PromptSceneTemplateListPayload>(`/api/admin/prompt-library${paramsFromQuery(query)}`);
+}
+
+export async function importPromptSceneTemplates(
+  index: Record<string, unknown>,
+  replace = false,
+): Promise<PromptSceneTemplateImportSummary> {
+  const payload = await adminRequest<{ summary: PromptSceneTemplateImportSummary }>('/api/admin/prompt-library/import', {
+    method: 'POST',
+    body: JSON.stringify({ index, replace }),
+  });
+  return payload.summary;
+}
+
+export async function updatePromptSceneTemplate(
+  templateId: string,
+  body: PromptSceneTemplateUpdatePayload,
+): Promise<PromptSceneTemplate> {
+  const payload = await adminRequest<{ template: PromptSceneTemplate }>(
+    `/api/admin/prompt-library/${encodeURIComponent(templateId)}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    },
+  );
+  return payload.template;
+}
+
+export async function batchUpdatePromptSceneTemplates(
+  templateIds: string[],
+  body: Pick<PromptSceneTemplateUpdatePayload, 'enabled'>,
+): Promise<number> {
+  const payload = await adminRequest<{ updated: number }>('/api/admin/prompt-library/batch', {
+    method: 'POST',
+    body: JSON.stringify({ templateIds, ...body }),
+  });
+  return payload.updated;
+}
+
 function recordCollectionPath(capability: Capability): string {
   if (capability === 'image') {
     return 'images';
@@ -407,6 +457,34 @@ export async function runUserMergeMaintenance(body: UserMergeMaintenancePayload)
     body: JSON.stringify(body),
   });
   return payload.summary;
+}
+
+export async function fetchAssetCleanupSettings(): Promise<AssetCleanupSettings> {
+  const payload = await adminRequest<{ settings: AssetCleanupSettings }>('/api/admin/asset-cleanup/settings');
+  return payload.settings;
+}
+
+export async function saveAssetCleanupSettings(
+  body: AssetCleanupSettingsUpdatePayload,
+): Promise<AssetCleanupSettings> {
+  const payload = await adminRequest<{ settings: AssetCleanupSettings }>('/api/admin/asset-cleanup/settings', {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+  return payload.settings;
+}
+
+export async function previewAssetCleanup(): Promise<AssetCleanupPayload> {
+  return adminRequest<AssetCleanupPayload>('/api/admin/asset-cleanup/preview');
+}
+
+export async function runAssetCleanup(
+  body: AssetCleanupSettingsUpdatePayload = {},
+): Promise<AssetCleanupPayload> {
+  return adminRequest<AssetCleanupPayload>('/api/admin/asset-cleanup/run', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
 }
 
 export async function logoutAdmin(): Promise<void> {

@@ -82,7 +82,10 @@ export const adminRoutes = [
         meta: {
           title: '系统设置',
           permission: ADMIN_PERMISSIONS.creditView,
-          alternatePermissions: [ADMIN_PERMISSIONS.maintenanceUserMerge],
+          alternatePermissions: [
+            ADMIN_PERMISSIONS.maintenanceUserMerge,
+            ADMIN_PERMISSIONS.maintenanceAssetCleanup,
+          ],
         },
       },
       {

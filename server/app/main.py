@@ -76,6 +76,14 @@ from app.admin_service import (
     write_admin_log,
 )
 from app.admin_permissions import can, permissions_for_role, resolve_admin_role
+from app.asset_cleanup import (
+    asset_cleanup_settings,
+    build_cleanup_targets,
+    maybe_run_scheduled_asset_cleanup,
+    preview_asset_cleanup,
+    run_asset_cleanup,
+    update_asset_cleanup_settings,
+)
 from app.config import Settings, get_settings
 from app.conversation_service import (
     add_asset,
@@ -123,6 +131,7 @@ from app.model_service import (
     create_model_group,
     delete_model_group,
     elapsed_ms,
+    find_gpt55_prompt_optimizer_sub_model,
     get_model_group,
     find_prompt_optimizer_sub_model,
     get_sub_model_for_user,
@@ -136,6 +145,18 @@ from app.model_service import (
     set_primary_sub_model,
     sync_models_from_raw,
     update_model_group,
+)
+from app.prompt_library_service import (
+    batch_update_scene_templates,
+    build_recommendation_messages,
+    import_prompt_scene_templates,
+    list_scene_templates,
+    parse_recommendation_payload,
+    recommendation_candidates,
+    record_scene_template_event,
+    record_scene_template_event_by_id,
+    serialize_scene_template,
+    update_scene_template,
 )
 from app.proxy_utils import (
     auth_headers,
@@ -191,13 +212,44 @@ from app.storage import create_presigned_put_url
 from app.user_maintenance import merge_duplicate_users_by_identity
 
 
+ASSET_CLEANUP_LOOP_INTERVAL_SECONDS = 3600
+
+
+def run_scheduled_asset_cleanup_once() -> dict[str, Any] | None:
+    db = SessionLocal()
+    try:
+        return maybe_run_scheduled_asset_cleanup(db, targets=asset_cleanup_targets())
+    finally:
+        db.close()
+
+
+async def asset_cleanup_loop() -> None:
+    while True:
+        try:
+            await asyncio.to_thread(run_scheduled_asset_cleanup_once)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Automatic cleanup should never block application startup or request handling.
+            pass
+        await asyncio.sleep(ASSET_CLEANUP_LOOP_INTERVAL_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     settings = get_settings()
     settings.validate_startup()
     if settings.auto_create_tables:
         init_db()
-    yield
+    cleanup_task = asyncio.create_task(asset_cleanup_loop())
+    try:
+        yield
+    finally:
+        cleanup_task.cancel()
+        try:
+            await cleanup_task
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(title="创意工坊 Server", lifespan=lifespan)
@@ -489,6 +541,19 @@ def frontend_redirect_url(settings: Settings, path: str = "#/settings") -> str:
 def require_admin_permission(admin: User, permission: str, settings: Settings) -> None:
     if not can(admin, permission, settings):
         raise HTTPException(status_code=403, detail={"message": "当前账号没有执行该后台操作的权限。"})
+
+
+def require_any_admin_permission(admin: User, permissions: list[str], settings: Settings) -> None:
+    if not any(can(admin, permission, settings) for permission in permissions):
+        raise HTTPException(status_code=403, detail={"message": "当前账号没有执行该后台操作的权限。"})
+
+
+def parse_prompt_recommendation_limit(value: Any) -> int:
+    try:
+        requested = int(value or 8)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail={"message": "推荐数量必须是整数。"})
+    return max(1, min(requested, 12))
 
 
 def auth_error_redirect_url(settings: Settings, message: str) -> str:
@@ -2038,7 +2103,7 @@ def image_request_is_4k(body: dict[str, Any]) -> bool:
     if not size:
         return False
     width, height = size
-    return min(width, height) >= FOUR_K_MIN_SIDE and max(width, height) >= FOUR_K_MIN_LONG_SIDE
+    return max(width, height) >= FOUR_K_MIN_LONG_SIDE and (width * height) >= (FOUR_K_MIN_LONG_SIDE * FOUR_K_MIN_SIDE)
 
 
 def local_generated_image_path(src: str) -> Path | None:
@@ -3208,6 +3273,109 @@ async def admin_user_merge_maintenance(
     return {"summary": summary}
 
 
+def asset_cleanup_targets() -> list[Any]:
+    return build_cleanup_targets(GENERATED_ASSET_DIR, LOCAL_UPLOAD_DIR)
+
+
+def redact_asset_cleanup_paths(summary: dict[str, Any]) -> dict[str, Any]:
+    targets = summary.get("targets")
+    if not isinstance(targets, list):
+        return summary
+    return {
+        **summary,
+        "targets": [
+            {**target, "path": ""} if isinstance(target, dict) else target
+            for target in targets
+        ],
+    }
+
+
+@app.get("/api/admin/asset-cleanup/settings")
+async def admin_asset_cleanup_settings(
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    require_any_admin_permission(admin, ["settings:view", "maintenance:asset_cleanup"], settings)
+    return {"settings": asset_cleanup_settings(db)}
+
+
+@app.put("/api/admin/asset-cleanup/settings")
+async def admin_update_asset_cleanup_settings(
+    payload: dict[str, Any],
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    require_admin_permission(admin, "maintenance:asset_cleanup", settings)
+    updated = update_asset_cleanup_settings(
+        db,
+        admin=admin,
+        enabled=payload.get("enabled") if "enabled" in payload else None,
+        retention_days=payload.get("retentionDays") if "retentionDays" in payload else None,
+    )
+    write_admin_log(
+        db,
+        admin,
+        action="update_asset_cleanup_settings",
+        target_type="maintenance",
+        summary=updated,
+    )
+    return {"settings": updated}
+
+
+@app.get("/api/admin/asset-cleanup/preview")
+async def admin_asset_cleanup_preview(
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    require_any_admin_permission(admin, ["settings:view", "maintenance:asset_cleanup"], settings)
+    cleanup_settings = asset_cleanup_settings(db)
+    summary = preview_asset_cleanup(
+        targets=asset_cleanup_targets(),
+        retention_days=int(cleanup_settings["retentionDays"]),
+    )
+    if not can(admin, "maintenance:asset_cleanup", settings):
+        summary = redact_asset_cleanup_paths(summary)
+    return {
+        "settings": cleanup_settings,
+        "summary": summary,
+    }
+
+
+@app.post("/api/admin/asset-cleanup/run")
+async def admin_run_asset_cleanup(
+    payload: dict[str, Any] | None = None,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    require_admin_permission(admin, "maintenance:asset_cleanup", settings)
+    cleanup_settings = asset_cleanup_settings(db)
+    retention_days = (
+        payload.get("retentionDays")
+        if isinstance(payload, dict) and "retentionDays" in payload
+        else cleanup_settings["retentionDays"]
+    )
+    summary = run_asset_cleanup(
+        db,
+        targets=asset_cleanup_targets(),
+        retention_days=retention_days,
+        admin=admin,
+    )
+    write_admin_log(
+        db,
+        admin,
+        action="asset_cache_cleanup",
+        target_type="maintenance",
+        summary=summary,
+    )
+    return {"settings": asset_cleanup_settings(db), "summary": summary}
+
+
 @app.put("/api/admin/models/{model_id}")
 async def admin_update_model(
     model_id: str,
@@ -3412,6 +3580,82 @@ async def admin_prompt_templates(
 ) -> dict[str, Any]:
     require_admin_permission(admin, "settings:view", settings)
     return {"templates": [serialize_prompt_template(item) for item in list_prompt_templates(db, capability=capability)]}
+
+
+@app.get("/api/admin/prompt-library")
+async def admin_prompt_library(
+    capability: str = "image",
+    search: str = "",
+    categoryId: str = "",
+    enabled: str = "",
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    require_admin_permission(admin, "settings:view", settings)
+    if capability not in {"", "image", "all"}:
+        return {"templates": [], "total": 0}
+    rows, total = list_scene_templates(
+        db,
+        search=search,
+        category_id=categoryId,
+        enabled=enabled,
+        limit=limit,
+        offset=offset,
+    )
+    return {"templates": [serialize_scene_template(item) for item in rows], "total": total}
+
+
+@app.post("/api/admin/prompt-library/import")
+async def admin_import_prompt_library(
+    payload: dict[str, Any],
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    require_admin_permission(admin, "settings:update", settings)
+    index = payload.get("index")
+    if not isinstance(index, dict):
+        raise HTTPException(status_code=400, detail={"message": "缺少 index 对象。"})
+    summary = import_prompt_scene_templates(db, admin, index, replace=bool(payload.get("replace")))
+    return {"summary": summary}
+
+
+@app.put("/api/admin/prompt-library/{template_id}")
+async def admin_update_prompt_library_template(
+    template_id: str,
+    payload: dict[str, Any],
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    require_admin_permission(admin, "settings:update", settings)
+    return {"template": serialize_scene_template(update_scene_template(db, admin, template_id, payload))}
+
+
+@app.post("/api/admin/prompt-library/batch")
+async def admin_batch_prompt_library_templates(
+    payload: dict[str, Any],
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    require_admin_permission(admin, "settings:update", settings)
+    template_ids = payload.get("templateIds")
+    if not isinstance(template_ids, list):
+        raise HTTPException(status_code=400, detail={"message": "templateIds must be a list."})
+    updated = batch_update_scene_templates(
+        db,
+        admin,
+        [str(item) for item in template_ids],
+        enabled=bool(payload["enabled"]) if "enabled" in payload else None,
+    )
+    return {"updated": updated}
 
 
 @app.put("/api/admin/prompt-templates/{template_id}")
@@ -4279,6 +4523,109 @@ async def proxy_prompt_optimize(
     if not optimized:
         raise HTTPException(status_code=502, detail={"message": "提示词优化没有返回有效内容。"})
     return {"prompt": optimized, "raw": raw}
+
+
+@app.post("/api/prompt-library/image-recommendations")
+async def image_prompt_recommendations(
+    payload: dict[str, Any],
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    check_rate_limit(
+        limiter=rate_limiter,
+        request=request,
+        settings=settings,
+        bucket="prompt-library-recommend",
+        limit=settings.rate_limit_generation_per_window,
+        user_id=current_user.id,
+    )
+    image_url = str(payload.get("imageUrl") or "").strip()
+    if not image_url:
+        raise HTTPException(status_code=400, detail={"message": "缺少参考图地址。"})
+    model_image_url = local_asset_data_url(image_url)
+    limit = parse_prompt_recommendation_limit(payload.get("limit"))
+    optimizer = find_gpt55_prompt_optimizer_sub_model(db, current_user)
+    if not optimizer:
+        return {"recommendations": [], "reason": "gpt55_not_configured"}
+    model_group, sub_model, api_key_record, api_key = optimizer
+    candidates = recommendation_candidates(db, limit=80)
+    if not candidates:
+        return {
+            "recommendations": [],
+            "reason": "prompt_library_empty",
+            "modelGroupId": model_group.id,
+            "subModelId": sub_model.id,
+        }
+    messages = build_recommendation_messages(model_image_url, candidates)
+    body = {
+        "model": sub_model.model_name,
+        "messages": messages,
+        "stream": False,
+        "temperature": 0.2,
+        "max_tokens": 1200,
+    }
+    response, raw = await forward_json("POST", resolve_url(api_key_record.base_url, "/v1/chat/completions"), api_key, body)
+    if not response.is_success or not isinstance(raw, dict):
+        raise upstream_error(raw, "图片提示词推荐失败。", response.status_code)
+    selected = parse_recommendation_payload(pick_text_content(raw))
+    templates_by_id = {item.id: item for item in candidates}
+    recommendations: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for item in selected:
+        template = templates_by_id.get(item["templateId"])
+        if not template or template.id in seen_ids:
+            continue
+        seen_ids.add(template.id)
+        record_scene_template_event(
+            db,
+            template=template,
+            user=current_user,
+            event_type="impression",
+            image_url=image_url,
+            metadata={"label": item.get("label", ""), "reason": item.get("reason", "")},
+        )
+        recommendations.append(
+            {
+                **serialize_scene_template(template),
+                "label": item.get("label") or template.title[:18],
+                "reason": item.get("reason") or "",
+                **({"promptText": item["promptText"]} if item.get("promptText") else {}),
+            }
+        )
+        if len(recommendations) >= limit:
+            break
+    db.commit()
+    return {
+        "recommendations": recommendations,
+        "reason": "ok" if recommendations else "no_match",
+        "modelGroupId": model_group.id,
+        "subModelId": sub_model.id,
+    }
+
+
+@app.post("/api/prompt-library/events")
+async def prompt_library_event(
+    payload: dict[str, Any],
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    template_id = str(payload.get("templateId") or "").strip()
+    event_type = str(payload.get("eventType") or "").strip()
+    if not template_id:
+        raise HTTPException(status_code=400, detail={"message": "缺少提示词模板 ID。"})
+    template = record_scene_template_event_by_id(
+        db,
+        template_id=template_id,
+        user=current_user,
+        event_type=event_type,
+        image_url=str(payload.get("imageUrl") or ""),
+        metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {},
+    )
+    return {"template": serialize_scene_template(template)}
 
 
 @app.post("/api/proxy/text")

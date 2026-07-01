@@ -680,6 +680,63 @@ def test_manual_4k_size_is_charged_as_4k(monkeypatch) -> None:
         assert json.loads(reserve.metadata_json)["is4k"] is True
 
 
+def test_manual_wide_4k_size_is_charged_as_4k(monkeypatch) -> None:
+    from app.database import SessionLocal
+    from app.credit_service import admin_adjust_credits, set_capability_price
+    from app.db_models import CreditTransaction, User
+
+    async def fake_forward_json(method, url, api_key, body=None):
+        return httpx.Response(200, json={"data": [{"url": "https://cdn.example.com/manual-wide-4k.png"}]}), {
+            "data": [{"url": "https://cdn.example.com/manual-wide-4k.png"}]
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+
+    async def fake_remote_dimensions(url):
+        return (4096, 2048)
+
+    monkeypatch.setattr(main_module, "remote_image_dimensions", fake_remote_dimensions)
+    admin = TestClient(app)
+    login(admin, "admin")
+    admin.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": "admin-public", "email": "cage_ben@sina.com", "nickname": "Admin"},
+    )
+    public_model = create_public_model(admin, "image", "image-openai", "gpt-image-2")
+
+    normal = TestClient(app)
+    login(normal, "manual-wide-4k-user")
+    with SessionLocal() as db:
+        admin_user = db.query(User).filter(User.email == "cage_ben@sina.com").one()
+        normal_user = db.query(User).filter(User.external_user_id == "manual-wide-4k-user").one()
+        set_capability_price(db, "image", 3, admin=admin_user)
+        admin_adjust_credits(db, admin=admin_user, target_user=normal_user, amount=20, reason="test seed")
+    visible_public = next(item for item in normal.get("/api/models").json()["models"] if item["id"] == public_model["id"])
+
+    response = normal.post(
+        "/api/proxy/image",
+        headers=csrf_headers(normal),
+        json={
+            "subModelId": visible_public["primarySubModelId"],
+            "requestBody": {"prompt": "manual wide 4k", "size": "4096x2048"},
+        },
+    )
+
+    assert response.status_code == 200
+    with SessionLocal() as db:
+        reserve = (
+            db.query(CreditTransaction)
+            .filter(CreditTransaction.type == "generation_reserve")
+            .order_by(CreditTransaction.created_at.desc())
+            .first()
+        )
+        assert reserve is not None
+        assert reserve.amount == -6
+        metadata = json.loads(reserve.metadata_json)
+        assert metadata["is4k"] is True
+        assert metadata["targetSize"] == "4096x2048"
+
+
 def test_4k_local_output_below_target_fails_and_refunds(monkeypatch) -> None:
     from app.database import SessionLocal
     from app.credit_service import admin_adjust_credits, set_capability_price

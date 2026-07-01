@@ -5,6 +5,7 @@ fronted/node_modules
 fronted/dist
 preview-*.log
 tmp-*.log
+.tmp-*
 *_nginx.zip
 npm-debug.log*
 yarn-debug.log*

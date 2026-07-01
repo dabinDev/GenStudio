@@ -20,3 +20,14 @@ def test_admin_runtime_migration_creates_required_tables() -> None:
     assert "ix_admin_role_assignments_user_id" in sql
     assert "ix_model_health_checks_status" in sql
     assert "ix_task_events_task_id" in sql
+
+
+def test_prompt_scene_template_migration_creates_library_tables() -> None:
+    sql = (Path(__file__).resolve().parents[1] / "migrations" / "007_prompt_scene_templates.sql").read_text(encoding="utf-8")
+
+    assert "CREATE TABLE IF NOT EXISTS prompt_scene_templates" in sql
+    assert "CREATE TABLE IF NOT EXISTS prompt_scene_template_events" in sql
+    assert "CONSTRAINT uq_prompt_scene_template_external_id UNIQUE (external_id)" in sql
+    assert "ix_prompt_scene_templates_enabled" in sql
+    assert "ix_prompt_scene_template_events_template_id" in sql
+    assert "FOREIGN KEY(template_id) REFERENCES prompt_scene_templates" in sql

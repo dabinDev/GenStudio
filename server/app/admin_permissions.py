@@ -39,7 +39,7 @@ RECORD_AUDIT_PERMISSIONS = {
     "audit:view",
     "audit:export",
 }
-SYSTEM_PERMISSIONS = {"settings:view", "settings:update", "maintenance:user_merge"}
+SYSTEM_PERMISSIONS = {"settings:view", "settings:update", "maintenance:user_merge", "maintenance:asset_cleanup"}
 
 SUPER_ADMIN_PERMISSIONS = frozenset(
     MODEL_PERMISSIONS | USER_CREDIT_PERMISSIONS | RECORD_AUDIT_PERMISSIONS | SYSTEM_PERMISSIONS

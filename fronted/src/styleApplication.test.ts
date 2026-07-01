@@ -599,6 +599,42 @@ describe("workbench style application", () => {
     expect(styles.indexOf("overscroll-behavior: contain !important", markerIndex)).toBeGreaterThan(markerIndex);
   });
 
+  it("explains 4K image generation cost and keeps the toggle mobile safe", () => {
+    const source = appVue();
+    const styles = stylesCss();
+    const markerIndex = styles.indexOf("Image 4K toggle");
+
+    expect(source).toContain("4K 生成");
+    expect(source).toContain("双倍积分");
+    expect(source).toContain("扣费 = 单价 × 数量 × 2");
+    expect(source).toContain("4K 需要");
+    expect(source).toContain("当前不足");
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf(".shell .image-options-popover .image-4k-toggle", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf("justify-content: space-between !important", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf(".shell .image-options-popover .image-4k-help", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf("@media (max-width: 720px)", markerIndex)).toBeGreaterThan(markerIndex);
+  });
+
+  it("shows GPT 5.5 image prompt recommendation tags after reference upload", () => {
+    const source = appVue();
+    const styles = stylesCss();
+    const markerIndex = styles.indexOf("Image prompt recommendation tags");
+
+    expect(source).toContain("fetchImagePromptRecommendations");
+    expect(source).toContain("recordPromptLibraryEvent");
+    expect(source).toContain("imageState.promptRecommendations");
+    expect(source).toContain("imageState.recommendationLoading");
+    expect(source).toContain("applyPromptRecommendation");
+    expect(source).toContain("图片识别推荐");
+    expect(source).toContain("识别中");
+    expect(source).toContain("推荐标签已加入输入框");
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf(".shell .image-prompt-recommendations", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf("flex-wrap: wrap", markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf("@media (max-width: 720px)", markerIndex)).toBeGreaterThan(markerIndex);
+  });
+
   it("marks account pages separately from the model workspace in the sidebar", () => {
     const source = appVue();
 

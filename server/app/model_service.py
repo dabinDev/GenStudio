@@ -17,6 +17,11 @@ from app.schemas import ApiKeyOut, CallLogOut, ModelCreate, ModelOut, ModelUpdat
 from app.security import SecretDecryptionError, decrypt_secret, encrypt_secret
 
 
+def model_name_is_gpt55(*values: str) -> bool:
+    source = re.sub(r"[^a-z0-9.]+", "", " ".join(values).lower())
+    return "gpt5.5" in source
+
+
 MODEL_UNAVAILABLE_MESSAGE = "模型不存在或未开通，请检查模型配置。"
 
 
@@ -581,12 +586,49 @@ def find_prompt_optimizer_sub_model(
     def rank(item: SubModel) -> tuple[int, int, str]:
         source = f"{item.model_name} {item.display_name} {item.model_group.name}".lower()
         return (
-            0 if "gpt-5.5" in source else 1,
+            0 if model_name_is_gpt55(source) else 1,
+            0 if user and item.model_group.user_id == user.id else 1,
             0 if item.model_group.is_public else 1,
             source,
         )
 
     sub_model = sorted(sub_models, key=rank)[0]
+    api_key_record = sub_model.api_key
+    return sub_model.model_group, sub_model, api_key_record, decrypt_secret(api_key_record.api_key_ciphertext)
+
+
+def find_gpt55_prompt_optimizer_sub_model(
+    db: Session,
+    user: User | None,
+) -> tuple[ModelGroup, SubModel, ApiKey, str] | None:
+    visibility_filter = (
+        or_(ModelGroup.user_id == user.id, ModelGroup.is_public.is_(True))
+        if user
+        else ModelGroup.is_public.is_(True)
+    )
+    sub_models = (
+        db.query(SubModel)
+        .options(selectinload(SubModel.model_group), selectinload(SubModel.api_key))
+        .join(ModelGroup, ModelGroup.id == SubModel.model_group_id)
+        .filter(SubModel.capability == "text", visibility_filter, SubModel.status == "active")
+        .all()
+    )
+    gpt55_models = [
+        item
+        for item in sub_models
+        if model_name_is_gpt55(item.model_group.name, item.model_name, item.display_name)
+    ]
+    if not gpt55_models:
+        return None
+
+    def rank(item: SubModel) -> tuple[int, int, str]:
+        return (
+            0 if user and item.model_group.user_id == user.id else 1,
+            0 if item.model_group.is_public else 1,
+            f"{item.model_name} {item.display_name} {item.model_group.name}".lower(),
+        )
+
+    sub_model = sorted(gpt55_models, key=rank)[0]
     api_key_record = sub_model.api_key
     return sub_model.model_group, sub_model, api_key_record, decrypt_secret(api_key_record.api_key_ciphertext)
 

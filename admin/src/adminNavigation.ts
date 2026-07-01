@@ -20,7 +20,10 @@ export const ADMIN_MENU_ITEMS: AdminMenuItem[] = [
     label: '系统设置',
     mark: '设',
     permission: ADMIN_PERMISSIONS.creditView,
-    alternatePermissions: [ADMIN_PERMISSIONS.maintenanceUserMerge],
+    alternatePermissions: [
+      ADMIN_PERMISSIONS.maintenanceUserMerge,
+      ADMIN_PERMISSIONS.maintenanceAssetCleanup,
+    ],
   },
 ];
 

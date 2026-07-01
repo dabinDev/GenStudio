@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const layoutVue = () => readFileSync(resolve(process.cwd(), 'src/layouts/AdminLayout.vue'), 'utf8');
 const imageViewerVue = () => readFileSync(resolve(process.cwd(), 'src/components/AdminImageViewer.vue'), 'utf8');
 const promptCenterVue = () => readFileSync(resolve(process.cwd(), 'src/views/PromptCenterView.vue'), 'utf8');
+const promptSceneLibraryVue = () => readFileSync(resolve(process.cwd(), 'src/views/PromptSceneLibraryPanel.vue'), 'utf8');
 const recordsVue = () => readFileSync(resolve(process.cwd(), 'src/views/RecordsView.vue'), 'utf8');
 const modelCenterVue = () => readFileSync(resolve(process.cwd(), 'src/views/ModelCenterView.vue'), 'utf8');
 const auditLogsVue = () => readFileSync(resolve(process.cwd(), 'src/views/AuditLogsView.vue'), 'utf8');
@@ -538,6 +539,34 @@ describe('admin theme presentation', () => {
     expect(styles.indexOf('content: attr(data-scroll-hint)', markerIndex)).toBeGreaterThan(markerIndex);
   });
 
+  it('keeps the asset cleanup card compact and mobile friendly', () => {
+    const system = readFileSync(resolve(process.cwd(), 'src/views/SystemSettingsView.vue'), 'utf8');
+    const styles = stylesCss();
+    const markerIndex = styles.indexOf('Admin asset cleanup mobile polish v18');
+
+    expect(system).toContain('<strong>图片缓存清理</strong>');
+    expect(system).toContain('默认保留 ${assetCleanupForm.defaultRetentionDays || 7} 天');
+    expect(system).toContain('不删除数据库创作记录');
+    expect(system).toContain('admin-asset-cleanup-card__safe-actions');
+    expect(system).toContain('admin-asset-cleanup-card__danger-actions');
+    expect(system).toContain('admin-asset-cleanup-card__path-col');
+    expect(system).not.toContain('缓存照片');
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf('.admin-asset-cleanup-card__form .el-input-number', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('.admin-asset-cleanup-card__danger-actions', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('.admin-asset-cleanup-card__path-col', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('grid-template-columns: repeat(2, minmax(0, 1fr))', markerIndex)).toBeGreaterThan(markerIndex);
+  });
+
+  it('runs manual asset cleanup from the confirmed preview snapshot', () => {
+    const system = readFileSync(resolve(process.cwd(), 'src/views/SystemSettingsView.vue'), 'utf8');
+
+    expect(system).toContain('assetCleanupPreviewRetentionDays');
+    expect(system).toContain('assetCleanupSummary.value = null');
+    expect(system).toContain('runAssetCleanup({ retentionDays: assetCleanupPreviewRetentionDays.value })');
+    expect(system).not.toContain('runAssetCleanup({ retentionDays: assetCleanupForm.retentionDays })');
+  });
+
   it('keeps heavy admin runtime libraries split away from the entry chunk', () => {
     const dashboard = readFileSync(resolve(process.cwd(), 'src/views/DashboardView.vue'), 'utf8');
     const config = viteConfig();
@@ -560,5 +589,23 @@ describe('admin theme presentation', () => {
     expect(promptCenter).toContain('真实模板总数');
     expect(promptCenter).toContain('样例仅用于预览');
     expect(promptCenter).toContain('真实模板 0 个');
+  });
+
+  it('adds an operational image scene prompt library to the prompt center', () => {
+    const promptCenter = promptCenterVue();
+    const sceneLibrary = promptSceneLibraryVue();
+
+    expect(promptCenter).toContain('PromptSceneLibraryPanel');
+    expect(promptCenter).toContain('图片场景库');
+    expect(sceneLibrary).toContain('图片场景提示词库');
+    expect(sceneLibrary).toContain('导入 Yuque JS');
+    expect(sceneLibrary).toContain('批量启用');
+    expect(sceneLibrary).toContain('批量停用');
+    expect(sceneLibrary).toContain('曝光');
+    expect(sceneLibrary).toContain('点击');
+    expect(sceneLibrary).toContain('GPT 5.5');
+    expect(sceneLibrary).toContain('admin-prompt-scene-library__table-wrap');
+    expect(sceneLibrary).toContain('grid-template-columns: repeat(2, minmax(0, 1fr))');
+    expect(sceneLibrary).toContain('overflow-x: auto');
   });
 });

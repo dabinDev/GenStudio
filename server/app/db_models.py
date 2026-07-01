@@ -349,6 +349,53 @@ class PromptTemplateVersion(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
 
 
+class PromptSceneTemplate(Base):
+    __tablename__ = "prompt_scene_templates"
+    __table_args__ = (
+        UniqueConstraint("external_id", name="uq_prompt_scene_template_external_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id("pst"))
+    external_id: Mapped[str] = mapped_column(String(128), index=True)
+    category_id: Mapped[str] = mapped_column(String(128), default="", index=True)
+    document_title: Mapped[str] = mapped_column(String(255), default="")
+    document_url: Mapped[str] = mapped_column(Text, default="")
+    section: Mapped[str] = mapped_column(String(255), default="", index=True)
+    category: Mapped[str] = mapped_column(String(255), default="", index=True)
+    subcategory: Mapped[str] = mapped_column(String(255), default="", index=True)
+    title: Mapped[str] = mapped_column(String(255), default="", index=True)
+    prompt_text: Mapped[str] = mapped_column(Text, default="")
+    prompt_summary: Mapped[str] = mapped_column(Text, default="")
+    tags_json: Mapped[str] = mapped_column(Text, default="[]")
+    source: Mapped[str] = mapped_column(String(128), default="", index=True)
+    original_no: Mapped[str] = mapped_column(String(64), default="", index=True)
+    image_url: Mapped[str] = mapped_column(Text, default="")
+    model: Mapped[str] = mapped_column(String(128), default="", index=True)
+    likes: Mapped[int] = mapped_column(Integer, default=0)
+    views: Mapped[int] = mapped_column(Integer, default=0)
+    weight: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    raw_json: Mapped[str] = mapped_column(Text, default="{}")
+    use_count: Mapped[int] = mapped_column(Integer, default=0)
+    click_count: Mapped[int] = mapped_column(Integer, default=0)
+    impression_count: Mapped[int] = mapped_column(Integer, default=0)
+    imported_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class PromptSceneTemplateEvent(Base):
+    __tablename__ = "prompt_scene_template_events"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id("pste"))
+    template_id: Mapped[str] = mapped_column(String(64), ForeignKey("prompt_scene_templates.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    event_type: Mapped[str] = mapped_column(String(32), default="impression", index=True)
+    image_url: Mapped[str] = mapped_column(Text, default="")
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
 class AdminOperationLog(Base):
     __tablename__ = "admin_operation_logs"
 

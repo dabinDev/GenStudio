@@ -10,6 +10,8 @@
       </div>
     </header>
 
+    <el-tabs v-model="activeTab" class="admin-prompt-center__tabs">
+      <el-tab-pane label="优化模板" name="optimize">
     <section class="admin-content-page__filters">
       <el-select v-model="capability" aria-label="模板类型" @change="loadTemplates">
         <el-option label="全部类型" value="all" />
@@ -253,6 +255,11 @@
         </div>
       </div>
     </el-drawer>
+      </el-tab-pane>
+      <el-tab-pane label="图片场景库" name="scene-library">
+        <PromptSceneLibraryPanel />
+      </el-tab-pane>
+    </el-tabs>
   </section>
 </template>
 
@@ -276,11 +283,13 @@ import {
   createPromptTemplateForm,
   syncPromptTemplateForm,
 } from './promptCenterState';
+import PromptSceneLibraryPanel from './PromptSceneLibraryPanel.vue';
 
 const templates = ref<PromptTemplate[]>([]);
 const modelStatus = ref<PromptTemplateModelStatus[]>([]);
 const versions = ref<PromptTemplateVersion[]>([]);
 const auth = useAdminAuthStore();
+const activeTab = ref('optimize');
 const capability = ref('all');
 const keyword = ref('');
 const isLoading = ref(false);

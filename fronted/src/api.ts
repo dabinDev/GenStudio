@@ -4,6 +4,9 @@ import type {
   ConversationDefinition,
   CreditBundle,
   ServerModelDefinition,
+  PromptLibraryEventType,
+  PromptSceneRecommendation,
+  PromptSceneRecommendationPayload,
   UploadedAsset,
   UserProfile,
 } from "./types";
@@ -282,6 +285,26 @@ export async function syncServerModel(modelId: string): Promise<{ model: ServerM
 
 export async function optimizePrompt(body: Record<string, unknown>): Promise<{ prompt: string; raw?: Record<string, unknown> }> {
   return postApi("/api/proxy/prompt/optimize", body);
+}
+
+export async function fetchImagePromptRecommendations(
+  imageUrl: string,
+  limit = 8,
+): Promise<PromptSceneRecommendationPayload> {
+  return postApi("/api/prompt-library/image-recommendations", { imageUrl, limit });
+}
+
+export async function recordPromptLibraryEvent(
+  templateId: string,
+  eventType: PromptLibraryEventType,
+  imageUrl = "",
+): Promise<PromptSceneRecommendation> {
+  const payload = await postApi<{ template: PromptSceneRecommendation }>("/api/prompt-library/events", {
+    templateId,
+    eventType,
+    imageUrl,
+  });
+  return payload.template;
 }
 
 export async function setServerPrimaryModel(modelId: string, subModelId: string): Promise<ServerModelDefinition> {

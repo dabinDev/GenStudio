@@ -137,7 +137,12 @@ def test_permission_groups_are_complete_contract_sets() -> None:
         "audit:view",
         "audit:export",
     }
-    assert SYSTEM_PERMISSIONS == {"settings:view", "settings:update", "maintenance:user_merge"}
+    assert SYSTEM_PERMISSIONS == {
+        "settings:view",
+        "settings:update",
+        "maintenance:user_merge",
+        "maintenance:asset_cleanup",
+    }
 
 
 def test_operator_and_viewer_include_read_permissions() -> None:

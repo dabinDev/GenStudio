@@ -337,6 +337,66 @@ export interface PromptTemplateTestPayload {
   prompts?: string[];
 }
 
+export interface PromptSceneTemplate {
+  id: string;
+  externalId: string;
+  capability: 'image';
+  categoryId: string;
+  documentTitle: string;
+  documentUrl: string;
+  section: string;
+  category: string;
+  subcategory: string;
+  title: string;
+  promptText: string;
+  promptSummary: string;
+  tags: string[];
+  source: string;
+  originalNo: string;
+  imageUrl: string;
+  model: string;
+  likes: number;
+  views: number;
+  weight: number;
+  enabled: boolean;
+  useCount: number;
+  clickCount: number;
+  impressionCount: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface PromptSceneTemplateQuery {
+  search?: string;
+  categoryId?: string;
+  enabled?: 'true' | 'false' | '';
+  limit?: number;
+  offset?: number;
+}
+
+export interface PromptSceneTemplateListPayload {
+  templates: PromptSceneTemplate[];
+  total: number;
+}
+
+export interface PromptSceneTemplateUpdatePayload {
+  title?: string;
+  promptText?: string;
+  tags?: string[];
+  categoryId?: string;
+  category?: string;
+  subcategory?: string;
+  weight?: number;
+  enabled?: boolean;
+}
+
+export interface PromptSceneTemplateImportSummary {
+  imported: number;
+  updated: number;
+  disabled: number;
+  total: number;
+}
+
 export interface AdminCreationAsset {
   type: string;
   url: string;
@@ -479,4 +539,48 @@ export interface UserMergeSummary {
 export interface UserMergeMaintenancePayload {
   apply: boolean;
   identityFilter?: string;
+}
+
+export interface AssetCleanupSettings {
+  enabled: boolean;
+  retentionDays: number;
+  defaultRetentionDays: number;
+  minRetentionDays: number;
+  maxRetentionDays: number;
+  lastRun: Partial<AssetCleanupSummary> & Record<string, unknown>;
+}
+
+export interface AssetCleanupSettingsUpdatePayload {
+  enabled?: boolean;
+  retentionDays?: number;
+}
+
+export interface AssetCleanupTargetSummary {
+  key: string;
+  label: string;
+  path: string;
+  totalFiles: number;
+  expiredFiles: number;
+  totalBytes: number;
+  expiredBytes: number;
+}
+
+export interface AssetCleanupSummary {
+  retentionDays: number;
+  cutoffTs: number;
+  totalFiles: number;
+  expiredFiles: number;
+  totalBytes: number;
+  expiredBytes: number;
+  deletedFiles?: number;
+  deletedBytes?: number;
+  failedFiles?: number;
+  failures?: Array<{ path: string; message: string }>;
+  ranAt?: string;
+  targets: AssetCleanupTargetSummary[];
+}
+
+export interface AssetCleanupPayload {
+  settings: AssetCleanupSettings;
+  summary: AssetCleanupSummary;
 }

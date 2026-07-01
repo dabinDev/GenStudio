@@ -108,6 +108,9 @@ describe('admin router guards', () => {
     const visible = visibleAdminMenuItems((permission) => permission === ADMIN_PERMISSIONS.maintenanceUserMerge);
 
     expect(visible.map((item) => item.path)).toEqual(['/settings']);
+
+    const cleanupVisible = visibleAdminMenuItems((permission) => permission === ADMIN_PERMISSIONS.maintenanceAssetCleanup);
+    expect(cleanupVisible.map((item) => item.path)).toEqual(['/settings']);
   });
 
   it('redirects unauthenticated admins to the shared auth route', async () => {
@@ -175,13 +178,16 @@ describe('admin router guards', () => {
     const auth = useAdminAuthStore();
     auth.bootstrap = vi.fn(async () => undefined);
     auth.user = { id: 'u3', email: 'maintenance@example.com', isAdmin: true };
-    auth.permissions = [ADMIN_PERMISSIONS.maintenanceUserMerge];
+    auth.permissions = [ADMIN_PERMISSIONS.maintenanceAssetCleanup];
 
     await expect(resolveAdminRedirectPath({
       fullPath: '/settings',
       meta: {
         permission: ADMIN_PERMISSIONS.creditView,
-        alternatePermissions: [ADMIN_PERMISSIONS.maintenanceUserMerge],
+        alternatePermissions: [
+          ADMIN_PERMISSIONS.maintenanceUserMerge,
+          ADMIN_PERMISSIONS.maintenanceAssetCleanup,
+        ],
       },
     })).resolves.toBeNull();
   });

@@ -17,10 +17,12 @@ import {
   deleteServerModel,
   fetchConversation,
   fetchConversations,
+  fetchImagePromptRecommendations,
   fetchServerModels,
   optimizePrompt,
   postProxy,
   postProxyWithSignal,
+  recordPromptLibraryEvent,
   setServerPrimaryModel,
   syncServerModel,
   updateConversationTitle,
@@ -38,6 +40,7 @@ import type {
   CreditBundle,
   ModelDefinition,
   ModelSetting,
+  PromptSceneRecommendation,
   PromptTemplate,
   ServerModelDefinition,
   SubModelDefinition,
@@ -289,6 +292,10 @@ const imageState = reactive({
   loading: false,
   error: "",
   references: [] as UploadedAsset[],
+  promptRecommendations: [] as PromptSceneRecommendation[],
+  recommendationLoading: false,
+  recommendationReason: "",
+  recommendationImageUrl: "",
   result: null as ImageResult | null,
 });
 
@@ -1070,7 +1077,11 @@ function ensureEnoughCreditsForModel(model: ModelDefinition | null, capability: 
     return false;
   }
   if (availableCredits.value < cost) {
-    setCapabilityError(capability, `积分不足：本次需要 ${cost} 积分，当前可用 ${availableCredits.value} 积分。`);
+    const isImage4k = capability === "image" && imageState.enable4k && supportsImage4k(model);
+    const message = isImage4k
+      ? `积分不足：4K 需要 ${cost} 积分，当前可用 ${availableCredits.value} 积分，当前不足。`
+      : `积分不足：本次需要 ${cost} 积分，当前可用 ${availableCredits.value} 积分。`;
+    setCapabilityError(capability, message);
     showToast("积分不足，请充值后再生成。", "error");
     return false;
   }
@@ -1345,6 +1356,11 @@ function videoModeLabel(mode: VideoMode): string {
 
 function removeImageReference(assetId: string) {
   imageState.references = imageState.references.filter((asset) => asset.id !== assetId);
+  if (!imageState.references.length) {
+    imageState.promptRecommendations = [];
+    imageState.recommendationReason = "";
+    imageState.recommendationImageUrl = "";
+  }
 }
 
 function removeUnifiedVideoReference(assetId: string) {
@@ -2046,6 +2062,41 @@ function applyTemplate(state: { prompt: string }, template: PromptTemplate) {
   showToast("模板已加入输入框", "success");
 }
 
+async function loadImagePromptRecommendations(asset: UploadedAsset) {
+  imageState.recommendationLoading = true;
+  imageState.recommendationReason = "";
+  imageState.recommendationImageUrl = asset.publicUrl;
+  try {
+    const payload = await fetchImagePromptRecommendations(asset.publicUrl, 8);
+    if (imageState.recommendationImageUrl !== asset.publicUrl) return;
+    imageState.promptRecommendations = payload.recommendations || [];
+    imageState.recommendationReason = payload.reason || "";
+  } catch (error) {
+    if (imageState.recommendationImageUrl === asset.publicUrl) {
+      imageState.promptRecommendations = [];
+      imageState.recommendationReason = error instanceof Error ? error.message : "图片识别推荐失败";
+    }
+  } finally {
+    if (imageState.recommendationImageUrl === asset.publicUrl) {
+      imageState.recommendationLoading = false;
+    }
+  }
+}
+
+async function applyPromptRecommendation(recommendation: PromptSceneRecommendation) {
+  const prompt = recommendation.promptText.trim();
+  if (!prompt) return;
+  imageState.prompt = imageState.prompt.trim()
+    ? `${imageState.prompt.trim()}\n\n${prompt}`
+    : prompt;
+  showToast("推荐标签已加入输入框", "success");
+  try {
+    await recordPromptLibraryEvent(recommendation.id, "click", imageState.recommendationImageUrl);
+  } catch {
+    // Recommendation clicks are analytics only; prompt insertion should stay instant.
+  }
+}
+
 function parseJsonInput(value: string): Record<string, unknown> {
   if (!value.trim()) return {};
   const parsed = JSON.parse(value) as unknown;
@@ -2477,6 +2528,10 @@ async function uploadImageReferenceFiles(files: File[]) {
     );
     imageState.references = [...imageState.references, ...uploaded].slice(0, imageReferenceLimit.value);
     notifyTrimmedReferenceUploads(files.length, selectedFiles.length);
+    const latestAsset = uploaded.at(-1);
+    if (latestAsset) {
+      void loadImagePromptRecommendations(latestAsset);
+    }
   } catch (error) {
     imageState.error = error instanceof Error ? error.message : "上传参考图失败。";
   } finally {
@@ -4116,6 +4171,22 @@ async function removeUnavailableModels() {
                 <button type="button" class="reference-remove-button" title="移除参考图" @click.stop="removeImageReference(asset.id)">×</button>
               </article>
             </div>
+            <div v-if="imageState.recommendationLoading || imageState.promptRecommendations.length" class="image-prompt-recommendations">
+              <span class="image-prompt-recommendations__label">
+                图片识别推荐
+                <small v-if="imageState.recommendationLoading">识别中</small>
+              </span>
+              <button
+                v-for="recommendation in imageState.promptRecommendations"
+                :key="recommendation.id"
+                type="button"
+                class="image-prompt-recommendations__tag"
+                :title="recommendation.reason || recommendation.promptSummary || recommendation.title"
+                @click="applyPromptRecommendation(recommendation)"
+              >
+                {{ recommendation.label || recommendation.title }}
+              </button>
+            </div>
             <div class="composer-footer-bar">
               <div class="composer-quick-fields composer-quick-fields-wide composer-control-cluster">
                 <label class="composer-keyword-compact"><span>关键词</span><input v-model="imageState.keywords" placeholder="玻璃感、青柠色" /></label>
@@ -4182,13 +4253,16 @@ async function removeUnavailableModels() {
                       </div>
                     </div>
                     <div v-if="imageSupports4k" class="popover-section">
-                      <label class="image-4k-toggle">
-                        <span class="image-4k-toggle-main">
-                          <input v-model="imageState.enable4k" type="checkbox" />
-                          <span class="image-4k-toggle-label">4K 生成</span>
-                        </span>
-                        <small class="image-4k-badge">双倍积分</small>
-                      </label>
+                      <div class="image-4k-control">
+                        <label class="image-4k-toggle">
+                          <span class="image-4k-toggle-main">
+                            <input v-model="imageState.enable4k" type="checkbox" />
+                            <span class="image-4k-toggle-label">4K 生成</span>
+                          </span>
+                          <small class="image-4k-badge">双倍积分</small>
+                        </label>
+                        <small class="image-4k-help">开启后按所选比例输出 4K，扣费 = 单价 × 数量 × 2。</small>
+                      </div>
                     </div>
                     <div v-if="imageUsesQuantityControls || (!imageHasCatalogParameters && !imageUsesSizeControls)" class="popover-section popover-two-col">
                       <label v-if="imageUsesQuantityControls">

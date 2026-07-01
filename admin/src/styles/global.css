@@ -1564,6 +1564,29 @@ select {
   grid-column: 1 / -1;
 }
 
+.admin-asset-cleanup-card__head {
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--admin-space-3);
+}
+
+.admin-asset-cleanup-card__notice {
+  margin-bottom: var(--admin-space-4);
+}
+
+.admin-asset-cleanup-card__form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 220px));
+  gap: var(--admin-space-4);
+}
+
+.admin-asset-cleanup-card__last-run {
+  margin-top: var(--admin-space-3);
+  color: var(--admin-color-text-muted);
+  font-size: 12px;
+}
+
 .admin-maintenance-card__actions {
   display: flex;
   justify-content: flex-end;
@@ -2113,6 +2136,16 @@ body {
   }
 
   .admin-maintenance-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-asset-cleanup-card__head,
+  .admin-maintenance-card__actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .admin-asset-cleanup-card__form {
     grid-template-columns: 1fr;
   }
 
@@ -3807,5 +3840,76 @@ body,
     font-size: 11px;
     pointer-events: none;
     transform: translateX(-50%);
+  }
+}
+
+/* Admin asset cleanup mobile polish v18 */
+.admin-asset-cleanup-card__form .el-input-number {
+  width: 100%;
+}
+
+.admin-asset-cleanup-card__actions {
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--admin-space-3);
+  margin-top: var(--admin-space-1);
+}
+
+.admin-asset-cleanup-card__safe-actions,
+.admin-asset-cleanup-card__danger-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--admin-space-2);
+}
+
+.admin-asset-cleanup-card__danger-actions {
+  margin-left: auto;
+  padding-left: var(--admin-space-3);
+  border-left: 1px solid var(--admin-color-border);
+}
+
+@media (max-width: 720px) {
+  .admin-asset-cleanup-card__head {
+    align-items: center;
+    flex-direction: row;
+  }
+
+  .admin-maintenance-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-asset-cleanup-card__actions,
+  .admin-asset-cleanup-card__safe-actions,
+  .admin-asset-cleanup-card__danger-actions {
+    width: 100%;
+  }
+
+  .admin-asset-cleanup-card__actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .admin-asset-cleanup-card__safe-actions {
+    flex-direction: column;
+  }
+
+  .admin-asset-cleanup-card__danger-actions {
+    justify-content: flex-end;
+    margin-top: var(--admin-space-2);
+    margin-left: 0;
+    padding-top: var(--admin-space-3);
+    padding-left: 0;
+    border-top: 1px solid var(--admin-color-border);
+    border-left: 0;
+  }
+
+  .admin-asset-cleanup-card__safe-actions .el-button,
+  .admin-asset-cleanup-card__danger-actions .el-button {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .admin-asset-cleanup-card__path-col {
+    display: none;
   }
 }

@@ -37,6 +37,7 @@ from app.db_models import (
     ModelHealthCheck,
     SessionRecord,
     SubModel,
+    SystemSetting,
     TaskEvent,
     User,
     UserCreditAccount,
@@ -3578,6 +3579,482 @@ def test_admin_user_merge_reports_role_conflicts_in_summary_and_audit_log() -> N
 
     app.dependency_overrides.clear()
     main_module.rate_limiter.clear()
+
+
+def test_admin_asset_cleanup_defaults_to_seven_days_and_previews_expired_files(tmp_path) -> None:
+    import app.main as main_module
+    from app.database import Base, get_db
+    from app.main import app
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    TestingSession = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
+    seed_db = TestingSession()
+    admin = make_user(seed_db, "cage_ben@sina.com", external_id="asset-cleanup-preview-admin")
+    seed_db.close()
+
+    generated_dir = tmp_path / "generated_assets"
+    uploaded_dir = tmp_path / "uploaded_assets"
+    generated_dir.mkdir()
+    uploaded_dir.mkdir()
+    old_generated = generated_dir / "old.png"
+    fresh_uploaded = uploaded_dir / "fresh.png"
+    old_generated.write_bytes(b"old-generated")
+    fresh_uploaded.write_bytes(b"fresh-uploaded")
+    old_time = (datetime.now() - timedelta(days=8)).timestamp()
+    fresh_time = (datetime.now() - timedelta(days=2)).timestamp()
+    os.utime(old_generated, (old_time, old_time))
+    os.utime(fresh_uploaded, (fresh_time, fresh_time))
+
+    def override_db():
+        db = TestingSession()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(main_module, "GENERATED_ASSET_DIR", generated_dir)
+    monkeypatch.setattr(main_module, "LOCAL_UPLOAD_DIR", uploaded_dir)
+    client = TestClient(app)
+    login = client.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": admin.external_user_id, "email": admin.email, "nickname": "Admin"},
+    )
+    assert login.status_code == 200
+
+    response = client.get("/api/admin/asset-cleanup/preview")
+
+    assert response.status_code == 200
+    payload = response.json()["summary"]
+    assert payload["retentionDays"] == 7
+    assert payload["expiredFiles"] == 1
+    assert payload["totalFiles"] == 2
+    assert payload["targets"][0]["label"] == "生成图片缓存"
+    assert old_generated.exists()
+    assert fresh_uploaded.exists()
+
+    monkeypatch.undo()
+    app.dependency_overrides.clear()
+    main_module.rate_limiter.clear()
+
+
+def test_admin_asset_cleanup_run_deletes_expired_files_and_writes_audit_log(tmp_path) -> None:
+    import app.main as main_module
+    from app.database import Base, get_db
+    from app.main import app
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    TestingSession = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
+    seed_db = TestingSession()
+    admin = make_user(seed_db, "cage_ben@sina.com", external_id="asset-cleanup-run-admin")
+    seed_db.close()
+
+    generated_dir = tmp_path / "generated_assets"
+    uploaded_dir = tmp_path / "uploaded_assets"
+    generated_dir.mkdir()
+    uploaded_dir.mkdir()
+    old_generated = generated_dir / "old.png"
+    fresh_generated = generated_dir / "fresh.png"
+    old_uploaded = uploaded_dir / "old-upload.png"
+    old_generated.write_bytes(b"old-generated")
+    fresh_generated.write_bytes(b"fresh-generated")
+    old_uploaded.write_bytes(b"old-uploaded")
+    old_time = (datetime.now() - timedelta(days=9)).timestamp()
+    fresh_time = (datetime.now() - timedelta(hours=6)).timestamp()
+    os.utime(old_generated, (old_time, old_time))
+    os.utime(old_uploaded, (old_time, old_time))
+    os.utime(fresh_generated, (fresh_time, fresh_time))
+
+    def override_db():
+        db = TestingSession()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(main_module, "GENERATED_ASSET_DIR", generated_dir)
+    monkeypatch.setattr(main_module, "LOCAL_UPLOAD_DIR", uploaded_dir)
+    client = TestClient(app)
+    login = client.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": admin.external_user_id, "email": admin.email, "nickname": "Admin"},
+    )
+    assert login.status_code == 200
+
+    response = client.post(
+        "/api/admin/asset-cleanup/run",
+        json={},
+        headers=csrf_headers(client),
+    )
+
+    assert response.status_code == 200
+    summary = response.json()["summary"]
+    assert summary["retentionDays"] == 7
+    assert summary["deletedFiles"] == 2
+    assert summary["failedFiles"] == 0
+    assert not old_generated.exists()
+    assert not old_uploaded.exists()
+    assert fresh_generated.exists()
+    verify_db = TestingSession()
+    try:
+        log = verify_db.query(AdminOperationLog).filter(AdminOperationLog.action == "asset_cache_cleanup").one()
+        audit_summary = json.loads(log.summary_json)
+        assert audit_summary["deletedFiles"] == 2
+        assert audit_summary["retentionDays"] == 7
+    finally:
+        verify_db.close()
+
+    monkeypatch.undo()
+    app.dependency_overrides.clear()
+    main_module.rate_limiter.clear()
+
+
+def test_admin_asset_cleanup_settings_update_changes_retention_and_writes_audit_log() -> None:
+    import app.main as main_module
+    from app.database import Base, get_db
+    from app.main import app
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    TestingSession = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
+    seed_db = TestingSession()
+    admin = make_user(seed_db, "cage_ben@sina.com", external_id="asset-cleanup-settings-admin")
+    seed_db.close()
+
+    def override_db():
+        db = TestingSession()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    client = TestClient(app)
+    login = client.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": admin.external_user_id, "email": admin.email, "nickname": "Admin"},
+    )
+    assert login.status_code == 200
+
+    response = client.put(
+        "/api/admin/asset-cleanup/settings",
+        json={"enabled": False, "retentionDays": 14},
+        headers=csrf_headers(client),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["settings"]["enabled"] is False
+    assert response.json()["settings"]["retentionDays"] == 14
+    verify_db = TestingSession()
+    try:
+        log = verify_db.query(AdminOperationLog).filter(AdminOperationLog.action == "update_asset_cleanup_settings").one()
+        audit_summary = json.loads(log.summary_json)
+        assert audit_summary["enabled"] is False
+        assert audit_summary["retentionDays"] == 14
+    finally:
+        verify_db.close()
+
+    app.dependency_overrides.clear()
+    main_module.rate_limiter.clear()
+
+
+def test_admin_asset_cleanup_run_rejects_invalid_retention_days() -> None:
+    import app.main as main_module
+    from app.database import Base, get_db
+    from app.main import app
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    TestingSession = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
+    seed_db = TestingSession()
+    admin = make_user(seed_db, "cage_ben@sina.com", external_id="asset-cleanup-invalid-admin")
+    seed_db.close()
+
+    def override_db():
+        db = TestingSession()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    client = TestClient(app)
+    login = client.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": admin.external_user_id, "email": admin.email, "nickname": "Admin"},
+    )
+    assert login.status_code == 200
+
+    response = client.post(
+        "/api/admin/asset-cleanup/run",
+        json={"retentionDays": 0},
+        headers=csrf_headers(client),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["message"] == "缓存保留天数不能小于 1 天。"
+
+    app.dependency_overrides.clear()
+    main_module.rate_limiter.clear()
+
+
+def test_admin_asset_cleanup_view_allows_cleanup_permission_without_settings_view(monkeypatch, tmp_path) -> None:
+    import app.main as main_module
+    from app.database import Base, get_db
+    from app.main import app
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    TestingSession = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
+    seed_db = TestingSession()
+    admin = make_user(seed_db, "cage_ben@sina.com", external_id="asset-cleanup-permission-admin")
+    seed_db.close()
+
+    generated_dir = tmp_path / "generated_assets"
+    uploaded_dir = tmp_path / "uploaded_assets"
+    generated_dir.mkdir()
+    uploaded_dir.mkdir()
+
+    def cleanup_only_can(_user, permission: str, _settings) -> bool:
+        return permission == "maintenance:asset_cleanup"
+
+    def override_db():
+        db = TestingSession()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    monkeypatch.setattr(main_module, "can", cleanup_only_can)
+    monkeypatch.setattr(main_module, "GENERATED_ASSET_DIR", generated_dir)
+    monkeypatch.setattr(main_module, "LOCAL_UPLOAD_DIR", uploaded_dir)
+    client = TestClient(app)
+    login = client.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": admin.external_user_id, "email": admin.email, "nickname": "Admin"},
+    )
+    assert login.status_code == 200
+
+    settings_response = client.get("/api/admin/asset-cleanup/settings")
+    preview_response = client.get("/api/admin/asset-cleanup/preview")
+
+    assert settings_response.status_code == 200
+    assert settings_response.json()["settings"]["retentionDays"] == 7
+    assert preview_response.status_code == 200
+    assert preview_response.json()["summary"]["retentionDays"] == 7
+
+    app.dependency_overrides.clear()
+    main_module.rate_limiter.clear()
+
+
+def test_admin_asset_cleanup_preview_does_not_expose_absolute_paths_to_settings_view_only(monkeypatch, tmp_path) -> None:
+    import app.main as main_module
+    from app.database import Base, get_db
+    from app.main import app
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    TestingSession = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
+    seed_db = TestingSession()
+    admin = make_user(seed_db, "cage_ben@sina.com", external_id="asset-cleanup-settings-viewer")
+    seed_db.close()
+
+    generated_dir = tmp_path / "generated_assets"
+    uploaded_dir = tmp_path / "uploaded_assets"
+    generated_dir.mkdir()
+    uploaded_dir.mkdir()
+
+    def settings_view_only_can(_user, permission: str, _settings) -> bool:
+        return permission == "settings:view"
+
+    def override_db():
+        db = TestingSession()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    monkeypatch.setattr(main_module, "can", settings_view_only_can)
+    monkeypatch.setattr(main_module, "GENERATED_ASSET_DIR", generated_dir)
+    monkeypatch.setattr(main_module, "LOCAL_UPLOAD_DIR", uploaded_dir)
+    client = TestClient(app)
+    login = client.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": admin.external_user_id, "email": admin.email, "nickname": "Viewer"},
+    )
+    assert login.status_code == 200
+
+    response = client.get("/api/admin/asset-cleanup/preview")
+
+    assert response.status_code == 200
+    targets = response.json()["summary"]["targets"]
+    assert targets
+    assert all(target["path"] == "" for target in targets)
+
+    app.dependency_overrides.clear()
+    main_module.rate_limiter.clear()
+
+
+def test_scheduled_asset_cleanup_runs_at_most_once_per_day(tmp_path) -> None:
+    from app.asset_cleanup import build_cleanup_targets, maybe_run_scheduled_asset_cleanup
+
+    db = make_db()
+    generated_dir = tmp_path / "generated_assets"
+    uploaded_dir = tmp_path / "uploaded_assets"
+    generated_dir.mkdir()
+    uploaded_dir.mkdir()
+    old_file = generated_dir / "old.png"
+    second_old_file = uploaded_dir / "old-upload.png"
+    old_file.write_bytes(b"old-generated")
+    second_old_file.write_bytes(b"old-uploaded")
+    base_now = datetime.now().timestamp()
+    old_time = base_now - 9 * 86400
+    os.utime(old_file, (old_time, old_time))
+    os.utime(second_old_file, (old_time, old_time))
+    targets = build_cleanup_targets(generated_dir, uploaded_dir)
+
+    first = maybe_run_scheduled_asset_cleanup(db, targets=targets, now_ts=base_now)
+    second = maybe_run_scheduled_asset_cleanup(db, targets=targets, now_ts=base_now + 3600)
+    third = maybe_run_scheduled_asset_cleanup(db, targets=targets, now_ts=base_now + 90000)
+
+    assert first is not None
+    assert first["deletedFiles"] == 2
+    assert second is None
+    assert third is not None
+    assert third["deletedFiles"] == 0
+
+
+def test_scheduled_asset_cleanup_once_uses_app_asset_targets_and_closes_session(monkeypatch) -> None:
+    import app.main as main_module
+
+    class FakeSession:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    fake_db = FakeSession()
+
+    def fake_session_local() -> FakeSession:
+        return fake_db
+
+    def fake_targets() -> list[str]:
+        return ["asset-targets"]
+
+    def fake_maybe_run(db, *, targets):
+        assert db is fake_db
+        assert targets == ["asset-targets"]
+        return {"deletedFiles": 1}
+
+    monkeypatch.setattr(main_module, "SessionLocal", fake_session_local)
+    monkeypatch.setattr(main_module, "asset_cleanup_targets", fake_targets)
+    monkeypatch.setattr(main_module, "maybe_run_scheduled_asset_cleanup", fake_maybe_run, raising=False)
+
+    result = main_module.run_scheduled_asset_cleanup_once()
+
+    assert result == {"deletedFiles": 1}
+    assert fake_db.closed is True
+
+
+def test_scheduled_asset_cleanup_sets_auto_marker_before_running(monkeypatch, tmp_path) -> None:
+    from app.asset_cleanup import (
+        ASSET_CLEANUP_LAST_AUTO_RUN_KEY,
+        build_cleanup_targets,
+        maybe_run_scheduled_asset_cleanup,
+    )
+
+    db = make_db()
+    generated_dir = tmp_path / "generated_assets"
+    uploaded_dir = tmp_path / "uploaded_assets"
+    generated_dir.mkdir()
+    uploaded_dir.mkdir()
+    targets = build_cleanup_targets(generated_dir, uploaded_dir)
+    observed_marker = {"value": None}
+
+    def fake_run_asset_cleanup(run_db, *, targets, retention_days, now_ts=None, admin=None):
+        marker = run_db.get(SystemSetting, ASSET_CLEANUP_LAST_AUTO_RUN_KEY)
+        observed_marker["value"] = marker.value if marker else None
+        return {
+            "retentionDays": retention_days,
+            "cutoffTs": now_ts,
+            "totalFiles": 0,
+            "expiredFiles": 0,
+            "totalBytes": 0,
+            "expiredBytes": 0,
+            "deletedFiles": 0,
+            "deletedBytes": 0,
+            "failedFiles": 0,
+            "failures": [],
+            "ranAt": datetime.now().isoformat(),
+            "targets": [],
+        }
+
+    monkeypatch.setattr("app.asset_cleanup.run_asset_cleanup", fake_run_asset_cleanup)
+
+    result = maybe_run_scheduled_asset_cleanup(db, targets=targets, now_ts=90000)
+
+    assert result is not None
+    assert observed_marker["value"] == "90000.0"
+
+
+def test_scheduled_asset_cleanup_records_failures_for_future_visibility(monkeypatch, tmp_path) -> None:
+    from app.asset_cleanup import (
+        ASSET_CLEANUP_LAST_RUN_KEY,
+        build_cleanup_targets,
+        maybe_run_scheduled_asset_cleanup,
+    )
+
+    db = make_db()
+    generated_dir = tmp_path / "generated_assets"
+    uploaded_dir = tmp_path / "uploaded_assets"
+    generated_dir.mkdir()
+    uploaded_dir.mkdir()
+    targets = build_cleanup_targets(generated_dir, uploaded_dir)
+
+    def fake_run_asset_cleanup(*_args, **_kwargs):
+        raise OSError("disk not reachable")
+
+    monkeypatch.setattr("app.asset_cleanup.run_asset_cleanup", fake_run_asset_cleanup)
+
+    result = maybe_run_scheduled_asset_cleanup(db, targets=targets, now_ts=90000)
+
+    assert result is None
+    marker = db.get(SystemSetting, ASSET_CLEANUP_LAST_RUN_KEY)
+    assert marker is not None
+    payload = json.loads(marker.value)
+    assert payload["status"] == "failed"
+    assert "disk not reachable" in payload["message"]
 
 
 def test_super_admin_can_update_database_admin_role() -> None:

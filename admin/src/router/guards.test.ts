@@ -52,7 +52,7 @@ describe('admin router guards', () => {
       '模型中心',
       '提示语中心',
       '用户与积分',
-      '创作记录',
+      '创作中心',
       '审计日志',
       '系统设置',
       '无权访问',
@@ -101,7 +101,7 @@ describe('admin router guards', () => {
     ]);
     const visible = visibleAdminMenuItems((permission) => allowed.has(permission));
 
-    expect(visible.map((item) => item.label)).toEqual(['仪表盘', '创作记录', '系统设置']);
+    expect(visible.map((item) => item.label)).toEqual(['仪表盘', '创作中心', '系统设置']);
   });
 
   it('shows settings navigation for maintenance-only admins', () => {

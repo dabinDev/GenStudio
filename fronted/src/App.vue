@@ -2158,6 +2158,29 @@ function getModelReadyError(model: ModelDefinition, setting: ModelSetting): stri
   return "";
 }
 
+// 构建文案创作的上下文消息列表，携带最近 20 轮（40 条）历史消息
+function buildTextContextMessages(
+  conversation: ConversationDefinition | null | undefined,
+  systemPrompt: string,
+  userPrompt: string,
+): Array<{ role: string; content: string }> {
+  const MAX_HISTORY_MESSAGES = 40;
+  const result: Array<{ role: string; content: string }> = [];
+  if (systemPrompt.trim()) {
+    result.push({ role: "system", content: systemPrompt.trim() });
+  }
+  if (conversation?.capability === "text") {
+    const pastMessages = conversation.messages
+      .filter((m) => (m.role === "user" || m.role === "assistant") && m.status === "success" && m.content?.trim())
+      .slice(-MAX_HISTORY_MESSAGES);
+    for (const m of pastMessages) {
+      result.push({ role: m.role, content: m.content });
+    }
+  }
+  result.push({ role: "user", content: userPrompt });
+  return result;
+}
+
 function promptTextForCapability(capability: Capability): string {
   if (capability === "text") return textState.prompt;
   if (capability === "image") return imageState.prompt;
@@ -2296,12 +2319,7 @@ async function handleTextSubmit() {
     const response = await postProxyWithSignal<TextResult>("/api/proxy/text", buildModelProxyPayload(model, setting, {
       conversationId: persistedConversationIdFor("text"),
       requestBody: {
-        messages: [
-          textState.systemPrompt.trim()
-            ? { role: "system", content: textState.systemPrompt.trim() }
-            : null,
-          { role: "user", content: finalPrompt },
-        ].filter(Boolean),
+        messages: buildTextContextMessages(conversationState.current, textState.systemPrompt, finalPrompt),
         stream: false,
         temperature: Number(textState.temperature) || undefined,
         max_tokens: Number(textState.maxTokens) || undefined,

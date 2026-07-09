@@ -333,6 +333,40 @@ class AdminUserUpdate(BaseModel):
     status: str | None = None
 
 
+class AdminResetPasswordRequest(BaseModel):
+    password: str
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        if len(value.strip()) < 6:
+            raise ValueError("密码长度不能少于 6 位。")
+        return value.strip()
+
+
+class AdminBatchCreditAdjustRequest(BaseModel):
+    userIds: list[str]
+    amount: int
+    reason: str
+
+    @field_validator("amount")
+    @classmethod
+    def validate_amount(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("批量赠送积分数量必须大于 0。")
+        return value
+
+    @field_validator("userIds")
+    @classmethod
+    def validate_user_ids(cls, value: list[str]) -> list[str]:
+        ids = [v.strip() for v in value if v.strip()]
+        if not ids:
+            raise ValueError("userIds 不能为空。")
+        if len(ids) > 200:
+            raise ValueError("单次批量操作不超过 200 个用户。")
+        return ids
+
+
 class AdminUserRoleUpdate(BaseModel):
     role: str
     note: str = ""

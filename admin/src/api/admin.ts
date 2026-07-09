@@ -260,6 +260,30 @@ export async function adjustUserCredits(
   });
 }
 
+export async function resetUserPassword(
+  userId: string,
+  password: string,
+): Promise<{ ok: boolean }> {
+  return adminRequest<{ ok: boolean }>(`${adminUserPath(userId)}/reset-password`, {
+    method: 'POST',
+    body: JSON.stringify({ password }),
+  });
+}
+
+export async function batchAdjustUserCredits(
+  userIds: string[],
+  amount: number,
+  reason: string,
+): Promise<{ results: Array<{ userId: string; ok: boolean; message?: string }>; successCount: number }> {
+  return adminRequest<{ results: Array<{ userId: string; ok: boolean; message?: string }>; successCount: number }>(
+    '/api/admin/credits/batch-adjust',
+    {
+      method: 'POST',
+      body: JSON.stringify({ userIds, amount, reason }),
+    },
+  );
+}
+
 function paramsFromQuery(query: object = {}): string {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(query)) {
@@ -388,7 +412,7 @@ export async function exportAdminRecords(
       ? await response.json().catch(() => null)
       : await response.text().catch(() => '');
     throw new AdminApiError(
-      typeof payload === 'string' && payload.trim() ? payload.trim() : '创作记录导出失败，请稍后重试。',
+      typeof payload === 'string' && payload.trim() ? payload.trim() : '创作中心导出失败，请稍后重试。',
       response.status,
       payload,
     );

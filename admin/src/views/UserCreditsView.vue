@@ -21,6 +21,14 @@
           </div>
         </div>
         <el-button
+          v-if="canAdjustCredits && selectedIds.length > 0"
+          type="primary"
+          :disabled="isSaving"
+          @click="batchGrantDialogVisible = true"
+        >
+          批量赠送积分（已选 {{ selectedIds.length }} 人）
+        </el-button>
+        <el-button
           v-if="canExportUsers"
           :disabled="!filteredUsers.length || isExporting"
           :loading="isExporting"
@@ -85,7 +93,8 @@
 
     <section class="admin-user-credits__table">
       <div class="admin-user-credits__table-scroll" data-scroll-hint="左右滑动查看更多">
-      <el-table v-loading="isLoading" :data="filteredUsers" row-key="id">
+      <el-table v-loading="isLoading" :data="filteredUsers" row-key="id" @selection-change="setSelected">
+        <el-table-column type="selection" width="44" reserve-selection />
         <el-table-column label="用户" min-width="250">
           <template #default="{ row }">
             <div class="admin-user-credits__identity">
@@ -269,8 +278,62 @@
             </el-button>
           </div>
         </el-form>
+
+        <el-divider />
+
+        <el-form label-position="top">
+          <el-form-item label="重置密码">
+            <el-input
+              v-model="newPassword"
+              type="password"
+              show-password
+              placeholder="新密码（至少 6 位）"
+              :disabled="!canUpdateUserProfile"
+              maxlength="128"
+            />
+          </el-form-item>
+          <div class="admin-user-credits__drawer-actions">
+            <el-button
+              :disabled="!canUpdateUserProfile || !newPassword.trim()"
+              :loading="isSaving"
+              @click="submitResetPassword"
+            >
+              重置密码
+            </el-button>
+          </div>
+        </el-form>
       </div>
     </el-drawer>
+
+    <!-- 批量赠送积分弹窗 -->
+    <el-dialog v-model="batchGrantDialogVisible" title="批量赠送积分" width="min(440px, 95vw)" destroy-on-close>
+      <el-form label-position="top">
+        <el-form-item label="赠送积分数量">
+          <el-input-number v-model="batchGrantAmount" :min="1" :precision="0" :step="100" style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="赠送原因">
+          <el-input
+            v-model="batchGrantReason"
+            type="textarea"
+            :rows="3"
+            maxlength="120"
+            show-word-limit
+            placeholder="例如：活动奖励、补偿赠送"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="batchGrantDialogVisible = false">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="isBatchGranting"
+          :disabled="!batchGrantAmount || !batchGrantReason.trim()"
+          @click="submitBatchGrant"
+        >
+          确认赠送 {{ selectedIds.length }} 人
+        </el-button>
+      </template>
+    </el-dialog>
   </section>
 </template>
 
@@ -281,7 +344,9 @@ import { useRouter } from 'vue-router';
 
 import {
   adjustUserCredits,
+  batchAdjustUserCredits,
   fetchAdminUsers,
+  resetUserPassword,
   setAdminUserStatus,
   updateAdminUser,
   updateAdminUserRole,
@@ -313,6 +378,8 @@ const {
   adminCount,
   totalBalance,
   filteredUsers,
+  selectedIds,
+  setSelected,
   loadUsers,
   replaceUser: replaceUserInState,
 } = createUserCreditsState(fetchAdminUsers);
@@ -326,6 +393,11 @@ const drawerVisible = ref(false);
 const selectedUser = ref<AdminUserWithCredits | null>(null);
 const adjustAmount = ref(0);
 const adjustReason = ref('');
+const newPassword = ref('');
+const batchGrantDialogVisible = ref(false);
+const batchGrantAmount = ref(100);
+const batchGrantReason = ref('');
+const isBatchGranting = ref(false);
 const profileForm = reactive({
   nickname: '',
   phone: '',
@@ -449,6 +521,7 @@ function openDrawer(user: AdminUserWithCredits) {
   syncProfileForm(user);
   adjustAmount.value = 0;
   adjustReason.value = '';
+  newPassword.value = '';
   drawerVisible.value = true;
 }
 
@@ -585,6 +658,75 @@ async function submitCreditAdjustment() {
     errorMessage.value = friendlyAdminError(error, '积分调整失败，请稍后重试。');
   } finally {
     isSaving.value = false;
+  }
+}
+
+async function submitResetPassword() {
+  if (!selectedUser.value) return;
+  if (!canUpdateUserProfile.value) {
+    errorMessage.value = '当前账号没有重置密码的权限。';
+    return;
+  }
+  const password = newPassword.value.trim();
+  if (password.length < 6) {
+    errorMessage.value = '密码长度不能少于 6 位。';
+    return;
+  }
+  try {
+    await ElMessageBox.confirm('确认重置该用户的密码？重置后原密码立即失效。', '确认重置密码', {
+      type: 'warning',
+      confirmButtonText: '确认重置',
+      cancelButtonText: '取消',
+    });
+  } catch {
+    return;
+  }
+  isSaving.value = true;
+  errorMessage.value = '';
+  noticeMessage.value = '';
+  try {
+    await resetUserPassword(selectedUser.value.id, password);
+    newPassword.value = '';
+    noticeMessage.value = '密码已重置。';
+  } catch (error) {
+    errorMessage.value = friendlyAdminError(error, '密码重置失败，请稍后重试。');
+  } finally {
+    isSaving.value = false;
+  }
+}
+
+async function submitBatchGrant() {
+  if (!canAdjustCredits.value) {
+    errorMessage.value = '当前账号没有调整积分的权限。';
+    return;
+  }
+  if (!batchGrantAmount.value || batchGrantAmount.value <= 0) {
+    errorMessage.value = '请输入有效的赠送积分数量。';
+    return;
+  }
+  if (!batchGrantReason.value.trim()) {
+    errorMessage.value = '请填写赠送原因。';
+    return;
+  }
+  if (selectedIds.value.length === 0) return;
+  isBatchGranting.value = true;
+  errorMessage.value = '';
+  noticeMessage.value = '';
+  try {
+    const result = await batchAdjustUserCredits(selectedIds.value, batchGrantAmount.value, batchGrantReason.value.trim());
+    batchGrantDialogVisible.value = false;
+    batchGrantAmount.value = 100;
+    batchGrantReason.value = '';
+    if (result.successCount === selectedIds.value.length) {
+      noticeMessage.value = `已成功向 ${result.successCount} 位用户赠送 ${batchGrantAmount.value} 积分。`;
+    } else {
+      noticeMessage.value = `积分赠送完成：${result.successCount} 人成功，${selectedIds.value.length - result.successCount} 人失败。`;
+    }
+    void loadUsers();
+  } catch (error) {
+    errorMessage.value = friendlyAdminError(error, '批量赠送积分失败，请稍后重试。');
+  } finally {
+    isBatchGranting.value = false;
   }
 }
 

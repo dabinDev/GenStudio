@@ -126,7 +126,7 @@ from app.credit_service import (
     update_credit_settings,
 )
 from app.database import SessionLocal, get_db, init_db
-from app.db_models import CallLog, Conversation, ConversationMessage, GeneratedAsset, ModelGroup, SubModel, User, utcnow
+from app.db_models import CallLog, Conversation, ConversationMessage, GeneratedAsset, ModelGroup, SubModel, User, UserCredential, utcnow
 from app.model_service import (
     create_model_group,
     delete_model_group,
@@ -185,6 +185,7 @@ from app.proxy_utils import (
 )
 from app.rate_limit import InMemoryRateLimiter, check_rate_limit
 from app.schemas import (
+    AdminBatchCreditAdjustRequest,
     AdminCreditAdjustRequest,
     AdminCreditSettingsUpdate,
     AdminDashboardMetricOut,
@@ -192,6 +193,7 @@ from app.schemas import (
     AdminModelCreditPricingUpdate,
     AdminModelUpdate,
     AdminPermissionOut,
+    AdminResetPasswordRequest,
     AdminUserMergeRequest,
     AdminUserRoleUpdate,
     AdminUserUpdate,
@@ -207,7 +209,7 @@ from app.schemas import (
     ProfileUpdateRequest,
     RegisterRequest,
 )
-from app.security import decrypt_secret
+from app.security import decrypt_secret, hash_password
 from app.storage import create_presigned_put_url
 from app.user_maintenance import merge_duplicate_users_by_identity
 
@@ -3892,6 +3894,57 @@ async def admin_restore_user_route(
     require_admin_permission(admin, "user:restore", settings)
     user = admin_restore_user(db, admin, user_id)
     return {"user": serialize_admin_user_with_duplicate_identity(db, user, settings)}
+
+
+@app.post("/api/admin/users/{user_id}/reset-password")
+async def admin_reset_user_password(
+    user_id: str,
+    payload: AdminResetPasswordRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    require_admin_permission(admin, "user:update", settings)
+    user = get_admin_user(db, user_id)
+    ensure_can_manage_user(admin, user)
+    credential = (
+        db.query(UserCredential)
+        .filter(UserCredential.user_id == user.id, UserCredential.provider == "local")
+        .one_or_none()
+    )
+    if not credential:
+        raise HTTPException(status_code=400, detail={"message": "该用户未使用本地账号登录，无法重置密码。"})
+    credential.password_hash = hash_password(payload.password)
+    credential.failed_attempts = 0
+    credential.locked_until = None
+    db.commit()
+    write_admin_log(db, admin, action="reset_password", target_type="user", target_id=user.id)
+    return {"ok": True}
+
+
+@app.post("/api/admin/credits/batch-adjust")
+async def admin_batch_adjust_credits(
+    payload: AdminBatchCreditAdjustRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    require_admin_permission(admin, "credit:adjust", settings)
+    results: list[dict[str, Any]] = []
+    for user_id in payload.userIds:
+        user = db.get(User, user_id)
+        if not user:
+            results.append({"userId": user_id, "ok": False, "message": "用户不存在"})
+            continue
+        try:
+            admin_adjust_credits(db, admin=admin, target_user=user, amount=payload.amount, reason=payload.reason)
+            results.append({"userId": user_id, "ok": True})
+        except HTTPException as exc:
+            db.rollback()
+            results.append({"userId": user_id, "ok": False, "message": _http_exception_message(exc)})
+    return {"results": results, "successCount": sum(1 for r in results if r["ok"])}
 
 
 @app.get("/api/admin/records/text")

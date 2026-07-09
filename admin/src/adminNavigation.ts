@@ -13,7 +13,7 @@ export const ADMIN_MENU_ITEMS: AdminMenuItem[] = [
   { path: '/models', label: '模型中心', mark: '模', permission: ADMIN_PERMISSIONS.modelView },
   { path: '/prompts', label: '提示语中心', mark: '提', permission: ADMIN_PERMISSIONS.settingsView },
   { path: '/users', label: '用户与积分', mark: '用', permission: ADMIN_PERMISSIONS.userView },
-  { path: '/records', label: '创作记录', mark: '录', permission: ADMIN_PERMISSIONS.recordView },
+  { path: '/records', label: '创作中心', mark: '创', permission: ADMIN_PERMISSIONS.recordView },
   { path: '/audit', label: '审计日志', mark: '审', permission: ADMIN_PERMISSIONS.auditView },
   {
     path: '/settings',

@@ -67,7 +67,7 @@ export const adminRoutes = [
         path: 'records',
         name: 'admin-records',
         component: RecordsView,
-        meta: { title: '创作记录', permission: ADMIN_PERMISSIONS.recordView },
+        meta: { title: '创作中心', permission: ADMIN_PERMISSIONS.recordView },
       },
       {
         path: 'audit',

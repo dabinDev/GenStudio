@@ -130,7 +130,9 @@ describe("useWorkbenchStore", () => {
     });
   });
 
-  it("deduplicates server models that expose the same public primary model", async () => {
+  it("keeps user-owned private model alongside same-named public model", async () => {
+    // canEdit=true means the current user owns this private model — it must stay visible
+    // even when a public model shares the same primary model name
     const { useWorkbenchStore } = await import("./workbench");
     const store = useWorkbenchStore();
 
@@ -151,6 +153,76 @@ describe("useWorkbenchStore", () => {
         subModels: [
           {
             id: "sub-private-gpt55",
+            modelName: "gpt-5.5",
+            displayName: "gpt-5.5",
+            capability: "text",
+            adapter: "text-chat",
+            isPrimary: true,
+            status: "active",
+          },
+        ],
+      },
+      {
+        id: "mdl-public-gpt55",
+        name: "gpt-5.5 文案",
+        vendor: "OpenAI",
+        capability: "text",
+        adapter: "text-chat",
+        description: "公共模型",
+        apiKeyId: "key-public",
+        baseUrl: "",
+        primarySubModelId: "sub-public-gpt55",
+        primaryModelName: "gpt-5.5",
+        isPublic: true,
+        canEdit: false,
+        publicDisplayName: "GPT 5.5 公用大模型",
+        subModels: [
+          {
+            id: "sub-public-gpt55",
+            modelName: "gpt-5.5",
+            displayName: "gpt-5.5",
+            capability: "text",
+            adapter: "text-chat",
+            isPrimary: true,
+            status: "active",
+          },
+        ],
+      },
+    ]);
+
+    // Both models should be visible: the public one for general use, and the user's
+    // own private model because they created it (canEdit=true)
+    expect(store.models.value.map((model) => model.id)).toEqual(["mdl-private-gpt55", "mdl-public-gpt55"]);
+    const publicModel = store.models.value.find((m) => m.id === "mdl-public-gpt55");
+    expect(publicModel).toMatchObject({ isPublic: true, publicDisplayName: "GPT 5.5 公用大模型" });
+    const privateModel = store.models.value.find((m) => m.id === "mdl-private-gpt55");
+    expect(privateModel).toMatchObject({ isPublic: false, canEdit: true });
+  });
+
+  it("deduplicates non-owned private models that share a name with a public model", async () => {
+    // canEdit=false, isPublic=false: a private model the current user cannot edit
+    // (e.g. another user's read-only model returned via some future shared flow)
+    // should still be removed when a public model covers the same name
+    const { useWorkbenchStore } = await import("./workbench");
+    const store = useWorkbenchStore();
+
+    store.applyServerModels([
+      {
+        id: "mdl-readonly-gpt55",
+        name: "gpt-5.5 文案",
+        vendor: "OpenAI",
+        capability: "text",
+        adapter: "text-chat",
+        description: "只读模型",
+        apiKeyId: "key-readonly",
+        baseUrl: "",
+        primarySubModelId: "sub-readonly-gpt55",
+        primaryModelName: "gpt-5.5",
+        isPublic: false,
+        canEdit: false,
+        subModels: [
+          {
+            id: "sub-readonly-gpt55",
             modelName: "gpt-5.5",
             displayName: "gpt-5.5",
             capability: "text",

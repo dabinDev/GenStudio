@@ -2,7 +2,7 @@
   <section class="admin-content-page">
     <header class="admin-content-page__header">
       <div>
-        <h2>创作记录</h2>
+        <h2>创作中心</h2>
         <p>按用户、模型、时间和类型查看文案、图片、视频调用的提示词、响应结果和任务状态。</p>
       </div>
       <div class="admin-content-page__actions">

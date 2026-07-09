@@ -104,6 +104,7 @@ export function useWorkbenchStore() {
     if (!publicPrimaryKeys.size) return deduped;
     return deduped.filter((model) => {
       if (model.isPublic) return true;
+      if (model.canEdit) return true; // 用户自己创建的私有模型始终显示
       return !publicPrimaryKeys.has(`${model.capability}:${primaryServerModelName(model)}`);
     });
   }

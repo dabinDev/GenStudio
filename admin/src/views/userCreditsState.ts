@@ -53,6 +53,13 @@ export function createUserCreditsState(loader: (query: AdminUserListQuery) => Pr
   const errorMessage = ref('');
   let latestRequestId = 0;
 
+  const selectedIds = ref<string[]>([]);
+  const selectedUsers = computed(() => users.value.filter((u) => selectedIds.value.includes(u.id)));
+
+  function setSelected(rows: AdminUserWithCredits[]) {
+    selectedIds.value = rows.map((u) => u.id);
+  }
+
   const adminCount = computed(() => users.value.filter((user) => user.isAdmin).length);
   const totalBalance = computed(() =>
     users.value.reduce((sum, user) => sum + (user.credits?.balance ?? 0), 0),
@@ -114,6 +121,9 @@ export function createUserCreditsState(loader: (query: AdminUserListQuery) => Pr
     adminCount,
     totalBalance,
     filteredUsers,
+    selectedIds,
+    selectedUsers,
+    setSelected,
     loadUsers,
     replaceUser,
   };

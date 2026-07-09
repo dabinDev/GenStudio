@@ -3389,3 +3389,84 @@ def test_seedance_video_prompt_uses_text_content_for_title(monkeypatch) -> None:
     conversation = created.json()["conversation"]
     assert conversation["title"] == "一杯茶旋转"
     assert conversation["messages"][0]["content"] == "一杯茶旋转"
+
+
+def test_proxy_models_returns_friendly_error_on_upstream_connect_failure(monkeypatch) -> None:
+    # A custom-provider baseURL that is genuinely unreachable (wrong network/DNS/wall)
+    # must not crash the request into a bare 500 that browsers report as "Failed to fetch" -
+    # it should surface a clean 502 with a helpful message instead.
+    async def fake_forward_json(method, url, api_key, body=None):
+        raise httpx.ConnectError("All connection attempts failed")
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+
+    response = client.post(
+        "/api/proxy/models",
+        headers=csrf_headers(client),
+        json={"config": {"baseUrl": "https://unreachable.example.com", "apiKey": "sk-test"}, "capability": "text"},
+    )
+
+    assert response.status_code == 502
+    assert "message" in response.json()["detail"]
+
+
+def test_proxy_models_returns_friendly_error_on_upstream_timeout(monkeypatch) -> None:
+    async def fake_forward_json(method, url, api_key, body=None):
+        raise httpx.ConnectTimeout("Connection timed out")
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+
+    response = client.post(
+        "/api/proxy/models",
+        headers=csrf_headers(client),
+        json={"config": {"baseUrl": "https://slow.example.com", "apiKey": "sk-test"}, "capability": "text"},
+    )
+
+    assert response.status_code == 504
+    assert "message" in response.json()["detail"]
+
+
+def test_proxy_test_returns_friendly_error_on_upstream_connect_failure(monkeypatch) -> None:
+    async def fake_forward_json(method, url, api_key, body=None):
+        raise httpx.ConnectError("All connection attempts failed")
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+
+    response = client.post(
+        "/api/proxy/test",
+        headers=csrf_headers(client),
+        json={
+            "config": {"baseUrl": "https://unreachable.example.com", "apiKey": "sk-test"},
+            "capability": "text",
+            "model": "gpt-4o",
+        },
+    )
+
+    assert response.status_code == 502
+    assert "message" in response.json()["detail"]
+
+
+def test_sync_model_list_returns_friendly_error_on_upstream_connect_failure(monkeypatch) -> None:
+    # The "获取模型" button on an already-saved model hits /api/models/{id}/sync,
+    # which shares the same forward_json call and must not crash on connect errors either.
+    client = TestClient(app)
+    login(client, "alice")
+    create_text_model(client)
+    model_id = client.get("/api/models").json()["models"][0]["id"]
+    assert model_id
+
+    async def fake_forward_json(method, url, api_key=None, body=None):
+        raise httpx.ConnectError("All connection attempts failed")
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+
+    response = client.post(f"/api/models/{model_id}/sync", headers=csrf_headers(client))
+
+    assert response.status_code == 502
+    assert "message" in response.json()["detail"]

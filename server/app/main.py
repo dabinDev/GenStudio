@@ -2996,7 +2996,12 @@ async def sync_model_list(
     api_key = model.api_key
     target_url = resolve_url(api_key.base_url, "/v1/models")
     started_at = time.perf_counter()
-    response, raw = await forward_json("GET", target_url, api_key=decrypt_secret(api_key.api_key_ciphertext))
+    try:
+        response, raw = await forward_json("GET", target_url, api_key=decrypt_secret(api_key.api_key_ciphertext))
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail={"message": "连接供应商超时，请检查 baseURL 或稍后重试。"})
+    except httpx.HTTPError:
+        raise HTTPException(status_code=502, detail={"message": "无法连接到该供应商，请检查 baseURL 是否正确、网络是否可达。"})
     duration_ms = elapsed_ms(started_at)
     if not response.is_success or not isinstance(raw, dict):
         raise upstream_error(raw, "获取模型列表失败。", response.status_code)
@@ -4450,7 +4455,12 @@ async def proxy_models(
     base_url, api_key = validate_config(payload.get("config"))
     target_url = resolve_url(base_url, "/v1/models")
     started_at = time.perf_counter()
-    response, raw = await forward_json("GET", target_url, api_key)
+    try:
+        response, raw = await forward_json("GET", target_url, api_key)
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail={"message": "连接供应商超时，请检查 baseURL 或稍后重试。"})
+    except httpx.HTTPError:
+        raise HTTPException(status_code=502, detail={"message": "无法连接到该供应商，请检查 baseURL 是否正确、网络是否可达。"})
     duration_ms = round((time.perf_counter() - started_at) * 1000)
 
     if not response.is_success or not isinstance(raw, dict):
@@ -4505,7 +4515,12 @@ async def proxy_test(
         body = normalize_kkyi_video_body(body, sub_model.model_name, sub_model)
     target_url = resolve_url(base_url, target_path)
     started_at = time.perf_counter()
-    response, raw = await forward_json("POST", target_url, api_key, body)
+    try:
+        response, raw = await forward_json("POST", target_url, api_key, body)
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail={"message": "连接供应商超时，请检查 baseURL 或稍后重试。"})
+    except httpx.HTTPError:
+        raise HTTPException(status_code=502, detail={"message": "无法连接到该供应商，请检查 baseURL 是否正确、网络是否可达。"})
     raw = coerce_json_object(raw)
     duration_ms = round((time.perf_counter() - started_at) * 1000)
     request = {"url": target_url, "body": body}

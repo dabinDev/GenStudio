@@ -4197,3 +4197,107 @@ def test_register_returns_signup_bonus_credit_snapshot() -> None:
 
     app.dependency_overrides.clear()
     main_module.rate_limiter.clear()
+
+
+def test_admin_users_pagination_and_summary() -> None:
+    from app.admin_service import admin_users_summary, count_admin_users, list_admin_users
+
+    db = make_db()
+    for i in range(5):
+        user = make_user(db, f"page-user{i}@example.com", external_id=f"page-ext-{i}")
+        db.add(UserCreditAccount(user_id=user.id, balance=10 * (i + 1)))
+    db.commit()
+
+    assert count_admin_users(db) == 5
+    assert len(list_admin_users(db, page=1, page_size=2)) == 2
+    assert len(list_admin_users(db, page=3, page_size=2)) == 1
+    assert len(list_admin_users(db, limit=None)) == 5
+
+    summary = admin_users_summary(db)
+    assert summary["totalUsers"] == 5
+    assert summary["totalBalance"] == 150
+
+
+def test_admin_models_pagination_and_count() -> None:
+    from app.admin_service import count_admin_models, list_admin_models
+
+    db = make_db()
+    owner = make_user(db, "model-owner@example.com")
+    for i in range(3):
+        make_model(db, owner, name=f"Paginated Model {i}")
+
+    assert count_admin_models(db) == 3
+    assert len(list_admin_models(db, page=1, page_size=2)) == 2
+    assert len(list_admin_models(db, limit=None)) == 3
+
+
+def test_admin_records_time_filter_and_pagination() -> None:
+    from app.admin_service import list_admin_creation_records
+
+    db = make_db()
+    user = make_user(db, "records-user@example.com")
+    conversation = Conversation(user_id=user.id, title="记录", capability="text")
+    db.add(conversation)
+    db.commit()
+    for ts in (datetime(2026, 1, 1), datetime(2026, 6, 1)):
+        db.add(
+            ConversationMessage(
+                conversation_id=conversation.id,
+                user_id=user.id,
+                role="assistant",
+                capability="text",
+                content="生成结果",
+                status="success",
+                created_at=ts,
+            )
+        )
+    db.commit()
+
+    assert len(list_admin_creation_records(db, capability="text")) == 2
+    filtered = list_admin_creation_records(db, capability="text", start_at="2026-03-01T00:00:00")
+    assert len(filtered) == 1
+    first_page = list_admin_creation_records(db, capability="text", page=1, page_size=1)
+    assert len(first_page) == 1
+
+
+def test_admin_audit_logs_pagination() -> None:
+    from app.admin_service import count_admin_audit_logs, list_admin_audit_logs
+
+    db = make_db()
+    for i in range(4):
+        db.add(
+            AdminOperationLog(
+                admin_user_id="admin",
+                action=f"action-{i}",
+                target_type="user",
+                target_id=f"user-{i}",
+                status="success",
+            )
+        )
+    db.commit()
+
+    assert count_admin_audit_logs(db) == 4
+    assert len(list_admin_audit_logs(db, page=1, page_size=2)) == 2
+    assert len(list_admin_audit_logs(db, unlimited=True)) == 4
+
+
+def test_prompt_template_version_restore() -> None:
+    from app.admin_service import restore_prompt_template_version, upsert_prompt_template
+    from app.schemas import PromptTemplateUpdate
+
+    db = make_db()
+    admin = make_user(db, "cage_ben@sina.com")
+    first = upsert_prompt_template(
+        db,
+        admin,
+        PromptTemplateUpdate(capability="text", templateType="prompt_optimize", name="v1", content="第一版 {{prompt}}", enabled=True),
+    )
+    upsert_prompt_template(
+        db,
+        admin,
+        PromptTemplateUpdate(capability="text", templateType="prompt_optimize", name="v2", content="第二版 {{prompt}}", enabled=True),
+    )
+
+    restored = restore_prompt_template_version(db, admin, first.id, 1)
+    assert restored.content == "第一版 {{prompt}}"
+    assert restored.name == "v1"

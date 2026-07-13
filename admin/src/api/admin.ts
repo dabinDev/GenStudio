@@ -41,6 +41,8 @@ import type {
   Capability,
   UserMergeMaintenancePayload,
   UserMergeSummary,
+  AdminListMeta,
+  AdminUsersSummary,
 } from '@/types';
 
 export async function fetchCurrentUser(): Promise<AdminUserSession | null> {
@@ -66,7 +68,10 @@ export async function fetchDashboardMetrics(range = '30d'): Promise<AdminDashboa
   return adminRequest<AdminDashboardMetrics>(`/api/admin/dashboard/metrics?range=${encodeURIComponent(range)}`);
 }
 
-export async function fetchAdminModels(query: AdminModelListQuery = {}): Promise<AdminModel[]> {
+export async function fetchAdminModels(
+  query: AdminModelListQuery = {},
+  onMeta?: (meta: AdminListMeta) => void,
+): Promise<AdminModel[]> {
   const params = new URLSearchParams();
   if (query.capability) {
     params.set('capability', query.capability);
@@ -77,8 +82,17 @@ export async function fetchAdminModels(query: AdminModelListQuery = {}): Promise
   if (query.publicState) {
     params.set('publicState', query.publicState);
   }
+  if (query.page) {
+    params.set('page', String(query.page));
+  }
+  if (query.pageSize) {
+    params.set('pageSize', String(query.pageSize));
+  }
   const suffix = params.toString() ? `?${params.toString()}` : '';
-  const payload = await adminRequest<{ models: AdminModel[] }>(`/api/admin/models${suffix}`);
+  const payload = await adminRequest<{ models: AdminModel[]; total?: number; page?: number; pageSize?: number }>(
+    `/api/admin/models${suffix}`,
+  );
+  onMeta?.({ total: payload.total, page: payload.page, pageSize: payload.pageSize });
   return payload.models;
 }
 
@@ -160,7 +174,10 @@ export async function removeUnavailableAdminModels(
   });
 }
 
-export async function fetchAdminUsers(query: string | AdminUserListQuery = ''): Promise<AdminUserWithCredits[]> {
+export async function fetchAdminUsers(
+  query: string | AdminUserListQuery = '',
+  onMeta?: (meta: AdminListMeta) => void,
+): Promise<AdminUserWithCredits[]> {
   const normalized = typeof query === 'string' ? { search: query } : query;
   const params = new URLSearchParams();
   const search = (normalized.search || '').trim();
@@ -175,8 +192,21 @@ export async function fetchAdminUsers(query: string | AdminUserListQuery = ''): 
   if (status && status !== 'all') {
     params.set('status', status);
   }
+  if (normalized.page) {
+    params.set('page', String(normalized.page));
+  }
+  if (normalized.pageSize) {
+    params.set('pageSize', String(normalized.pageSize));
+  }
   const suffix = params.toString() ? `?${params.toString()}` : '';
-  const payload = await adminRequest<{ users: AdminUserWithCredits[] }>(`/api/admin/users${suffix}`);
+  const payload = await adminRequest<{
+    users: AdminUserWithCredits[];
+    total?: number;
+    page?: number;
+    pageSize?: number;
+    summary?: AdminUsersSummary;
+  }>(`/api/admin/users${suffix}`);
+  onMeta?.({ total: payload.total, page: payload.page, pageSize: payload.pageSize, summary: payload.summary });
   return payload.users;
 }
 
@@ -319,6 +349,14 @@ export async function fetchPromptTemplateVersions(templateId: string): Promise<P
   return payload.versions;
 }
 
+export async function restorePromptTemplateVersion(templateId: string, version: number): Promise<PromptTemplate> {
+  const payload = await adminRequest<{ template: PromptTemplate }>(
+    `/api/admin/prompt-templates/${encodeURIComponent(templateId)}/versions/${version}/restore`,
+    { method: 'POST', body: '{}' },
+  );
+  return payload.template;
+}
+
 export async function fetchPromptTemplateModelStatus(capability = 'all'): Promise<PromptTemplateModelStatus[]> {
   const payload = await adminRequest<{ models: PromptTemplateModelStatus[] }>(
     `/api/admin/prompt-templates/model-status${paramsFromQuery({ capability })}`,
@@ -389,10 +427,15 @@ function recordCollectionPath(capability: Capability): string {
 export async function fetchAdminRecords(
   capability: Capability,
   query: AdminRecordQuery = {},
+  onMeta?: (meta: AdminListMeta) => void,
 ): Promise<AdminCreationRecord[]> {
-  const payload = await adminRequest<{ records: AdminCreationRecord[] }>(
-    `/api/admin/records/${recordCollectionPath(capability)}${paramsFromQuery(query)}`,
-  );
+  const payload = await adminRequest<{
+    records: AdminCreationRecord[];
+    page?: number;
+    pageSize?: number;
+    hasMore?: boolean;
+  }>(`/api/admin/records/${recordCollectionPath(capability)}${paramsFromQuery(query)}`);
+  onMeta?.({ page: payload.page, pageSize: payload.pageSize, hasMore: payload.hasMore });
   return payload.records;
 }
 
@@ -437,10 +480,14 @@ export async function fetchTaskTimeline(taskId: string): Promise<AdminTaskTimeli
   return adminRequest<AdminTaskTimeline>(`/api/admin/tasks/${encodeURIComponent(taskId)}/timeline`);
 }
 
-export async function fetchAuditLogs(query: AdminAuditLogQuery = {}): Promise<AdminAuditLog[]> {
-  const payload = await adminRequest<{ logs: AdminAuditLog[] }>(
+export async function fetchAuditLogs(
+  query: AdminAuditLogQuery = {},
+  onMeta?: (meta: AdminListMeta) => void,
+): Promise<AdminAuditLog[]> {
+  const payload = await adminRequest<{ logs: AdminAuditLog[]; total?: number; page?: number; pageSize?: number }>(
     `/api/admin/audit-logs${paramsFromQuery(query)}`,
   );
+  onMeta?.({ total: payload.total, page: payload.page, pageSize: payload.pageSize });
   return payload.logs;
 }
 

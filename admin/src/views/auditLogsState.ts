@@ -18,7 +18,8 @@ export interface AuditLogFilters {
   status: string;
   risk: string;
   dateRange: string[];
-  limit: number;
+  page: number;
+  pageSize: number;
 }
 
 export function createAuditLogFilters(): AuditLogFilters {
@@ -30,7 +31,8 @@ export function createAuditLogFilters(): AuditLogFilters {
     status: '',
     risk: '',
     dateRange: [],
-    limit: 100,
+    page: 1,
+    pageSize: 20,
   };
 }
 
@@ -45,7 +47,8 @@ export function buildAuditLogQuery(filters: AuditLogFilters): AdminAuditLogQuery
     risk: filters.risk,
     startAt,
     endAt,
-    limit: filters.limit,
+    page: filters.page,
+    pageSize: filters.pageSize,
   };
 }
 

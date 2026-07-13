@@ -52,7 +52,7 @@
     </header>
 
     <section class="admin-model-center__filters" aria-label="模型筛选">
-      <el-select v-model="filters.capability" aria-label="类型" @change="loadModels">
+      <el-select v-model="filters.capability" aria-label="类型" @change="reloadFromFirstPage">
         <el-option
           v-for="option in capabilityOptions"
           :key="option.value"
@@ -60,7 +60,7 @@
           :value="option.value"
         />
       </el-select>
-      <el-select v-model="filters.publicState" aria-label="公用状态" @change="loadModels">
+      <el-select v-model="filters.publicState" aria-label="公用状态" @change="reloadFromFirstPage">
         <el-option
           v-for="option in publicStateOptions"
           :key="option.value"
@@ -72,10 +72,10 @@
         v-model="filters.search"
         clearable
         placeholder="搜索名称、厂商或公开名称"
-        @keyup.enter="loadModels"
-        @clear="loadModels"
+        @keyup.enter="reloadFromFirstPage"
+        @clear="reloadFromFirstPage"
       />
-      <el-button type="primary" :loading="isLoading" @click="loadModels">搜索</el-button>
+      <el-button type="primary" :loading="isLoading" @click="reloadFromFirstPage">搜索</el-button>
     </section>
 
     <el-alert
@@ -189,6 +189,18 @@
           </div>
         </template>
       </el-table>
+      <div class="admin-content-page__pagination">
+        <el-pagination
+          layout="total, sizes, prev, pager, next"
+          :total="total"
+          :current-page="page"
+          :page-size="pageSize"
+          :page-sizes="[20, 50, 100]"
+          :disabled="isLoading"
+          @current-change="goToPage"
+          @size-change="handleSizeChange"
+        />
+      </div>
     </section>
 
     <el-drawer v-model="drawerVisible" size="min(520px, 100vw)" :title="drawerTitle" destroy-on-close>
@@ -252,7 +264,17 @@
             />
           </el-form-item>
           <el-form-item label="图标地址">
-            <el-input v-model="editForm.iconUrl" :disabled="!canUpdateActiveModel" />
+            <div class="admin-model-center__icon-field">
+              <el-input v-model="editForm.iconUrl" :disabled="!canUpdateActiveModel" placeholder="https://..." />
+              <img
+                v-if="editForm.iconUrl.trim() && !iconPreviewError"
+                :src="editForm.iconUrl"
+                alt="图标预览"
+                class="admin-model-center__icon-preview"
+                @error="iconPreviewError = true"
+              />
+              <span v-if="editForm.iconUrl.trim() && iconPreviewError" class="admin-model-center__json-error">图标无法加载</span>
+            </div>
           </el-form-item>
           <el-form-item label="公开标签">
             <el-input
@@ -270,12 +292,20 @@
             />
           </el-form-item>
           <el-form-item label="默认参数">
-            <el-input
-              v-model="editForm.defaultParametersText"
-              type="textarea"
-              :rows="6"
-              :disabled="!canUpdateActiveModel"
-            />
+            <div class="admin-model-center__json-field">
+              <el-input
+                v-model="editForm.defaultParametersText"
+                type="textarea"
+                :rows="6"
+                :disabled="!canUpdateActiveModel"
+                @blur="validateDefaultParameters"
+              />
+              <div class="admin-model-center__json-actions">
+                <el-button size="small" :disabled="!canUpdateActiveModel" @click="formatDefaultParameters">格式化</el-button>
+                <span v-if="defaultParametersError" class="admin-model-center__json-error">{{ defaultParametersError }}</span>
+                <span v-else class="admin-model-center__json-ok">JSON 合法</span>
+              </div>
+            </div>
           </el-form-item>
           <el-form-item label="积分价格">
             <div class="admin-model-center__pricing">
@@ -336,6 +366,7 @@ import {
   canUnpublishModel,
 } from '@/adminPermissions';
 import { useAdminAuthStore } from '@/stores/auth';
+import { formatJson, parseJsonObject } from '@/utils/json';
 import type { AdminModel } from '@/types';
 import {
   batchHealthSummary,
@@ -358,6 +389,9 @@ const {
   filters,
   models,
   filteredModels,
+  page,
+  pageSize,
+  total,
   selectedIds,
   selectedModels,
   selectedEditableModels,
@@ -367,6 +401,8 @@ const {
   setSelected,
   replaceModel,
   loadModels,
+  goToPage,
+  reloadFromFirstPage,
 } = createModelCenterState();
 const {
   activeHealth,
@@ -385,6 +421,8 @@ const editForm = ref<ModelEditForm | null>(null);
 const creditPrice = ref(0);
 const isSaving = ref(false);
 const isBatchTesting = ref(false);
+const defaultParametersError = ref('');
+const iconPreviewError = ref(false);
 
 const drawerTitle = computed(() => {
   if (!activeModel.value) {
@@ -455,9 +493,33 @@ function openDrawer(model: AdminModel) {
   activeModel.value = model;
   editForm.value = createEditForm(model);
   creditPrice.value = model.creditPrice || 0;
+  defaultParametersError.value = '';
+  iconPreviewError.value = false;
   resetHealthState();
   drawerVisible.value = true;
   void loadHealth(model.id);
+}
+
+function validateDefaultParameters() {
+  if (!editForm.value) return;
+  const result = parseJsonObject(editForm.value.defaultParametersText);
+  defaultParametersError.value = result.ok ? '' : result.error;
+}
+
+function formatDefaultParameters() {
+  if (!editForm.value) return;
+  const result = parseJsonObject(editForm.value.defaultParametersText);
+  if (!result.ok) {
+    defaultParametersError.value = result.error;
+    return;
+  }
+  editForm.value.defaultParametersText = formatJson(result.value);
+  defaultParametersError.value = '';
+}
+
+function handleSizeChange(size: number) {
+  pageSize.value = size;
+  reloadFromFirstPage();
 }
 
 function handleSelectionChange(rows: AdminModel[]) {
@@ -551,18 +613,59 @@ async function handleBatchHealthCheck() {
 
 async function handleBatchPublish() {
   const targets = selectedEditableModels.value.filter(canPublishRow);
-  await runFriendlyAction(async () => {
-    const updated = await Promise.all(targets.map((model) => publishAdminModel(model.id)));
-    updated.forEach(replaceModel);
-  }, `已公用 ${targets.length} 个模型。`, '批量公用失败，请稍后重试。');
+  if (!targets.length) {
+    return;
+  }
+  isSaving.value = true;
+  errorMessage.value = '';
+  noticeMessage.value = '';
+  const results = await Promise.allSettled(targets.map((model) => publishAdminModel(model.id)));
+  let ok = 0;
+  results.forEach((result) => {
+    if (result.status === 'fulfilled') {
+      replaceModel(result.value);
+      ok += 1;
+    }
+  });
+  isSaving.value = false;
+  if (ok === targets.length) {
+    noticeMessage.value = `已公用 ${ok} 个模型。`;
+  } else {
+    errorMessage.value = `批量公用完成：${ok} 个成功，${targets.length - ok} 个失败。`;
+  }
 }
 
 async function handleBatchUnpublish() {
   const targets = selectedEditableModels.value.filter(canUnpublishRow);
-  await runFriendlyAction(async () => {
-    const updated = await Promise.all(targets.map((model) => unpublishAdminModel(model.id)));
-    updated.forEach(replaceModel);
-  }, `已取消公用 ${targets.length} 个模型。`, '批量取消公用失败，请稍后重试。');
+  if (!targets.length) {
+    return;
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确认取消公用所选 ${targets.length} 个模型？取消后前台用户将无法再使用这些公共模型。`,
+      '批量取消公用',
+      { type: 'warning', confirmButtonText: '确认取消公用', cancelButtonText: '取消' },
+    );
+  } catch {
+    return;
+  }
+  isSaving.value = true;
+  errorMessage.value = '';
+  noticeMessage.value = '';
+  const results = await Promise.allSettled(targets.map((model) => unpublishAdminModel(model.id)));
+  let ok = 0;
+  results.forEach((result) => {
+    if (result.status === 'fulfilled') {
+      replaceModel(result.value);
+      ok += 1;
+    }
+  });
+  isSaving.value = false;
+  if (ok === targets.length) {
+    noticeMessage.value = `已取消公用 ${ok} 个模型。`;
+  } else {
+    errorMessage.value = `批量取消公用完成：${ok} 个成功，${targets.length - ok} 个失败。`;
+  }
 }
 
 async function handleRemoveUnavailable() {

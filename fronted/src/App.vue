@@ -700,6 +700,28 @@ function canSubmitActivePrompt(capability: Capability): boolean {
   return !videoState.loading;
 }
 
+// 返回当前能力提交按钮的禁用原因（空串表示可提交）。
+// 仅覆盖“无模型 / 空需求 / 模型未就绪”这三项通用前置条件，
+// 与 handleTextSubmit / handleImageSubmit / handleVideoCreate 的前置校验保持一致；
+// 视频参考图数量、积分不足等专项校验仍在点击后提示，避免误禁用。
+function composerSubmitBlockReason(capability: Capability): string {
+  const model = activeModel.value;
+  const setting = activeSetting.value;
+  if (!model || !setting) return getMissingModelMessage(capability);
+  const keywords = capability === "text" ? textState.keywords : capability === "image" ? imageState.keywords : videoState.keywords;
+  const prompt = capability === "text" ? textState.prompt : capability === "image" ? imageState.prompt : videoState.prompt;
+  if (!combinePrompt(keywords, prompt).trim()) {
+    if (capability === "text") return "请先输入文案需求。";
+    if (capability === "image") return "请先输入图片需求。";
+    return "请先输入视频需求。";
+  }
+  return getModelReadyError(model, setting);
+}
+
+const textSubmitBlockReason = computed(() => composerSubmitBlockReason("text"));
+const imageSubmitBlockReason = computed(() => composerSubmitBlockReason("image"));
+const videoSubmitBlockReason = computed(() => composerSubmitBlockReason("video"));
+
 function submitActiveComposer(capability: Capability) {
   if (capability === "text") void handleTextSubmit();
   if (capability === "image") void handleImageSubmit();
@@ -4147,7 +4169,7 @@ async function removeUnavailableModels() {
                 <label><span>温度</span><input v-model="textState.temperature" /></label>
                 <label><span>最大 Token</span><input v-model="textState.maxTokens" /></label>
               </div>
-              <button class="composer-submit-button" :disabled="textState.loading" title="发送（Ctrl+Enter）" @click="handleTextSubmit">发送</button>
+              <button class="composer-submit-button" :disabled="textState.loading || Boolean(textSubmitBlockReason)" :title="textSubmitBlockReason || '发送（Ctrl+Enter）'" @click="handleTextSubmit">发送</button>
             </div>
             <details class="composer-details">
               <summary>系统提示词与高级 JSON</summary>
@@ -4317,7 +4339,7 @@ async function removeUnavailableModels() {
                 </div>
               </div>
               <div class="composer-action-group">
-                <button class="composer-submit-button" :disabled="imageState.loading" title="生成（Ctrl+Enter）" @click="handleImageSubmit">生成</button>
+                <button class="composer-submit-button" :disabled="imageState.loading || Boolean(imageSubmitBlockReason)" :title="imageSubmitBlockReason || '生成（Ctrl+Enter）'" @click="handleImageSubmit">生成</button>
                 <button class="button-secondary composer-query-button" :disabled="imageState.loading || !imageTaskIdFromConversation()" @click="() => handleImageQuery()">查询</button>
               </div>
             </div>
@@ -4489,7 +4511,7 @@ async function removeUnavailableModels() {
                 </div>
               </div>
               <div class="composer-video-actions composer-action-group">
-                <button class="composer-submit-button" :disabled="videoState.loading" title="创建（Ctrl+Enter）" @click="handleVideoCreate">创建</button>
+                <button class="composer-submit-button" :disabled="videoState.loading || Boolean(videoSubmitBlockReason)" :title="videoSubmitBlockReason || '创建（Ctrl+Enter）'" @click="handleVideoCreate">创建</button>
                 <button class="button-secondary composer-query-button" :disabled="videoState.querying || !videoState.createResult?.taskId" @click="() => handleVideoQuery()">查询</button>
               </div>
             </div>

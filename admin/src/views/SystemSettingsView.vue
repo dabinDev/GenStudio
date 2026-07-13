@@ -7,10 +7,12 @@
       </div>
       <div class="admin-content-page__actions">
         <el-button :loading="isLoading" @click="loadSettings">刷新</el-button>
+        <el-button v-if="canUpdateCreditSettings && isCreditSettingsDirty" @click="revertCreditSettings">取消更改</el-button>
         <el-button
           v-if="canUpdateCreditSettings"
           type="primary"
           :loading="isSaving"
+          :disabled="!isCreditSettingsDirty"
           @click="saveSettings"
         >
           保存设置
@@ -305,6 +307,25 @@ const assetCleanupForm = reactive<AssetCleanupSettings>({
   lastRun: {},
 });
 const canViewCreditSettings = computed(() => auth.can(ADMIN_PERMISSIONS.creditView));
+
+const savedSnapshot = ref('');
+function snapshotForm(): string {
+  return JSON.stringify({
+    defaults: { ...form.defaults },
+    signupBonusEnabled: form.signupBonusEnabled,
+    signupBonusAmount: form.signupBonusAmount,
+  });
+}
+const isCreditSettingsDirty = computed(() => savedSnapshot.value !== '' && savedSnapshot.value !== snapshotForm());
+function revertCreditSettings() {
+  if (!savedSnapshot.value) return;
+  const parsed = JSON.parse(savedSnapshot.value);
+  form.defaults.text = parsed.defaults?.text ?? 0;
+  form.defaults.image = parsed.defaults?.image ?? 1;
+  form.defaults.video = parsed.defaults?.video ?? 0;
+  form.signupBonusEnabled = Boolean(parsed.signupBonusEnabled);
+  form.signupBonusAmount = parsed.signupBonusAmount ?? 0;
+}
 const canUpdateCreditSettings = computed(() => auth.can(ADMIN_PERMISSIONS.creditSettings));
 const canRunUserMerge = computed(() => auth.can(ADMIN_PERMISSIONS.maintenanceUserMerge));
 const canManageAssetCleanup = computed(() => auth.can(ADMIN_PERMISSIONS.maintenanceAssetCleanup));
@@ -361,6 +382,7 @@ async function loadSettings() {
     if (cleanupSettings) {
       applyAssetCleanupSettings(cleanupSettings);
     }
+    savedSnapshot.value = snapshotForm();
   } catch (error) {
     errorMessage.value = friendlyError(error, '系统设置加载失败，请稍后重试。');
   } finally {
@@ -371,6 +393,15 @@ async function loadSettings() {
 async function saveSettings() {
   if (!canUpdateCreditSettings.value) {
     errorMessage.value = '当前账号没有保存系统设置的权限。';
+    return;
+  }
+  try {
+    await ElMessageBox.confirm(
+      '保存后新的默认积分价格将立即对所有使用「默认」价格的公用模型生效，注册赠送规则也会同步更新。确认保存？',
+      '确认保存系统设置',
+      { type: 'warning', confirmButtonText: '确认保存', cancelButtonText: '取消' },
+    );
+  } catch {
     return;
   }
   isSaving.value = true;
@@ -387,6 +418,7 @@ async function saveSettings() {
     form.defaults.video = settings.defaults.video ?? 0;
     form.signupBonusEnabled = Boolean(settings.signupBonusEnabled);
     form.signupBonusAmount = settings.signupBonusAmount ?? 0;
+    savedSnapshot.value = snapshotForm();
     noticeMessage.value = '系统设置已保存。';
   } catch (error) {
     errorMessage.value = friendlyError(error, '系统设置保存失败，请稍后重试。');
@@ -485,8 +517,9 @@ async function confirmAssetCacheCleanup() {
 async function confirmUserMerge() {
   if (!mergeSummary.value?.groupCount) return;
   try {
+    const affectedIds = mergeSummary.value.groups.flatMap((group) => group.sourceUserIds);
     await ElMessageBox.confirm(
-      `确认合并 ${mergeSummary.value.mergedUsers} 个重复用户吗？该操作会迁移关联记录并删除重复账号。`,
+      `确认合并 ${mergeSummary.value.mergedUsers} 个重复用户吗？将删除并迁移这些账号：${affectedIds.slice(0, 8).join('、')}${affectedIds.length > 8 ? ` 等 ${affectedIds.length} 个` : ''}。`,
       '确认用户合并',
       { type: 'warning', confirmButtonText: '确认合并', cancelButtonText: '取消' },
     );

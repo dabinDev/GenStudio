@@ -237,11 +237,16 @@ describe('user credits state', () => {
     state.statusFilter.value = 'disabled';
     await state.loadUsers();
 
-    expect(loader).toHaveBeenCalledWith({
-      search: 'operator',
-      role: 'operator',
-      status: 'disabled',
-    });
+    expect(loader).toHaveBeenCalledWith(
+      {
+        search: 'operator',
+        role: 'operator',
+        status: 'disabled',
+        page: 1,
+        pageSize: 20,
+      },
+      expect.any(Function),
+    );
     expect(state.filteredUsers.value.map((user) => user.id)).toEqual(['operator']);
   });
 

@@ -48,12 +48,17 @@ from app.admin_service import (
     admin_record_detail,
     admin_restore_user,
     admin_task_timeline,
+    admin_users_summary,
     build_admin_audit_logs_csv,
     build_admin_creation_records_csv,
     build_admin_users_csv,
+    count_admin_audit_logs,
+    count_admin_models,
+    count_admin_users,
     get_model_health,
     get_prompt_template_for_scope,
     list_prompt_template_versions,
+    restore_prompt_template_version,
     list_admin_audit_logs,
     list_admin_creation_records,
     list_admin_models,
@@ -3014,16 +3019,31 @@ async def admin_models(
     capability: str = "all",
     search: str = "",
     publicState: str = "all",
+    page: int = 1,
+    pageSize: int = 20,
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin_user),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     require_admin_permission(admin, "model:view", settings)
+    safe_page = max(page, 1)
+    safe_page_size = min(max(pageSize, 1), 100)
+    total = count_admin_models(db, capability=capability, search=search, public_state=publicState)
     return {
         "models": [
             serialize_model(item, admin, is_admin=True).model_dump()
-            for item in list_admin_models(db, capability=capability, search=search, public_state=publicState)
-        ]
+            for item in list_admin_models(
+                db,
+                capability=capability,
+                search=search,
+                public_state=publicState,
+                page=safe_page,
+                page_size=safe_page_size,
+            )
+        ],
+        "total": total,
+        "page": safe_page,
+        "pageSize": safe_page_size,
     }
 
 
@@ -3691,6 +3711,20 @@ async def admin_prompt_template_versions(
     return {"versions": list_prompt_template_versions(db, template_id)}
 
 
+@app.post("/api/admin/prompt-templates/{template_id}/versions/{version}/restore")
+async def admin_restore_prompt_template_version(
+    template_id: str,
+    version: int,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    require_admin_permission(admin, "settings:update", settings)
+    item = restore_prompt_template_version(db, admin, template_id, version)
+    return {"template": serialize_prompt_template(item)}
+
+
 @app.get("/api/admin/prompt-templates/model-status")
 async def admin_prompt_template_model_status(
     capability: str = "all",
@@ -3730,17 +3764,34 @@ async def admin_users(
     search: str = "",
     role: str = "",
     status: str = "",
+    page: int = 1,
+    pageSize: int = 20,
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin_user),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     require_admin_permission(admin, "user:view", settings)
+    safe_page = max(page, 1)
+    safe_page_size = min(max(pageSize, 1), 100)
     duplicate_map = admin_duplicate_identity_map(db)
+    total = count_admin_users(db, search=search, role=role, status=status, settings=settings)
     return {
         "users": [
             serialize_admin_user(item, settings, duplicate_identity=duplicate_map.get(item.id))
-            for item in list_admin_users(db, search=search, role=role, status=status, settings=settings)
-        ]
+            for item in list_admin_users(
+                db,
+                search=search,
+                role=role,
+                status=status,
+                settings=settings,
+                page=safe_page,
+                page_size=safe_page_size,
+            )
+        ],
+        "total": total,
+        "page": safe_page,
+        "pageSize": safe_page_size,
+        "summary": admin_users_summary(db, search=search, role=role, status=status, settings=settings),
     }
 
 
@@ -3754,7 +3805,7 @@ async def admin_users_export(
     settings: Settings = Depends(get_settings),
 ) -> Response:
     require_admin_permission(admin, "user:export", settings)
-    users = list_admin_users(db, search=search, role=role, status=status, settings=settings)
+    users = list_admin_users(db, search=search, role=role, status=status, settings=settings, limit=None)
     write_admin_log(
         db,
         admin,
@@ -3965,29 +4016,43 @@ async def admin_text_records(
     duration: str = "",
     resolution: str = "",
     mode: str = "",
+    startAt: str = "",
+    endAt: str = "",
+    page: int = 1,
+    pageSize: int = 30,
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin_user),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     require_admin_permission(admin, "record:view", settings)
     include_raw_json = can(admin, "record:raw_json", settings)
+    safe_page = max(page, 1)
+    safe_page_size = min(max(pageSize, 1), 100)
+    records = list_admin_creation_records(
+        db,
+        capability="text",
+        user_id=userId,
+        user_search=userSearch,
+        model_group_id=modelGroupId,
+        status=status,
+        keyword=keyword,
+        size=size,
+        ratio=ratio,
+        ref_count=refCount,
+        duration=duration,
+        resolution=resolution,
+        mode=mode,
+        start_at=startAt,
+        end_at=endAt,
+        page=safe_page,
+        page_size=safe_page_size,
+        include_raw_json=include_raw_json,
+    )
     return {
-        "records": list_admin_creation_records(
-            db,
-            capability="text",
-            user_id=userId,
-            user_search=userSearch,
-            model_group_id=modelGroupId,
-            status=status,
-            keyword=keyword,
-            size=size,
-            ratio=ratio,
-            ref_count=refCount,
-            duration=duration,
-            resolution=resolution,
-            mode=mode,
-            include_raw_json=include_raw_json,
-        )
+        "records": records,
+        "page": safe_page,
+        "pageSize": safe_page_size,
+        "hasMore": len(records) >= safe_page_size,
     }
 
 
@@ -4023,7 +4088,7 @@ def _export_admin_records_response(
         duration=duration,
         resolution=resolution,
         mode=mode,
-        limit=300,
+        unlimited=True,
         include_raw_json=include_raw_json,
     )
     write_admin_log(
@@ -4107,29 +4172,43 @@ async def admin_image_records(
     duration: str = "",
     resolution: str = "",
     mode: str = "",
+    startAt: str = "",
+    endAt: str = "",
+    page: int = 1,
+    pageSize: int = 30,
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin_user),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     require_admin_permission(admin, "record:view", settings)
     include_raw_json = can(admin, "record:raw_json", settings)
+    safe_page = max(page, 1)
+    safe_page_size = min(max(pageSize, 1), 100)
+    records = list_admin_creation_records(
+        db,
+        capability="image",
+        user_id=userId,
+        user_search=userSearch,
+        model_group_id=modelGroupId,
+        status=status,
+        keyword=keyword,
+        size=size,
+        ratio=ratio,
+        ref_count=refCount,
+        duration=duration,
+        resolution=resolution,
+        mode=mode,
+        start_at=startAt,
+        end_at=endAt,
+        page=safe_page,
+        page_size=safe_page_size,
+        include_raw_json=include_raw_json,
+    )
     return {
-        "records": list_admin_creation_records(
-            db,
-            capability="image",
-            user_id=userId,
-            user_search=userSearch,
-            model_group_id=modelGroupId,
-            status=status,
-            keyword=keyword,
-            size=size,
-            ratio=ratio,
-            ref_count=refCount,
-            duration=duration,
-            resolution=resolution,
-            mode=mode,
-            include_raw_json=include_raw_json,
-        )
+        "records": records,
+        "page": safe_page,
+        "pageSize": safe_page_size,
+        "hasMore": len(records) >= safe_page_size,
     }
 
 
@@ -4183,29 +4262,43 @@ async def admin_video_records(
     duration: str = "",
     resolution: str = "",
     mode: str = "",
+    startAt: str = "",
+    endAt: str = "",
+    page: int = 1,
+    pageSize: int = 30,
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin_user),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     require_admin_permission(admin, "record:view", settings)
     include_raw_json = can(admin, "record:raw_json", settings)
+    safe_page = max(page, 1)
+    safe_page_size = min(max(pageSize, 1), 100)
+    records = list_admin_creation_records(
+        db,
+        capability="video",
+        user_id=userId,
+        user_search=userSearch,
+        model_group_id=modelGroupId,
+        status=status,
+        keyword=keyword,
+        size=size,
+        ratio=ratio,
+        ref_count=refCount,
+        duration=duration,
+        resolution=resolution,
+        mode=mode,
+        start_at=startAt,
+        end_at=endAt,
+        page=safe_page,
+        page_size=safe_page_size,
+        include_raw_json=include_raw_json,
+    )
     return {
-        "records": list_admin_creation_records(
-            db,
-            capability="video",
-            user_id=userId,
-            user_search=userSearch,
-            model_group_id=modelGroupId,
-            status=status,
-            keyword=keyword,
-            size=size,
-            ratio=ratio,
-            ref_count=refCount,
-            duration=duration,
-            resolution=resolution,
-            mode=mode,
-            include_raw_json=include_raw_json,
-        )
+        "records": records,
+        "page": safe_page,
+        "pageSize": safe_page_size,
+        "hasMore": len(records) >= safe_page_size,
     }
 
 
@@ -4278,12 +4371,26 @@ async def admin_audit_logs(
     risk: str = "",
     startAt: str = "",
     endAt: str = "",
-    limit: int = 100,
+    page: int = 1,
+    pageSize: int = 20,
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin_user),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     require_admin_permission(admin, "audit:view", settings)
+    safe_page = max(page, 1)
+    safe_page_size = min(max(pageSize, 1), 300)
+    total = count_admin_audit_logs(
+        db,
+        action=action,
+        admin_user_id=adminUserId,
+        target_type=targetType,
+        target_id=targetId,
+        status=status,
+        risk=risk,
+        start_at=startAt,
+        end_at=endAt,
+    )
     return {
         "logs": list_admin_audit_logs(
             db,
@@ -4295,8 +4402,12 @@ async def admin_audit_logs(
             risk=risk,
             start_at=startAt,
             end_at=endAt,
-            limit=limit,
-        )
+            page=safe_page,
+            page_size=safe_page_size,
+        ),
+        "total": total,
+        "page": safe_page,
+        "pageSize": safe_page_size,
     }
 
 
@@ -4326,7 +4437,7 @@ async def admin_audit_logs_export(
         risk=risk,
         start_at=startAt,
         end_at=endAt,
-        limit=limit,
+        unlimited=True,
     )
     return Response(
         content="\ufeff" + build_admin_audit_logs_csv(rows),

@@ -44,13 +44,10 @@
         start-placeholder="开始时间"
         end-placeholder="结束时间"
         value-format="YYYY-MM-DDTHH:mm:ss"
+        :shortcuts="dateShortcuts"
       />
-      <el-select v-model="filters.limit" aria-label="返回条数" placeholder="选择返回条数">
-        <el-option label="最近 100 条" :value="100" />
-        <el-option label="最近 200 条" :value="200" />
-        <el-option label="最近 300 条" :value="300" />
-      </el-select>
-      <el-button class="admin-content-page__audit-submit" type="primary" :loading="isLoading" @click="loadLogs">查询</el-button>
+      <el-button @click="resetFilters">重置</el-button>
+      <el-button class="admin-content-page__audit-submit" type="primary" :loading="isLoading" @click="applyFilters">查询</el-button>
     </section>
 
     <el-alert v-if="errorMessage" :title="errorMessage" type="error" show-icon :closable="false" />
@@ -58,18 +55,18 @@
     <section class="audit-summary-grid">
       <article>
         <span>日志总数</span>
-        <strong>{{ auditSummary.total }}</strong>
+        <strong>{{ totalLogs }}</strong>
       </article>
       <article class="audit-summary-grid__danger">
-        <span>高风险</span>
+        <span>高风险<small>（本页）</small></span>
         <strong>{{ auditSummary.highRisk }}</strong>
       </article>
       <article>
-        <span>中风险</span>
+        <span>中风险<small>（本页）</small></span>
         <strong>{{ auditSummary.mediumRisk }}</strong>
       </article>
       <article>
-        <span>失败操作</span>
+        <span>失败操作<small>（本页）</small></span>
         <strong>{{ auditSummary.errors }}</strong>
       </article>
       <article>
@@ -110,6 +107,18 @@
           </template>
         </el-table-column>
       </el-table>
+      <div class="admin-content-page__pagination">
+        <el-pagination
+          layout="total, sizes, prev, pager, next"
+          :total="totalLogs"
+          :current-page="filters.page"
+          :page-size="filters.pageSize"
+          :page-sizes="[20, 50, 100, 300]"
+          :disabled="isLoading"
+          @current-change="handlePageChange"
+          @size-change="handleSizeChange"
+        />
+      </div>
     </section>
 
     <el-drawer v-model="drawerVisible" size="min(620px, 100vw)" title="审计详情" destroy-on-close>
@@ -117,7 +126,10 @@
         <el-descriptions :column="1" border>
           <el-descriptions-item label="操作">{{ activeLog.action }}</el-descriptions-item>
           <el-descriptions-item label="管理员">{{ activeLog.adminUserId || '系统' }}</el-descriptions-item>
-          <el-descriptions-item label="目标">{{ activeLog.targetType }} / {{ activeLog.targetId }}</el-descriptions-item>
+          <el-descriptions-item label="目标">
+            <span>{{ activeLog.targetType || 'unknown' }} / {{ activeLog.targetId || '无' }}</span>
+            <el-button v-if="targetLink(activeLog)" link type="primary" @click="goToTarget(activeLog)">查看对象</el-button>
+          </el-descriptions-item>
           <el-descriptions-item label="风险">{{ riskLabel(activeLog.riskLevel) }}</el-descriptions-item>
           <el-descriptions-item label="状态">{{ statusLabel(activeLog.status) }}</el-descriptions-item>
         </el-descriptions>
@@ -132,6 +144,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
+import { useRouter } from 'vue-router';
 
 import { ADMIN_PERMISSIONS } from '@/adminPermissions';
 import { buildExportFilename } from '@/adminExport';
@@ -149,7 +162,9 @@ import {
 } from './auditLogsState';
 
 const auth = useAdminAuthStore();
+const router = useRouter();
 const logs = ref<AdminAuditLog[]>([]);
+const totalLogs = ref(0);
 const isLoading = ref(false);
 const isExporting = ref(false);
 const errorMessage = ref('');
@@ -226,12 +241,72 @@ async function loadLogs() {
   isLoading.value = true;
   errorMessage.value = '';
   try {
-    logs.value = await fetchAuditLogs(buildAuditLogQuery(filters));
+    logs.value = await fetchAuditLogs(buildAuditLogQuery(filters), (meta) => {
+      if (typeof meta.total === 'number') totalLogs.value = meta.total;
+    });
   } catch (error) {
     errorMessage.value = friendlyError(error, '审计日志加载失败，请稍后重试。');
   } finally {
     isLoading.value = false;
   }
+}
+
+function applyFilters() {
+  filters.page = 1;
+  void loadLogs();
+}
+
+function handlePageChange(nextPage: number) {
+  filters.page = nextPage;
+  void loadLogs();
+}
+
+function handleSizeChange(size: number) {
+  filters.pageSize = size;
+  filters.page = 1;
+  void loadLogs();
+}
+
+function resetFilters() {
+  Object.assign(filters, createAuditLogFilters());
+  void loadLogs();
+}
+
+const dateShortcuts = [
+  {
+    text: '今天',
+    value: () => {
+      const start = new Date();
+      start.setHours(0, 0, 0, 0);
+      return [start, new Date()];
+    },
+  },
+  {
+    text: '近 7 天',
+    value: () => {
+      const start = new Date();
+      start.setDate(start.getDate() - 7);
+      return [start, new Date()];
+    },
+  },
+  {
+    text: '近 30 天',
+    value: () => {
+      const start = new Date();
+      start.setDate(start.getDate() - 30);
+      return [start, new Date()];
+    },
+  },
+];
+
+function targetLink(log: AdminAuditLog): boolean {
+  return Boolean(log.targetId) && (log.targetType === 'user' || log.targetType === 'model');
+}
+
+function goToTarget(log: AdminAuditLog) {
+  if (!targetLink(log)) return;
+  const path = log.targetType === 'user' ? '/users' : '/models';
+  void router.push({ path, query: { search: log.targetId } });
 }
 
 onMounted(() => {

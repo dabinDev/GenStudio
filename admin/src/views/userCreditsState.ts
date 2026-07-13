@@ -3,7 +3,7 @@ import { computed, ref } from 'vue';
 import { buildExportFilename, downloadBlob } from '@/adminExport';
 import { exportAdminUsers } from '@/api/admin';
 import { AdminApiError } from '@/api/http';
-import type { AdminUserDuplicateIdentity, AdminUserListQuery, AdminUserWithCredits } from '@/types';
+import type { AdminListMeta, AdminUserDuplicateIdentity, AdminUserListQuery, AdminUsersSummary, AdminUserWithCredits } from '@/types';
 
 export function friendlyAdminError(error: unknown, fallback: string): string {
   if (error instanceof AdminApiError && error.message.trim()) {
@@ -43,11 +43,17 @@ export function duplicateIdentityGroups(users: AdminUserWithCredits[]): AdminUse
   return [...groups.values()];
 }
 
-export function createUserCreditsState(loader: (query: AdminUserListQuery) => Promise<AdminUserWithCredits[]>) {
+export function createUserCreditsState(
+  loader: (query: AdminUserListQuery, onMeta?: (meta: AdminListMeta) => void) => Promise<AdminUserWithCredits[]>,
+) {
   const users = ref<AdminUserWithCredits[]>([]);
   const search = ref('');
   const roleFilter = ref('all');
   const statusFilter = ref('all');
+  const page = ref(1);
+  const pageSize = ref(20);
+  const total = ref(0);
+  const summary = ref<AdminUsersSummary | null>(null);
   const lastLoadedQuery = ref<AdminUserListQuery>({ search: '', role: 'all', status: 'all' });
   const isLoading = ref(false);
   const errorMessage = ref('');
@@ -60,10 +66,16 @@ export function createUserCreditsState(loader: (query: AdminUserListQuery) => Pr
     selectedIds.value = rows.map((u) => u.id);
   }
 
-  const adminCount = computed(() => users.value.filter((user) => user.isAdmin).length);
-  const totalBalance = computed(() =>
-    users.value.reduce((sum, user) => sum + (user.credits?.balance ?? 0), 0),
+  // 概览统计优先用后端全局 summary（不受分页影响），未返回时回退到当前列表求和。
+  const adminCount = computed(() =>
+    summary.value ? summary.value.adminCount : users.value.filter((user) => user.isAdmin).length,
   );
+  const totalBalance = computed(() =>
+    summary.value
+      ? summary.value.totalBalance
+      : users.value.reduce((sum, user) => sum + (user.credits?.balance ?? 0), 0),
+  );
+  const totalUsers = computed(() => (summary.value ? summary.value.totalUsers : users.value.length));
   const filteredUsers = computed(() => users.value);
 
   async function loadUsers() {
@@ -72,15 +84,21 @@ export function createUserCreditsState(loader: (query: AdminUserListQuery) => Pr
       search: search.value,
       role: roleFilter.value,
       status: statusFilter.value,
+      page: page.value,
+      pageSize: pageSize.value,
     };
     latestRequestId = requestId;
     isLoading.value = true;
     errorMessage.value = '';
     try {
-      const result = await loader(query);
+      const result = await loader(query, (meta) => {
+        if (requestId !== latestRequestId) return;
+        if (typeof meta.total === 'number') total.value = meta.total;
+        if (meta.summary) summary.value = meta.summary;
+      });
       if (requestId === latestRequestId) {
         users.value = result;
-        lastLoadedQuery.value = { ...query };
+        lastLoadedQuery.value = { search: search.value, role: roleFilter.value, status: statusFilter.value };
       }
     } catch (error) {
       if (requestId === latestRequestId) {
@@ -91,6 +109,16 @@ export function createUserCreditsState(loader: (query: AdminUserListQuery) => Pr
         isLoading.value = false;
       }
     }
+  }
+
+  function goToPage(nextPage: number) {
+    page.value = Math.max(1, nextPage);
+    void loadUsers();
+  }
+
+  function reloadFromFirstPage() {
+    page.value = 1;
+    void loadUsers();
   }
 
   function replaceUser(user: AdminUserWithCredits) {
@@ -115,6 +143,11 @@ export function createUserCreditsState(loader: (query: AdminUserListQuery) => Pr
     search,
     roleFilter,
     statusFilter,
+    page,
+    pageSize,
+    total,
+    summary,
+    totalUsers,
     lastLoadedQuery,
     isLoading,
     errorMessage,
@@ -125,6 +158,8 @@ export function createUserCreditsState(loader: (query: AdminUserListQuery) => Pr
     selectedUsers,
     setSelected,
     loadUsers,
+    goToPage,
+    reloadFromFirstPage,
     replaceUser,
   };
 }

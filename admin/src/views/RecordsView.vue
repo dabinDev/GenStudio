@@ -82,17 +82,25 @@
         </el-button>
       </div>
       <div class="admin-content-page__quick-filters">
-        <el-input v-model="filters.userSearch" clearable placeholder="用户邮箱或昵称" @keyup.enter="loadRecords" />
-        <el-input v-model="filters.modelGroupId" clearable placeholder="模型 ID" @keyup.enter="loadRecords" />
-        <el-input v-model="filters.keyword" clearable placeholder="提示词 / 响应关键词" @keyup.enter="loadRecords" />
-        <el-select v-model="filters.status" aria-label="状态筛选" placeholder="选择任务状态">
+        <el-input v-model="filters.userSearch" clearable placeholder="用户邮箱或昵称" @keyup.enter="reloadFromFirstPage" />
+        <el-input v-model="filters.modelGroupId" clearable placeholder="模型 ID" @keyup.enter="reloadFromFirstPage" />
+        <el-input v-model="filters.keyword" clearable placeholder="提示词 / 响应关键词" @keyup.enter="reloadFromFirstPage" />
+        <el-select v-model="filters.status" aria-label="状态筛选" placeholder="选择任务状态" @change="reloadFromFirstPage">
           <el-option label="全部状态" value="" />
           <el-option label="未成功" value="non_success" />
           <el-option label="成功" value="success" />
           <el-option label="失败" value="error" />
           <el-option label="处理中" value="processing" />
         </el-select>
-        <el-button type="primary" :loading="isLoading" @click="loadRecords">查询</el-button>
+        <el-date-picker
+          v-model="dateRange"
+          type="datetimerange"
+          range-separator="至"
+          start-placeholder="开始时间"
+          end-placeholder="结束时间"
+          value-format="YYYY-MM-DDTHH:mm:ss"
+        />
+        <el-button type="primary" :loading="isLoading" @click="reloadFromFirstPage">查询</el-button>
       </div>
       <Transition name="admin-filter-reveal">
         <div v-if="showAdvancedFilters" class="admin-content-page__advanced-filters">
@@ -169,14 +177,16 @@
                 </template>
                 <template v-else-if="capability === 'video' && videoAssets(row).length">
                   <div class="admin-content-page__record-media-strip admin-content-page__record-media-strip--video">
-                    <video
+                    <button
                       v-for="asset in videoAssets(row).slice(0, 1)"
                       :key="asset.url"
-                      :src="asset.url"
-                      :poster="asset.thumbnailUrl || undefined"
-                      controls
-                      playsinline
-                    />
+                      type="button"
+                      class="admin-content-page__video-cover"
+                      @click="openDrawer(row)"
+                    >
+                      <img v-if="asset.thumbnailUrl" :src="asset.thumbnailUrl" alt="视频封面" />
+                      <span v-else>▶ 播放</span>
+                    </button>
                   </div>
                   <span v-if="row.taskId" class="admin-content-page__record-task">{{ row.taskId }}</span>
                 </template>
@@ -199,6 +209,12 @@
         </el-table-column>
       </el-table>
     </section>
+
+      <div v-if="records.length || page > 1" class="admin-content-page__records-pager">
+        <el-button :disabled="page <= 1 || isLoading" @click="goToRecordsPage(page - 1)">上一页</el-button>
+        <span>第 {{ page }} 页</span>
+        <el-button :disabled="!hasMore || isLoading" @click="goToRecordsPage(page + 1)">下一页</el-button>
+      </div>
 
     <el-drawer v-model="drawerVisible" size="min(720px, 100vw)" title="记录详情" destroy-on-close>
       <div v-if="activeRecord" class="admin-content-page__drawer">
@@ -266,9 +282,11 @@
             </el-timeline>
           </el-collapse-item>
           <el-collapse-item title="请求参数 JSON" name="request">
+            <el-button size="small" @click="copyJson(activeRecord.requestParams)">复制</el-button>
             <pre>{{ stringify(activeRecord.requestParams) }}</pre>
           </el-collapse-item>
           <el-collapse-item title="响应摘要 JSON" name="response">
+            <el-button size="small" @click="copyJson(activeRecord.responseSummary)">复制</el-button>
             <pre>{{ stringify(activeRecord.responseSummary) }}</pre>
           </el-collapse-item>
         </el-collapse>
@@ -292,6 +310,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { ADMIN_PERMISSIONS } from '@/adminPermissions';
 import { fetchAdminRecordDetail, fetchTaskTimeline } from '@/api/admin';
 import AdminImageViewer from '@/components/AdminImageViewer.vue';
+import { copyText } from '@/utils/clipboard';
 import { useAdminAuthStore } from '@/stores/auth';
 import type {
   AdminCreationAsset,
@@ -315,6 +334,10 @@ const {
   isLoading,
   errorMessage,
   filters,
+  dateRange,
+  page,
+  pageSize,
+  hasMore,
   lastLoadedCapability,
   lastLoadedQuery,
   activePresetId,
@@ -327,6 +350,8 @@ const {
   applyRouteQueryFilters,
   clearRouteFilters,
   loadRecords,
+  goToRecordsPage,
+  reloadFromFirstPage,
 } = createRecordsState();
 const auth = useAdminAuthStore();
 const route = useRoute();
@@ -472,6 +497,15 @@ async function copyTaskId(taskId: string) {
   }
 }
 
+async function copyJson(value: unknown) {
+  const ok = await copyText(stringify(value));
+  if (ok) {
+    ElMessage.success('已复制 JSON');
+  } else {
+    ElMessage.warning('复制失败，请手动复制');
+  }
+}
+
 async function openDrawer(record: AdminCreationRecord) {
   activeRecord.value = record;
   taskTimeline.value = [];
@@ -516,7 +550,7 @@ defineExpose({
 });
 
 watch(capability, () => {
-  void loadRecords();
+  reloadFromFirstPage();
 });
 
 onMounted(() => {

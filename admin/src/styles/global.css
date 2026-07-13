@@ -3913,3 +3913,121 @@ body,
     display: none;
   }
 }
+
+/* 优化补充：分页、pager、JSON 字段、图标预览、视频封面等 */
+.admin-content-page__pagination {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.admin-content-page__records-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.admin-content-page__version-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.admin-content-page__template-hint {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.admin-content-page__video-cover {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 96px;
+  min-height: 56px;
+  padding: 0;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 10px;
+  background: var(--el-fill-color-light);
+  cursor: pointer;
+  overflow: hidden;
+  color: var(--el-text-color-secondary);
+}
+
+.admin-content-page__video-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.admin-model-center__json-field,
+.admin-model-center__icon-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.admin-model-center__json-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.admin-model-center__json-error {
+  color: var(--el-color-danger);
+  font-size: 12px;
+}
+
+.admin-model-center__json-ok {
+  color: var(--el-color-success);
+  font-size: 12px;
+}
+
+.admin-model-center__icon-preview {
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  object-fit: cover;
+  border: 1px solid var(--el-border-color-light);
+}
+
+.admin-user-credits__batch-total {
+  margin: 4px 0 0;
+  color: var(--el-text-color-regular);
+  font-size: 13px;
+}
+
+.admin-user-credits__password-row {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+}
+
+.admin-user-credits__password-row .el-input {
+  flex: 1;
+}
+
+.admin-dashboard__panel-hint {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.admin-forbidden__hint {
+  color: var(--el-text-color-secondary);
+}
+
+.admin-forbidden__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+}

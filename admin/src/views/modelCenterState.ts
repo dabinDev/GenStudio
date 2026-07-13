@@ -3,6 +3,7 @@ import { computed, reactive, ref, type Ref } from 'vue';
 import { fetchAdminModels } from '@/api/admin';
 import type {
   AdminBatchModelHealthCheckResult,
+  AdminListMeta,
   AdminModel,
   AdminModelHealth,
   AdminModelListQuery,
@@ -253,7 +254,7 @@ function matchesSearch(model: AdminModel, search: string): boolean {
 }
 
 export function createModelCenterState(
-  fetcher: (query: AdminModelListQuery) => Promise<AdminModel[]> = fetchAdminModels,
+  fetcher: (query: AdminModelListQuery, onMeta?: (meta: AdminListMeta) => void) => Promise<AdminModel[]> = fetchAdminModels,
   models = ref<AdminModel[]>([]),
   isLoading = ref(false),
   errorMessage = ref(''),
@@ -264,6 +265,9 @@ export function createModelCenterState(
     search: '',
   });
 
+  const page = ref(1);
+  const pageSize = ref(20);
+  const total = ref(0);
   const selectedIds = ref<string[]>([]);
   const noticeMessage = ref('');
   let latestRequestId = 0;
@@ -300,7 +304,14 @@ export function createModelCenterState(
     isLoading.value = true;
     errorMessage.value = '';
     try {
-      const nextModels = await fetcher(createQuery(filters));
+      const nextModels = await fetcher(
+        { ...createQuery(filters), page: page.value, pageSize: pageSize.value },
+        (meta) => {
+          if (requestId === latestRequestId && typeof meta.total === 'number') {
+            total.value = meta.total;
+          }
+        },
+      );
       if (requestId === latestRequestId) {
         models.value = nextModels;
         selectedIds.value = selectedIds.value.filter((id) => nextModels.some((model) => model.id === id));
@@ -316,10 +327,23 @@ export function createModelCenterState(
     }
   }
 
+  function goToPage(nextPage: number) {
+    page.value = Math.max(1, nextPage);
+    void loadModels();
+  }
+
+  function reloadFromFirstPage() {
+    page.value = 1;
+    void loadModels();
+  }
+
   return {
     filters,
     models: models as Ref<AdminModel[]>,
     filteredModels,
+    page,
+    pageSize,
+    total,
     selectedIds,
     selectedModels,
     selectedEditableModels,
@@ -331,5 +355,7 @@ export function createModelCenterState(
     setSelected,
     replaceModel,
     loadModels,
+    goToPage,
+    reloadFromFirstPage,
   };
 }

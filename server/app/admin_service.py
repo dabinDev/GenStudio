@@ -29,6 +29,7 @@ from app.db_models import (
     SessionRecord,
     TaskEvent,
     User,
+    UserCreditAccount,
     utcnow,
 )
 from app.model_service import catalog_loader_options
@@ -129,14 +130,14 @@ def set_admin_user_role(
     return assignment
 
 
-def list_admin_models(
+def _admin_models_query(
     db: Session,
     *,
     capability: str = "all",
     search: str = "",
     public_state: str = "all",
-) -> list[ModelGroup]:
-    query = db.query(ModelGroup).options(*catalog_loader_options())
+):
+    query = db.query(ModelGroup)
     if capability in {"text", "image", "video"}:
         query = query.filter(ModelGroup.capability == capability)
     if public_state == "public":
@@ -154,7 +155,41 @@ def list_admin_models(
                 ModelGroup.public_display_name.ilike(like),
             )
         )
-    return query.order_by(ModelGroup.updated_at.desc()).limit(200).all()
+    return query
+
+
+def count_admin_models(
+    db: Session,
+    *,
+    capability: str = "all",
+    search: str = "",
+    public_state: str = "all",
+) -> int:
+    return _admin_models_query(
+        db, capability=capability, search=search, public_state=public_state
+    ).count()
+
+
+def list_admin_models(
+    db: Session,
+    *,
+    capability: str = "all",
+    search: str = "",
+    public_state: str = "all",
+    page: int | None = None,
+    page_size: int | None = None,
+    limit: int | None = 200,
+) -> list[ModelGroup]:
+    query = (
+        _admin_models_query(db, capability=capability, search=search, public_state=public_state)
+        .options(*catalog_loader_options())
+        .order_by(ModelGroup.updated_at.desc())
+    )
+    if page is not None and page_size is not None:
+        query = query.offset(max(page - 1, 0) * page_size).limit(page_size)
+    elif limit is not None:
+        query = query.limit(limit)
+    return query.all()
 
 
 def get_admin_model(db: Session, model_id: str) -> ModelGroup:
@@ -348,6 +383,33 @@ def list_prompt_template_versions(db: Session, template_id: str, *, limit: int =
     return [serialize_prompt_template_version(item) for item in rows]
 
 
+def restore_prompt_template_version(
+    db: Session, admin: User, template_id: str, version: int
+) -> PromptTemplate:
+    template = db.get(PromptTemplate, template_id.strip())
+    if not template:
+        raise HTTPException(status_code=404, detail={"message": "提示语模板不存在。"})
+    version_row = (
+        db.query(PromptTemplateVersion)
+        .filter(
+            PromptTemplateVersion.template_id == template.id,
+            PromptTemplateVersion.version == version,
+        )
+        .first()
+    )
+    if not version_row:
+        raise HTTPException(status_code=404, detail={"message": "指定的模板版本不存在。"})
+    payload = PromptTemplateUpdate(
+        capability=template.capability,
+        modelGroupId=template.model_group_id,
+        templateType=template.template_type,
+        name=version_row.name,
+        content=version_row.content,
+        enabled=version_row.enabled,
+    )
+    return upsert_prompt_template(db, admin, payload)
+
+
 def get_prompt_template_for_scope(
     db: Session,
     capability: str,
@@ -466,14 +528,14 @@ def _config_admin_filter(settings: Settings | None):
     return or_(*filters) if filters else None
 
 
-def list_admin_users(
+def _admin_users_query(
     db: Session,
     *,
     search: str = "",
     role: str = "",
     status: str = "",
     settings: Settings | None = None,
-) -> list[User]:
+):
     query = db.query(User)
     clean_search = search.strip()
     if clean_search:
@@ -508,7 +570,71 @@ def list_admin_users(
             query = query.outerjoin(AdminRoleAssignment).filter(or_(*role_filters))
         else:
             query = query.join(AdminRoleAssignment).filter(AdminRoleAssignment.role == clean_role)
-    return query.order_by(User.created_at.desc()).limit(200).all()
+    return query
+
+
+def count_admin_users(
+    db: Session,
+    *,
+    search: str = "",
+    role: str = "",
+    status: str = "",
+    settings: Settings | None = None,
+) -> int:
+    return _admin_users_query(
+        db, search=search, role=role, status=status, settings=settings
+    ).distinct().count()
+
+
+def list_admin_users(
+    db: Session,
+    *,
+    search: str = "",
+    role: str = "",
+    status: str = "",
+    settings: Settings | None = None,
+    page: int | None = None,
+    page_size: int | None = None,
+    limit: int | None = 200,
+) -> list[User]:
+    query = (
+        _admin_users_query(db, search=search, role=role, status=status, settings=settings)
+        .distinct()
+        .order_by(User.created_at.desc())
+    )
+    if page is not None and page_size is not None:
+        query = query.offset(max(page - 1, 0) * page_size).limit(page_size)
+    elif limit is not None:
+        query = query.limit(limit)
+    return query.all()
+
+
+def admin_users_summary(
+    db: Session,
+    *,
+    search: str = "",
+    role: str = "",
+    status: str = "",
+    settings: Settings | None = None,
+) -> dict[str, Any]:
+    total_users = count_admin_users(db, search=search, role=role, status=status, settings=settings)
+    admin_count = count_admin_users(db, search=search, role="admin", status=status, settings=settings)
+    id_subquery = (
+        _admin_users_query(db, search=search, role=role, status=status, settings=settings)
+        .with_entities(User.id)
+        .distinct()
+        .subquery()
+    )
+    total_balance = (
+        db.query(func.coalesce(func.sum(UserCreditAccount.balance), 0))
+        .filter(UserCreditAccount.user_id.in_(db.query(id_subquery.c.id)))
+        .scalar()
+    )
+    return {
+        "totalUsers": int(total_users or 0),
+        "adminCount": int(admin_count or 0),
+        "totalBalance": int(total_balance or 0),
+    }
 
 
 def _admin_user_identity(user: User) -> str:
@@ -1303,7 +1429,12 @@ def list_admin_creation_records(
     duration: str = "",
     resolution: str = "",
     mode: str = "",
+    start_at: str = "",
+    end_at: str = "",
     limit: int = 100,
+    page: int | None = None,
+    page_size: int | None = None,
+    unlimited: bool = False,
     include_raw_json: bool = True,
 ) -> list[dict[str, Any]]:
     query = (
@@ -1330,8 +1461,22 @@ def list_admin_creation_records(
         query = query.filter(ConversationMessage.status != "success")
     elif status:
         query = query.filter(ConversationMessage.status == status)
-    max_limit = min(max(limit, 1), 200)
-    messages = query.order_by(ConversationMessage.created_at.desc()).limit(max_limit * 4).all()
+    parsed_start = _parse_audit_datetime(start_at)
+    if parsed_start:
+        query = query.filter(ConversationMessage.created_at >= parsed_start)
+    parsed_end = _parse_audit_datetime(end_at)
+    if parsed_end:
+        query = query.filter(ConversationMessage.created_at <= parsed_end)
+    ordered = query.order_by(ConversationMessage.created_at.desc())
+    if unlimited:
+        max_limit = None
+        messages = ordered.all()
+    else:
+        effective_limit = page_size if page_size else limit
+        max_limit = min(max(effective_limit, 1), 200)
+        if page is not None and page_size is not None:
+            ordered = ordered.offset(max(page - 1, 0) * page_size)
+        messages = ordered.limit(max_limit * 4).all()
     records: list[dict[str, Any]] = []
     for message in messages:
         if message.role != "assistant" and _has_following_assistant_record(db, message, capability):
@@ -1397,7 +1542,7 @@ def list_admin_creation_records(
                 "errorMessage": error_message,
             }
         )
-        if len(records) >= max_limit:
+        if max_limit is not None and len(records) >= max_limit:
             break
     return records
 
@@ -1765,7 +1910,7 @@ def _parse_audit_datetime(value: str) -> datetime | None:
     return parsed
 
 
-def list_admin_audit_logs(
+def _admin_audit_query(
     db: Session,
     *,
     action: str = "",
@@ -1773,11 +1918,9 @@ def list_admin_audit_logs(
     target_type: str = "",
     target_id: str = "",
     status: str = "",
-    risk: str = "",
     start_at: str = "",
     end_at: str = "",
-    limit: int = 100,
-) -> list[dict[str, Any]]:
+):
     query = db.query(AdminOperationLog)
     if action:
         query = query.filter(AdminOperationLog.action.ilike(f"%{action}%"))
@@ -1795,27 +1938,98 @@ def list_admin_audit_logs(
     parsed_end = _parse_audit_datetime(end_at)
     if parsed_end:
         query = query.filter(AdminOperationLog.created_at <= parsed_end)
-    max_limit = min(max(limit, 1), 300)
+    return query
+
+
+def count_admin_audit_logs(
+    db: Session,
+    *,
+    action: str = "",
+    admin_user_id: str = "",
+    target_type: str = "",
+    target_id: str = "",
+    status: str = "",
+    risk: str = "",
+    start_at: str = "",
+    end_at: str = "",
+) -> int:
+    query = _admin_audit_query(
+        db,
+        action=action,
+        admin_user_id=admin_user_id,
+        target_type=target_type,
+        target_id=target_id,
+        status=status,
+        start_at=start_at,
+        end_at=end_at,
+    )
+    clean_risk = risk.strip().lower()
+    if clean_risk:
+        return sum(1 for item in query.all() if _audit_risk_level(item) == clean_risk)
+    return query.count()
+
+
+def _serialize_audit_log(item: AdminOperationLog) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "adminUserId": item.admin_user_id,
+        "action": item.action,
+        "targetType": item.target_type,
+        "targetId": item.target_id,
+        "status": item.status,
+        "riskLevel": _audit_risk_level(item),
+        "summary": _load_json(item.summary_json, {}),
+        "createdAt": item.created_at,
+    }
+
+
+def list_admin_audit_logs(
+    db: Session,
+    *,
+    action: str = "",
+    admin_user_id: str = "",
+    target_type: str = "",
+    target_id: str = "",
+    status: str = "",
+    risk: str = "",
+    start_at: str = "",
+    end_at: str = "",
+    limit: int = 100,
+    page: int | None = None,
+    page_size: int | None = None,
+    unlimited: bool = False,
+) -> list[dict[str, Any]]:
+    query = _admin_audit_query(
+        db,
+        action=action,
+        admin_user_id=admin_user_id,
+        target_type=target_type,
+        target_id=target_id,
+        status=status,
+        start_at=start_at,
+        end_at=end_at,
+    )
     clean_risk = risk.strip().lower()
     ordered_query = query.order_by(AdminOperationLog.created_at.desc())
-    logs = ordered_query.all() if clean_risk else ordered_query.limit(max_limit).all()
+    if unlimited:
+        if clean_risk:
+            return [
+                _serialize_audit_log(item)
+                for item in ordered_query.all()
+                if _audit_risk_level(item) == clean_risk
+            ]
+        return [_serialize_audit_log(item) for item in ordered_query.all()]
+    effective_limit = page_size if page_size else limit
+    max_limit = min(max(effective_limit, 1), 300)
+    paginated = page is not None and page_size is not None
+    offset = max((page or 1) - 1, 0) * page_size if paginated else 0
     if clean_risk:
-        logs = [item for item in logs if _audit_risk_level(item) == clean_risk]
-    logs = logs[:max_limit]
-    return [
-        {
-            "id": item.id,
-            "adminUserId": item.admin_user_id,
-            "action": item.action,
-            "targetType": item.target_type,
-            "targetId": item.target_id,
-            "status": item.status,
-            "riskLevel": _audit_risk_level(item),
-            "summary": _load_json(item.summary_json, {}),
-            "createdAt": item.created_at,
-        }
-        for item in logs
-    ]
+        logs = [item for item in ordered_query.all() if _audit_risk_level(item) == clean_risk]
+        logs = logs[offset : offset + max_limit] if paginated else logs[:max_limit]
+    else:
+        scoped = ordered_query.offset(offset) if paginated else ordered_query
+        logs = scoped.limit(max_limit).all()
+    return [_serialize_audit_log(item) for item in logs]
 
 
 def build_admin_audit_logs_csv(rows: list[dict[str, Any]]) -> str:

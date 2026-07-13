@@ -172,6 +172,10 @@
           </el-form-item>
           <el-form-item label="模板内容">
             <el-input v-model="form.content" type="textarea" :rows="10" :disabled="!canUpdateSettings" />
+            <div class="admin-content-page__template-hint">
+              <span>可用变量：<code>{{ promptVarLabel }}</code>（用户原始输入）、<code>{{ capabilityVarLabel }}</code>（创作类型）。</span>
+              <el-button v-if="canUpdateSettings" size="small" @click="insertPromptVariable">插入 {{ promptVarLabel }}</el-button>
+            </div>
           </el-form-item>
           <el-form-item label="启用状态">
             <el-switch
@@ -215,12 +219,21 @@
               </div>
             </article>
           </div>
+          <el-button
+            v-if="modelStatus.length > 12"
+            link
+            type="primary"
+            @click="showAllModels = !showAllModels"
+          >
+            {{ showAllModels ? '收起' : `展开全部（共 ${modelStatus.length} 个）` }}
+          </el-button>
           <strong>样例测试</strong>
           <el-input v-model="testPrompt" type="textarea" :rows="5" placeholder="每行一个测试样例" />
           <el-button :loading="isTesting" @click="runTemplateTest">测试渲染</el-button>
           <div v-if="testResults.length" class="admin-content-page__sample-list">
             <article v-for="item in testResults" :key="item.prompt">
               <small>{{ item.prompt }}</small>
+              <el-button size="small" @click="copyRendered(item.rendered)">复制结果</el-button>
               <pre>{{ item.rendered }}</pre>
             </article>
           </div>
@@ -234,7 +247,17 @@
             <article v-for="item in versions" :key="item.id">
               <header>
                 <strong>v{{ item.version }} · {{ item.enabled ? '启用' : '停用' }}</strong>
-                <small>{{ formatDate(item.createdAt) }}</small>
+                <div class="admin-content-page__version-actions">
+                  <small>{{ formatDate(item.createdAt) }}</small>
+                  <el-button
+                    v-if="canUpdateSettings && !starterExampleActive && activeTemplate"
+                    size="small"
+                    :loading="restoringVersion === item.version"
+                    @click="restoreVersion(item)"
+                  >
+                    恢复此版本
+                  </el-button>
+                </div>
               </header>
               <p>{{ item.name }}</p>
               <pre>{{ item.content }}</pre>
@@ -265,14 +288,17 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
+import { ElMessageBox } from 'element-plus';
 
 import {
   fetchPromptTemplateModelStatus,
   fetchPromptTemplates,
   fetchPromptTemplateVersions,
+  restorePromptTemplateVersion,
   savePromptTemplate,
   testPromptTemplate,
 } from '@/api/admin';
+import { copyText } from '@/utils/clipboard';
 import { ADMIN_PERMISSIONS } from '@/adminPermissions';
 import { AdminApiError } from '@/api/http';
 import { useAdminAuthStore } from '@/stores/auth';
@@ -323,7 +349,13 @@ const enabledTemplateCount = computed(() => templates.value.filter((template) =>
 const modelPromptOptimizeEnabledCount = computed(() =>
   modelStatus.value.filter((item) => item.promptOptimizeEnabled).length,
 );
-const visibleModelStatus = computed(() => modelStatus.value.slice(0, 12));
+const showAllModels = ref(false);
+const visibleModelStatus = computed(() =>
+  showAllModels.value ? modelStatus.value : modelStatus.value.slice(0, 12),
+);
+const restoringVersion = ref<number | null>(null);
+const promptVarLabel = '{{prompt}}';
+const capabilityVarLabel = '{{capability}}';
 const promptStarterExamples: Array<PromptTemplate & { description: string }> = [
   {
     id: 'starter-text-copy',
@@ -445,6 +477,10 @@ async function saveTemplate() {
     errorMessage.value = '当前账号没有保存提示语模板的权限。';
     return;
   }
+  if (form.templateType === 'prompt_optimize' && !form.content.includes('{{prompt}}')) {
+    errorMessage.value = '模板内容需要包含 {{prompt}} 占位符，否则用户输入不会被引用。';
+    return;
+  }
   isSaving.value = true;
   errorMessage.value = '';
   noticeMessage.value = '';
@@ -487,6 +523,49 @@ async function runTemplateTest() {
     errorMessage.value = friendlyError(error, '模板测试失败，请稍后重试。');
   } finally {
     isTesting.value = false;
+  }
+}
+
+async function restoreVersion(version: PromptTemplateVersion) {
+  if (!activeTemplate.value) return;
+  try {
+    await ElMessageBox.confirm(
+      `确认将模板恢复到 v${version.version}？会生成一条新的版本记录。`,
+      '恢复历史版本',
+      { type: 'warning', confirmButtonText: '确认恢复', cancelButtonText: '取消' },
+    );
+  } catch {
+    return;
+  }
+  restoringVersion.value = version.version;
+  errorMessage.value = '';
+  noticeMessage.value = '';
+  try {
+    const restored = await restorePromptTemplateVersion(activeTemplate.value.id, version.version);
+    replaceTemplate(restored);
+    syncPromptTemplateForm(form, restored);
+    await loadVersions(restored);
+    modelStatus.value = await fetchPromptTemplateModelStatus(capability.value);
+    noticeMessage.value = `已恢复到 v${version.version}。`;
+  } catch (error) {
+    errorMessage.value = friendlyError(error, '版本恢复失败，请稍后重试。');
+  } finally {
+    restoringVersion.value = null;
+  }
+}
+
+function insertPromptVariable() {
+  if (!form.content.includes('{{prompt}}')) {
+    form.content = `${form.content}${form.content ? '\n' : ''}{{prompt}}`;
+  }
+}
+
+async function copyRendered(text: string) {
+  const ok = await copyText(text);
+  if (ok) {
+    noticeMessage.value = '已复制渲染结果。';
+  } else {
+    errorMessage.value = '复制失败，请手动复制。';
   }
 }
 

@@ -419,7 +419,8 @@ describe('audit logs state', () => {
     filters.status = 'success';
     filters.risk = 'high';
     filters.dateRange = ['2026-06-11T00:00:00', '2026-06-12T00:00:00'];
-    filters.limit = 300;
+    filters.page = 2;
+    filters.pageSize = 50;
 
     expect(buildAuditLogQuery(filters)).toEqual({
       action: 'update',
@@ -430,7 +431,8 @@ describe('audit logs state', () => {
       risk: 'high',
       startAt: '2026-06-11T00:00:00',
       endAt: '2026-06-12T00:00:00',
-      limit: 300,
+      page: 2,
+      pageSize: 50,
     });
   });
 
@@ -626,7 +628,7 @@ describe('records state', () => {
       size: '1024x1024',
       ratio: '16:9',
       refCount: '2',
-    }));
+    }), expect.any(Function));
     expect(state.filters).toMatchObject({
       keyword: 'poster',
       size: '1024x1024',
@@ -662,7 +664,7 @@ describe('records state', () => {
       userId: 'user-1',
       modelGroupId: 'model-1',
       status: 'error',
-    }));
+    }), expect.any(Function));
   });
 
   it('summarizes and clears route-sourced record filters', () => {

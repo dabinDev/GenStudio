@@ -76,6 +76,22 @@ export interface AdminUserListQuery {
   search?: string;
   role?: string;
   status?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface AdminUsersSummary {
+  totalUsers: number;
+  adminCount: number;
+  totalBalance: number;
+}
+
+export interface AdminListMeta {
+  total?: number;
+  page?: number;
+  pageSize?: number;
+  hasMore?: boolean;
+  summary?: AdminUsersSummary;
 }
 
 export interface AdminUserCreditPayload {
@@ -152,6 +168,8 @@ export interface AdminModelListQuery {
   capability?: string;
   search?: string;
   publicState?: 'all' | 'public' | 'private' | string;
+  page?: number;
+  pageSize?: number;
 }
 
 export interface AdminModelUpdate {
@@ -469,6 +487,10 @@ export interface AdminRecordQuery {
   duration?: string;
   resolution?: string;
   mode?: string;
+  startAt?: string;
+  endAt?: string;
+  page?: number;
+  pageSize?: number;
 }
 
 export interface AdminAuditLog {
@@ -493,6 +515,8 @@ export interface AdminAuditLogQuery {
   startAt?: string;
   endAt?: string;
   limit?: number;
+  page?: number;
+  pageSize?: number;
 }
 
 export interface CreditSettings {

@@ -72,7 +72,7 @@
     <div class="admin-dashboard__tables">
       <section class="admin-dashboard__panel">
         <div class="admin-dashboard__panel-head">
-          <h3>失败模型</h3>
+          <h3>失败模型 <small class="admin-dashboard__panel-hint">前 10</small></h3>
         </div>
         <table>
           <thead>
@@ -105,7 +105,7 @@
 
       <section class="admin-dashboard__panel">
         <div class="admin-dashboard__panel-head">
-          <h3>慢模型</h3>
+          <h3>慢模型 <small class="admin-dashboard__panel-hint">前 10</small></h3>
         </div>
         <table>
           <thead>
@@ -138,7 +138,7 @@
 
       <section class="admin-dashboard__panel">
         <div class="admin-dashboard__panel-head">
-          <h3>活跃用户</h3>
+          <h3>活跃用户 <small class="admin-dashboard__panel-hint">前 10</small></h3>
         </div>
         <table>
           <thead>
@@ -169,9 +169,10 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import AdminMetricCard from '@/components/AdminMetricCard.vue';
+import { useAdminThemeStore } from '@/stores/theme';
 import type { AdminDashboardMetrics } from '@/types';
 import {
   createDashboardState,
@@ -185,6 +186,7 @@ import {
 } from './dashboardState';
 
 const trendChartRef = ref<HTMLElement | null>(null);
+const themeStore = useAdminThemeStore();
 type TrendChart = { setOption: (option: unknown) => void; dispose: () => void; resize?: () => void };
 type EChartsCore = { init: (element: HTMLElement) => TrendChart };
 
@@ -244,15 +246,22 @@ async function renderTrendChart() {
   if (!trendChart) {
     trendChart = echarts.init(trendChartRef.value);
   }
+  const axisColor = themeStore.isDark ? 'rgba(226,232,240,0.72)' : 'rgba(71,85,105,0.85)';
   trendChart.setOption({
     tooltip: { trigger: 'axis' },
-    grid: { left: 36, right: 18, top: 28, bottom: 32 },
+    legend: { top: 2, textStyle: { color: axisColor } },
+    grid: { left: 44, right: 18, top: 40, bottom: 52 },
     xAxis: {
       type: 'category',
       data: buckets.map((item) => item.label),
       axisTick: { show: false },
+      axisLabel: { color: axisColor },
     },
-    yAxis: { type: 'value' },
+    yAxis: { type: 'value', axisLabel: { color: axisColor } },
+    dataZoom: [
+      { type: 'inside' },
+      { type: 'slider', height: 16, bottom: 10 },
+    ],
     series: [
       {
         name: '总调用',
@@ -277,6 +286,13 @@ async function renderTrendChart() {
 function handleResize() {
   trendChart?.resize?.();
 }
+
+watch(
+  () => themeStore.theme,
+  () => {
+    void renderTrendChart();
+  },
+);
 
 onMounted(() => {
   void loadDashboard();

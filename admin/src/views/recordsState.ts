@@ -3,7 +3,7 @@ import { computed, reactive, ref } from 'vue';
 import { buildExportFilename, downloadBlob } from '@/adminExport';
 import { exportAdminRecords, fetchAdminRecords } from '@/api/admin';
 import { AdminApiError } from '@/api/http';
-import type { AdminCreationRecord, AdminRecordQuery, Capability } from '@/types';
+import type { AdminCreationRecord, AdminListMeta, AdminRecordQuery, Capability } from '@/types';
 
 const RECORD_FILTER_PRESETS_KEY = 'genstudio-admin-record-filter-presets-v1';
 
@@ -187,13 +187,21 @@ export function canExportVisibleRecords(options: {
 }
 
 export function createRecordsState(
-  loader: (capability: Capability, query: AdminRecordQuery) => Promise<AdminCreationRecord[]> = fetchAdminRecords,
+  loader: (
+    capability: Capability,
+    query: AdminRecordQuery,
+    onMeta?: (meta: AdminListMeta) => void,
+  ) => Promise<AdminCreationRecord[]> = fetchAdminRecords,
 ) {
   const capability = ref<Capability>('text');
   const records = ref<AdminCreationRecord[]>([]);
   const isLoading = ref(false);
   const errorMessage = ref('');
   const filters = reactive<RecordFilters>(emptyRecordFilters());
+  const dateRange = ref<string[]>([]);
+  const page = ref(1);
+  const pageSize = ref(30);
+  const hasMore = ref(false);
   const lastLoadedCapability = ref<Capability>('text');
   const lastLoadedQuery = ref<AdminRecordQuery>({ ...emptyRecordFilters() });
   const savedFilterPresets = ref<RecordFilterPreset[]>(loadFilterPresets());
@@ -216,13 +224,18 @@ export function createRecordsState(
     isLoading.value = true;
     errorMessage.value = '';
     const capabilityForRequest = capability.value;
-    const queryForRequest = { ...filters };
+    const [startAt, endAt] = dateRange.value;
+    const exportQuery: AdminRecordQuery = { ...filters, startAt: startAt || '', endAt: endAt || '' };
+    const queryForRequest: AdminRecordQuery = { ...exportQuery, page: page.value, pageSize: pageSize.value };
     try {
-      const result = await loader(capabilityForRequest, queryForRequest);
+      const result = await loader(capabilityForRequest, queryForRequest, (meta) => {
+        if (requestId !== latestRequestId) return;
+        hasMore.value = Boolean(meta.hasMore);
+      });
       if (requestId === latestRequestId) {
         records.value = result;
         lastLoadedCapability.value = capabilityForRequest;
-        lastLoadedQuery.value = { ...queryForRequest };
+        lastLoadedQuery.value = { ...exportQuery };
       }
     } catch (error) {
       if (requestId === latestRequestId) {
@@ -318,12 +331,26 @@ export function createRecordsState(
     routeFilterEntries.value = {};
   }
 
+  function goToRecordsPage(nextPage: number) {
+    page.value = Math.max(1, nextPage);
+    void loadRecords();
+  }
+
+  function reloadFromFirstPage() {
+    page.value = 1;
+    void loadRecords();
+  }
+
   return {
     capability,
     records,
     isLoading,
     errorMessage,
     filters,
+    dateRange,
+    page,
+    pageSize,
+    hasMore,
     lastLoadedCapability,
     lastLoadedQuery,
     savedFilterPresets,
@@ -337,6 +364,8 @@ export function createRecordsState(
     applyRouteQueryFilters,
     clearRouteFilters,
     loadRecords,
+    goToRecordsPage,
+    reloadFromFirstPage,
   };
 }
 

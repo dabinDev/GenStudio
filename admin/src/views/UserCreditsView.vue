@@ -9,7 +9,7 @@
         <div class="admin-user-credits__summary" aria-label="用户积分概览">
           <div>
             <span>总用户</span>
-            <strong>{{ users.length }}</strong>
+            <strong>{{ totalUsers }}</strong>
           </div>
           <div>
             <span>管理员</span>
@@ -44,21 +44,21 @@
         v-model="search"
         clearable
         placeholder="搜索邮箱、昵称、手机号"
-        @clear="loadUsers"
-        @keyup.enter="loadUsers"
+        @clear="reloadFromFirstPage"
+        @keyup.enter="reloadFromFirstPage"
       />
-      <el-select v-model="roleFilter" aria-label="角色筛选">
+      <el-select v-model="roleFilter" aria-label="角色筛选" @change="reloadFromFirstPage">
         <el-option label="全部角色" value="all" />
         <el-option label="管理员" value="admin" />
         <el-option label="普通用户" value="user" />
       </el-select>
-      <el-select v-model="statusFilter" aria-label="状态筛选">
+      <el-select v-model="statusFilter" aria-label="状态筛选" @change="reloadFromFirstPage">
         <el-option label="全部状态" value="all" />
         <el-option label="正常" value="active" />
         <el-option label="已禁用" value="disabled" />
         <el-option label="已删除" value="deleted" />
       </el-select>
-      <el-button type="primary" :loading="isLoading" @click="loadUsers">搜索</el-button>
+      <el-button type="primary" :loading="isLoading" @click="reloadFromFirstPage">搜索</el-button>
     </section>
 
     <el-alert
@@ -175,6 +175,18 @@
         </el-table-column>
       </el-table>
       </div>
+      <div class="admin-content-page__pagination">
+        <el-pagination
+          layout="total, sizes, prev, pager, next"
+          :total="total"
+          :current-page="page"
+          :page-size="pageSize"
+          :page-sizes="[20, 50, 100]"
+          :disabled="isLoading"
+          @current-change="goToPage"
+          @size-change="handleSizeChange"
+        />
+      </div>
     </section>
 
     <el-drawer v-model="drawerVisible" size="min(560px, 100vw)" :title="drawerTitle" destroy-on-close>
@@ -283,14 +295,17 @@
 
         <el-form label-position="top">
           <el-form-item label="重置密码">
-            <el-input
-              v-model="newPassword"
-              type="password"
-              show-password
-              placeholder="新密码（至少 6 位）"
-              :disabled="!canUpdateUserProfile"
-              maxlength="128"
-            />
+            <div class="admin-user-credits__password-row">
+              <el-input
+                v-model="newPassword"
+                type="password"
+                show-password
+                placeholder="新密码（至少 6 位）"
+                :disabled="!canUpdateUserProfile"
+                maxlength="128"
+              />
+              <el-button :disabled="!canUpdateUserProfile" @click="generatePassword">生成随机</el-button>
+            </div>
           </el-form-item>
           <div class="admin-user-credits__drawer-actions">
             <el-button
@@ -321,6 +336,10 @@
             placeholder="例如：活动奖励、补偿赠送"
           />
         </el-form-item>
+        <p class="admin-user-credits__batch-total">
+          共 {{ selectedIds.length }} 人 × {{ batchGrantAmount || 0 }} = 合计发放
+          <strong>{{ selectedIds.length * (batchGrantAmount || 0) }}</strong> 积分
+        </p>
       </el-form>
       <template #footer>
         <el-button @click="batchGrantDialogVisible = false">取消</el-button>
@@ -372,6 +391,10 @@ const {
   search,
   roleFilter,
   statusFilter,
+  page,
+  pageSize,
+  total,
+  totalUsers,
   lastLoadedQuery,
   isLoading,
   errorMessage,
@@ -381,6 +404,8 @@ const {
   selectedIds,
   setSelected,
   loadUsers,
+  goToPage,
+  reloadFromFirstPage,
   replaceUser: replaceUserInState,
 } = createUserCreditsState(fetchAdminUsers);
 
@@ -422,6 +447,22 @@ const duplicateGroups = computed(() => duplicateIdentityGroups(filteredUsers.val
 const duplicateUserCount = computed(() =>
   duplicateGroups.value.reduce((sum, group) => sum + group.duplicateCount, 0),
 );
+
+function handleSizeChange(size: number) {
+  pageSize.value = size;
+  reloadFromFirstPage();
+}
+
+function generatePassword() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+  const array = new Uint32Array(14);
+  crypto.getRandomValues(array);
+  let result = '';
+  for (let i = 0; i < array.length; i += 1) {
+    result += chars[array[i] % chars.length];
+  }
+  newPassword.value = result;
+}
 
 function formatDate(value?: string | null) {
   if (!value) {

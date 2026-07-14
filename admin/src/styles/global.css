@@ -4097,3 +4097,48 @@ body,
   border-radius: 8px;
   background: var(--el-color-danger-light-9);
 }
+
+/* Admin visual refinement toward creator studio v20 */
+[data-theme='light'] .el-button--primary:not(.is-link):not(.is-text) {
+  background-image: linear-gradient(135deg, #0891b2, #16a34a);
+  border-color: transparent;
+}
+
+[data-theme='dark'] .el-button--primary:not(.is-link):not(.is-text) {
+  background-image: linear-gradient(135deg, #17a89f, #3f9d24);
+  border-color: transparent;
+}
+
+.el-button--primary:not(.is-link):not(.is-text):hover {
+  filter: brightness(1.07);
+}
+
+.el-button--primary:not(.is-link):not(.is-text):active {
+  filter: brightness(0.94);
+}
+
+.el-button:not(.el-button--text):not(.is-link) {
+  border-radius: 10px;
+}
+
+.el-card {
+  border-radius: 14px;
+}
+
+[data-theme='light'] .el-card {
+  box-shadow: 0 14px 40px rgb(15 23 42 / 6%);
+}
+
+[data-theme='dark'] .el-card {
+  box-shadow: 0 14px 40px rgb(0 0 0 / 26%);
+}
+
+.el-drawer {
+  --el-drawer-padding-primary: 20px;
+}
+
+.el-input__wrapper,
+.el-textarea__inner,
+.el-select__wrapper {
+  border-radius: 10px;
+}

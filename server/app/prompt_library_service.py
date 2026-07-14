@@ -5,7 +5,7 @@ import re
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.admin_service import json_dumps_safe, parse_json_object, write_admin_log
@@ -168,15 +168,13 @@ def import_prompt_scene_templates(
     return summary
 
 
-def list_scene_templates(
+def _scene_template_query(
     db: Session,
     *,
     search: str = "",
     category_id: str = "",
     enabled: str = "",
-    limit: int = 50,
-    offset: int = 0,
-) -> tuple[list[PromptSceneTemplate], int]:
+):
     query = db.query(PromptSceneTemplate)
     clean_search = search.strip()
     if clean_search:
@@ -192,10 +190,24 @@ def list_scene_templates(
         )
     if category_id.strip():
         query = query.filter(PromptSceneTemplate.category_id == category_id.strip())
-    if enabled.strip().lower() in {"true", "1", "yes"}:
+    normalized_enabled = enabled.strip().lower()
+    if normalized_enabled in {"true", "1", "yes"}:
         query = query.filter(PromptSceneTemplate.enabled.is_(True))
-    if enabled.strip().lower() in {"false", "0", "no"}:
+    if normalized_enabled in {"false", "0", "no"}:
         query = query.filter(PromptSceneTemplate.enabled.is_(False))
+    return query
+
+
+def list_scene_templates(
+    db: Session,
+    *,
+    search: str = "",
+    category_id: str = "",
+    enabled: str = "",
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[list[PromptSceneTemplate], int]:
+    query = _scene_template_query(db, search=search, category_id=category_id, enabled=enabled)
     total = query.count()
     rows = (
         query.order_by(PromptSceneTemplate.weight.desc(), PromptSceneTemplate.updated_at.desc())
@@ -204,6 +216,31 @@ def list_scene_templates(
         .all()
     )
     return rows, total
+
+
+def scene_template_summary(
+    db: Session,
+    *,
+    search: str = "",
+    category_id: str = "",
+) -> dict[str, int]:
+    base = _scene_template_query(db, search=search, category_id=category_id)
+    total = base.count()
+    enabled_count = _scene_template_query(
+        db, search=search, category_id=category_id, enabled="true"
+    ).count()
+    aggregate = base.with_entities(
+        func.coalesce(func.sum(PromptSceneTemplate.impression_count), 0),
+        func.coalesce(func.sum(PromptSceneTemplate.click_count), 0),
+        func.coalesce(func.sum(PromptSceneTemplate.use_count), 0),
+    ).one()
+    return {
+        "total": int(total),
+        "enabled": int(enabled_count),
+        "impressions": int(aggregate[0] or 0),
+        "clicks": int(aggregate[1] or 0),
+        "uses": int(aggregate[2] or 0),
+    }
 
 
 def update_scene_template(db: Session, admin: User, template_id: str, payload: dict[str, Any]) -> PromptSceneTemplate:

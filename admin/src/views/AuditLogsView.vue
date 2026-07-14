@@ -88,7 +88,7 @@
         <el-table-column label="目标" min-width="220" show-overflow-tooltip>
           <template #default="{ row }">{{ row.targetType || 'unknown' }} / {{ row.targetId || '无' }}</template>
         </el-table-column>
-        <el-table-column label="风险" width="100">
+        <el-table-column label="风险" width="100" prop="riskLevel" sortable>
           <template #default="{ row }">
             <el-tag :type="riskTagType(row.riskLevel)" effect="plain">{{ riskLabel(row.riskLevel) }}</el-tag>
           </template>
@@ -98,7 +98,7 @@
             <el-tag :type="row.status === 'error' ? 'danger' : 'success'" effect="plain">{{ statusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="时间" width="170">
+        <el-table-column label="时间" width="170" prop="createdAt" sortable>
           <template #default="{ row }">{{ formatDate(row.createdAt) }}</template>
         </el-table-column>
         <el-table-column label="操作" width="100" fixed="right">
@@ -300,13 +300,20 @@ const dateShortcuts = [
 ];
 
 function targetLink(log: AdminAuditLog): boolean {
-  return Boolean(log.targetId) && (log.targetType === 'user' || log.targetType === 'model');
+  return Boolean(log.targetId) && ['user', 'model', 'prompt_template', 'record'].includes(log.targetType || '');
 }
 
 function goToTarget(log: AdminAuditLog) {
   if (!targetLink(log)) return;
-  const path = log.targetType === 'user' ? '/users' : '/models';
-  void router.push({ path, query: { search: log.targetId } });
+  if (log.targetType === 'user') {
+    void router.push({ path: '/users', query: { search: log.targetId } });
+  } else if (log.targetType === 'model') {
+    void router.push({ path: '/models', query: { search: log.targetId } });
+  } else if (log.targetType === 'prompt_template') {
+    void router.push({ path: '/prompts' });
+  } else if (log.targetType === 'record') {
+    void router.push({ path: '/records' });
+  }
 }
 
 onMounted(() => {

@@ -1,5 +1,5 @@
 <template>
-  <div class="admin-layout">
+  <div class="admin-layout" :class="{ 'admin-layout--collapsed': collapsed }">
     <div class="admin-ambient" aria-hidden="true">
       <span class="admin-ambient-drift admin-ambient-glow admin-ambient-glow-primary"></span>
       <span class="admin-ambient-drift admin-ambient-glow admin-ambient-glow-secondary"></span>
@@ -13,6 +13,14 @@
         <strong>创意工坊</strong>
         <span>管理后台</span>
       </div>
+      <button
+        class="admin-sidebar-collapse"
+        type="button"
+        :title="collapsed ? '展开侧栏' : '收起侧栏'"
+        @click="toggleSidebar"
+      >
+        <span class="admin-sidebar-collapse-glyph" aria-hidden="true">{{ collapsed ? '»' : '«' }}</span>
+      </button>
       <el-menu :default-active="activePath" router class="admin-menu">
         <el-menu-item v-for="item in menuItems" :key="item.path" :index="item.path">
           <span class="admin-menu-mark"><el-icon><component :is="iconFor(item.path)" /></el-icon></span>
@@ -103,6 +111,20 @@ const displayName = computed(() =>
   safeIdentityLabel(auth.user?.displayName || auth.user?.nickname, auth.user?.email || '管理员'),
 );
 const mobileNavTrackRef = ref<HTMLElement | null>(null);
+
+const SIDEBAR_COLLAPSE_KEY = 'genstudio-admin-sidebar-collapsed';
+const collapsed = ref(
+  typeof localStorage !== 'undefined' && localStorage.getItem(SIDEBAR_COLLAPSE_KEY) === '1',
+);
+function toggleSidebar() {
+  collapsed.value = !collapsed.value;
+  if (typeof localStorage !== 'undefined') {
+    localStorage.setItem(SIDEBAR_COLLAPSE_KEY, collapsed.value ? '1' : '0');
+  }
+}
+const logoutRedirect =
+  (import.meta.env as Record<string, string | undefined>).VITE_ADMIN_LOGOUT_REDIRECT ||
+  '/#/auth?redirect=%2Fadmin%2F';
 
 let adminAmbientAnimations: gsap.core.Animation[] = [];
 
@@ -200,6 +222,6 @@ watch(() => menuItems.value.length, () => scrollActiveMobileNavIntoView(), { flu
 
 async function handleLogout() {
   await auth.logout();
-  window.location.href = '/#/auth?redirect=%2Fadmin%2F';
+  window.location.href = logoutRedirect;
 }
 </script>

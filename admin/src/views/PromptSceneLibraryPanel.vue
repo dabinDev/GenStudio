@@ -26,11 +26,11 @@
     <section class="admin-prompt-scene-library__stats">
       <article>
         <span>模板总数</span>
-        <strong>{{ total }}</strong>
+        <strong>{{ totalCount }}</strong>
         <small>后台可运营模板</small>
       </article>
       <article>
-        <span>本页启用</span>
+        <span>启用</span>
         <strong>{{ enabledCount }}</strong>
         <small>会进入推荐候选池</small>
       </article>
@@ -47,13 +47,19 @@
     </section>
 
     <section class="admin-prompt-scene-library__filters">
-      <el-input v-model="filters.search" clearable placeholder="搜索标题、分类、标签或提示词" @keyup.enter="loadTemplates" />
-      <el-select v-model="filters.enabled" aria-label="启用状态" @change="loadTemplates">
+      <el-input v-model="filters.search" clearable placeholder="搜索标题、分类、标签或提示词" @keyup.enter="reloadFromFirstPage" />
+      <el-select v-model="filters.enabled" aria-label="启用状态" @change="reloadFromFirstPage">
         <el-option label="全部状态" value="" />
         <el-option label="仅启用" value="true" />
         <el-option label="仅停用" value="false" />
       </el-select>
-      <el-button @click="loadTemplates">查询</el-button>
+      <el-select v-model="sortKey" aria-label="排序方式">
+        <el-option label="按权重" value="weight" />
+        <el-option label="按曝光" value="impressions" />
+        <el-option label="按点击" value="clicks" />
+        <el-option label="按使用" value="uses" />
+      </el-select>
+      <el-button @click="reloadFromFirstPage">查询</el-button>
     </section>
 
     <section class="admin-prompt-scene-library__bulk">
@@ -65,7 +71,7 @@
     <section class="admin-prompt-scene-library__table-wrap">
       <el-table
         v-loading="isLoading"
-        :data="templates"
+        :data="sortedTemplates"
         row-key="id"
         @selection-change="handleSelectionChange"
       >
@@ -110,11 +116,16 @@
     </section>
 
     <footer class="admin-prompt-scene-library__pager">
-      <span>第 {{ page }} 页，每页 {{ pageSize }} 条</span>
-      <div>
-        <el-button :disabled="page <= 1 || isLoading" @click="changePage(page - 1)">上一页</el-button>
-        <el-button :disabled="offset + templates.length >= total || isLoading" @click="changePage(page + 1)">下一页</el-button>
-      </div>
+      <el-pagination
+        layout="total, sizes, prev, pager, next"
+        :total="total"
+        :current-page="page"
+        :page-size="pageSize"
+        :page-sizes="[20, 50, 100]"
+        :disabled="isLoading"
+        @current-change="changePage"
+        @size-change="handleSizeChange"
+      />
     </footer>
 
     <el-drawer v-model="drawerVisible" size="min(720px, 100vw)" title="编辑图片场景模板" destroy-on-close>
@@ -127,20 +138,33 @@
             <el-input v-model="form.promptText" type="textarea" :rows="10" :disabled="!canUpdateSettings" />
           </el-form-item>
           <el-form-item label="标签">
-            <el-input v-model="form.tagsText" :disabled="!canUpdateSettings" placeholder="人像，电影感，柔光" />
+            <el-input v-model="form.tagsText" :disabled="!canUpdateSettings" placeholder="人像，电影感，柔光（逗号分隔）" />
+            <div v-if="tagPreview.length" class="admin-prompt-scene-library__tags">
+              <el-tag v-for="tag in tagPreview" :key="tag" effect="plain" size="small">{{ tag }}</el-tag>
+            </div>
           </el-form-item>
           <div class="admin-prompt-scene-library__form-grid">
             <el-form-item label="分类 ID">
               <el-input v-model="form.categoryId" :disabled="!canUpdateSettings" />
             </el-form-item>
             <el-form-item label="一级分类">
-              <el-input v-model="form.category" :disabled="!canUpdateSettings" />
+              <el-select
+                v-model="form.category"
+                filterable
+                allow-create
+                default-first-option
+                :disabled="!canUpdateSettings"
+                placeholder="选择或输入分类"
+              >
+                <el-option v-for="opt in categoryOptions" :key="opt" :label="opt" :value="opt" />
+              </el-select>
             </el-form-item>
             <el-form-item label="子分类">
               <el-input v-model="form.subcategory" :disabled="!canUpdateSettings" />
             </el-form-item>
             <el-form-item label="推荐权重">
               <el-input-number v-model="form.weight" :min="0" :max="100000" :disabled="!canUpdateSettings" />
+              <small class="admin-prompt-scene-library__hint">数值越大排序越靠前，常用 0–1000；识别参考图时优先推荐高权重模板。</small>
             </el-form-item>
           </div>
           <el-form-item label="启用状态">
@@ -158,6 +182,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
+import { ElMessageBox } from 'element-plus';
 
 import {
   batchUpdatePromptSceneTemplates,
@@ -168,7 +193,7 @@ import {
 import { ADMIN_PERMISSIONS } from '@/adminPermissions';
 import { AdminApiError } from '@/api/http';
 import { useAdminAuthStore } from '@/stores/auth';
-import type { PromptSceneTemplate } from '@/types';
+import type { PromptSceneTemplate, PromptSceneTemplateSummary } from '@/types';
 import {
   buildPromptSceneTemplateUpdatePayload,
   createPromptSceneTemplateForm,
@@ -179,8 +204,10 @@ const auth = useAdminAuthStore();
 const canUpdateSettings = computed(() => auth.can(ADMIN_PERMISSIONS.settingsUpdate));
 const templates = ref<PromptSceneTemplate[]>([]);
 const total = ref(0);
-const pageSize = 50;
+const summary = ref<PromptSceneTemplateSummary | null>(null);
+const pageSize = ref(50);
 const page = ref(1);
+const sortKey = ref<'weight' | 'impressions' | 'clicks' | 'uses'>('weight');
 const selectedIds = ref<string[]>([]);
 const isLoading = ref(false);
 const isSaving = ref(false);
@@ -194,10 +221,28 @@ const filters = reactive({
   enabled: '',
 });
 
-const offset = computed(() => (page.value - 1) * pageSize);
-const enabledCount = computed(() => templates.value.filter((item) => item.enabled).length);
-const impressionCount = computed(() => templates.value.reduce((sum, item) => sum + item.impressionCount, 0));
-const clickCount = computed(() => templates.value.reduce((sum, item) => sum + item.clickCount, 0));
+const offset = computed(() => (page.value - 1) * pageSize.value);
+const totalCount = computed(() => summary.value?.total ?? total.value);
+const enabledCount = computed(() => summary.value?.enabled ?? templates.value.filter((item) => item.enabled).length);
+const impressionCount = computed(() => summary.value?.impressions ?? 0);
+const clickCount = computed(() => summary.value?.clicks ?? 0);
+const categoryOptions = computed(() => {
+  const set = new Set<string>();
+  for (const item of templates.value) {
+    if (item.category) set.add(item.category);
+  }
+  return [...set];
+});
+const tagPreview = computed(() =>
+  form.tagsText.split(/[,，/、\s]+/).map((tag) => tag.trim()).filter(Boolean),
+);
+const sortedTemplates = computed(() => {
+  const list = [...templates.value];
+  if (sortKey.value === 'impressions') return list.sort((a, b) => b.impressionCount - a.impressionCount);
+  if (sortKey.value === 'clicks') return list.sort((a, b) => b.clickCount - a.clickCount);
+  if (sortKey.value === 'uses') return list.sort((a, b) => b.useCount - a.useCount);
+  return list;
+});
 
 function friendlyError(error: unknown, fallback: string) {
   return error instanceof AdminApiError && error.message.trim() ? error.message.trim() : fallback;
@@ -214,11 +259,12 @@ async function loadTemplates() {
     const payload = await fetchPromptSceneTemplates({
       search: filters.search.trim(),
       enabled: filters.enabled as '' | 'true' | 'false',
-      limit: pageSize,
+      limit: pageSize.value,
       offset: offset.value,
     });
     templates.value = payload.templates;
     total.value = payload.total;
+    summary.value = payload.summary ?? null;
     selectedIds.value = [];
   } catch (error) {
     errorMessage.value = friendlyError(error, '图片场景提示词库加载失败，请稍后重试。');
@@ -229,6 +275,17 @@ async function loadTemplates() {
 
 function changePage(nextPage: number) {
   page.value = Math.max(1, nextPage);
+  void loadTemplates();
+}
+
+function reloadFromFirstPage() {
+  page.value = 1;
+  void loadTemplates();
+}
+
+function handleSizeChange(size: number) {
+  pageSize.value = size;
+  page.value = 1;
   void loadTemplates();
 }
 
@@ -251,14 +308,34 @@ async function handleImportFile(event: Event) {
     errorMessage.value = '当前账号没有导入提示词库的权限。';
     return;
   }
+  errorMessage.value = '';
+  noticeMessage.value = '';
+  let index: Record<string, unknown>;
+  let entryCount = 0;
+  try {
+    const source = await file.text();
+    index = parseYuquePromptLibrarySource(source);
+    const prompts = (index as { prompts?: unknown[] }).prompts;
+    entryCount = Array.isArray(prompts) ? prompts.length : 0;
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : 'Yuque 提示词库解析失败。';
+    return;
+  }
+  try {
+    await ElMessageBox.confirm(
+      `将导入 ${entryCount} 条提示词并以本次文件为准：匹配的模板会新增/更新，未包含的旧模板会被自动停用。确认导入？`,
+      '确认导入提示词库',
+      { type: 'warning', confirmButtonText: '确认导入', cancelButtonText: '取消' },
+    );
+  } catch {
+    return;
+  }
   isLoading.value = true;
   errorMessage.value = '';
   noticeMessage.value = '';
   try {
-    const source = await file.text();
-    const index = parseYuquePromptLibrarySource(source);
-    const summary = await importPromptSceneTemplates(index, true);
-    noticeMessage.value = `导入完成：新增 ${summary.imported}，更新 ${summary.updated}，停用 ${summary.disabled}，总计 ${summary.total}。`;
+    const importResult = await importPromptSceneTemplates(index, true);
+    noticeMessage.value = `导入完成：新增 ${importResult.imported}，更新 ${importResult.updated}，停用 ${importResult.disabled}，总计 ${importResult.total}。`;
     page.value = 1;
     await loadTemplates();
   } catch (error) {
@@ -391,7 +468,7 @@ onMounted(() => {
 
 .admin-prompt-scene-library__filters {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) 160px auto;
+  grid-template-columns: minmax(180px, 1fr) 150px 150px auto;
   gap: 10px;
   min-width: 0;
 }
@@ -450,6 +527,13 @@ onMounted(() => {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+
+.admin-prompt-scene-library__hint {
+  display: block;
+  margin-top: 4px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
 }
 
 .admin-prompt-scene-library__form-grid :deep(.el-input-number) {

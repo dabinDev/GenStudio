@@ -1,5 +1,11 @@
 <template>
   <section class="admin-page admin-forbidden">
+    <div class="admin-forbidden__icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="4.5" y="10.5" width="15" height="10" rx="2" />
+        <path d="M8 10.5V7.5a4 4 0 0 1 8 0v3" />
+      </svg>
+    </div>
     <h2>{{ title }}</h2>
     <p>{{ message }}</p>
     <p v-if="requiredPermission" class="admin-forbidden__hint">
@@ -46,3 +52,17 @@ function goDashboard() {
   void router.push('/dashboard');
 }
 </script>
+
+<style scoped>
+.admin-forbidden__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  height: 72px;
+  margin-bottom: 16px;
+  color: var(--el-color-primary);
+  background: color-mix(in srgb, var(--el-color-primary) 12%, transparent);
+  border-radius: 999px;
+}
+</style>

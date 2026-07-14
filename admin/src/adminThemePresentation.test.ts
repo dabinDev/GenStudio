@@ -154,13 +154,13 @@ describe('admin theme presentation', () => {
 
     expect(markerIndex).toBeGreaterThan(-1);
     expect(styles.indexOf("[data-theme='light'] .el-button--primary:not(.is-link):not(.is-text)", markerIndex)).toBeGreaterThan(markerIndex);
-    expect(styles.indexOf('--el-button-bg-color: #0f6fc6', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('--el-button-bg-color: #0891b2', markerIndex)).toBeGreaterThan(markerIndex);
     expect(styles.indexOf("[data-theme='light'] .el-button--primary.is-disabled", markerIndex)).toBeGreaterThan(markerIndex);
     expect(styles.indexOf("[data-theme='light'] .el-tag.el-tag--success", markerIndex)).toBeGreaterThan(markerIndex);
     expect(styles.indexOf("[data-theme='dark'] .admin-menu .el-menu-item", markerIndex)).toBeGreaterThan(markerIndex);
     expect(styles.indexOf("[data-theme='dark'] .el-button--primary:not(.is-link):not(.is-text)", markerIndex)).toBeGreaterThan(markerIndex);
-    expect(styles.indexOf('--el-button-bg-color: #1769bd', markerIndex)).toBeGreaterThan(markerIndex);
-    expect(styles.indexOf('--el-switch-on-color: #1769bd', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('--el-button-bg-color: #17a89f', markerIndex)).toBeGreaterThan(markerIndex);
+    expect(styles.indexOf('--el-switch-on-color: #17a89f', markerIndex)).toBeGreaterThan(markerIndex);
     expect(styles.indexOf("[data-theme='dark'] .el-switch.is-checked .el-switch__core", markerIndex)).toBeGreaterThan(markerIndex);
     expect(styles.indexOf("[data-theme='dark'] .el-table", markerIndex)).toBeGreaterThan(markerIndex);
     expect(styles.indexOf("[data-theme='dark'] .el-card", markerIndex)).toBeGreaterThan(markerIndex);

@@ -4,6 +4,7 @@
       <div>
         <h2>{{ DASHBOARD_TITLE }}</h2>
         <p>查看调用质量、积分消耗、重点模型健康状态和用户活跃情况。</p>
+        <small v-if="lastUpdatedLabel" class="admin-dashboard__updated">最后更新 {{ lastUpdatedLabel }}</small>
       </div>
       <div class="admin-dashboard__ranges" aria-label="时间范围">
         <button
@@ -23,7 +24,7 @@
       <button type="button" @click="loadDashboard()">重试</button>
     </div>
 
-    <div class="admin-dashboard__metrics" :aria-busy="isLoading">
+    <div v-loading="isLoading && !metrics" class="admin-dashboard__metrics" :aria-busy="isLoading">
       <AdminMetricCard
         v-for="card in metricCards"
         :key="card.label"
@@ -187,6 +188,7 @@ import {
 
 const trendChartRef = ref<HTMLElement | null>(null);
 const themeStore = useAdminThemeStore();
+const lastUpdatedLabel = ref('');
 type TrendChart = { setOption: (option: unknown) => void; dispose: () => void; resize?: () => void };
 type EChartsCore = { init: (element: HTMLElement) => TrendChart };
 
@@ -293,6 +295,12 @@ watch(
     void renderTrendChart();
   },
 );
+
+watch(metrics, () => {
+  if (metrics.value) {
+    lastUpdatedLabel.value = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+  }
+});
 
 onMounted(() => {
   void loadDashboard();

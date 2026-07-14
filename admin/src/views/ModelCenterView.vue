@@ -41,6 +41,7 @@
               <el-dropdown-item
                 v-if="canRemoveUnavailable"
                 command="remove-unavailable"
+                divided
                 :disabled="!hasSelectedModels || isSaving"
               >
                 移除不可用

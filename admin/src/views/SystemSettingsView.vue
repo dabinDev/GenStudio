@@ -23,6 +23,10 @@
     <el-alert v-if="errorMessage" :title="errorMessage" type="error" show-icon :closable="false" />
     <el-alert v-if="noticeMessage" :title="noticeMessage" type="success" show-icon @close="noticeMessage = ''" />
 
+    <div class="admin-settings-section-head">
+      <strong>计费与活动</strong>
+      <span>面向全站公用模型和新用户的计费规则。</span>
+    </div>
     <section class="admin-settings-grid">
       <el-card v-if="canViewCreditSettings" shadow="never">
         <template #header>
@@ -71,6 +75,13 @@
         </el-form>
       </el-card>
 
+      </section>
+
+      <div class="admin-settings-section-head admin-settings-section-head--danger">
+        <strong>运维与维护</strong>
+        <span>以下为谨慎 / 不可逆操作，请确认后再执行。</span>
+      </div>
+      <section class="admin-settings-grid">
       <el-card v-if="canViewAssetCleanup" shadow="never" class="admin-maintenance-card admin-asset-cleanup-card">
         <template #header>
           <div class="admin-settings-grid__head admin-asset-cleanup-card__head">

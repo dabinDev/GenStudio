@@ -4301,3 +4301,71 @@ def test_prompt_template_version_restore() -> None:
     restored = restore_prompt_template_version(db, admin, first.id, 1)
     assert restored.content == "第一版 {{prompt}}"
     assert restored.name == "v1"
+
+
+def test_scene_template_summary_is_global() -> None:
+    from app.db_models import PromptSceneTemplate
+    from app.prompt_library_service import scene_template_summary
+
+    db = make_db()
+    db.add(
+        PromptSceneTemplate(
+            external_id="scene-a",
+            title="A",
+            prompt_text="prompt a",
+            enabled=True,
+            impression_count=10,
+            click_count=3,
+            use_count=1,
+        )
+    )
+    db.add(
+        PromptSceneTemplate(
+            external_id="scene-b",
+            title="B",
+            prompt_text="prompt b",
+            enabled=False,
+            impression_count=5,
+            click_count=2,
+            use_count=0,
+        )
+    )
+    db.commit()
+
+    summary = scene_template_summary(db)
+    assert summary["total"] == 2
+    assert summary["enabled"] == 1
+    assert summary["impressions"] == 15
+    assert summary["clicks"] == 5
+    assert summary["uses"] == 1
+
+
+def test_admin_audit_risk_summary_counts_all_matches() -> None:
+    from app.admin_service import admin_audit_risk_summary
+
+    db = make_db()
+    for i in range(3):
+        db.add(
+            AdminOperationLog(
+                admin_user_id="admin",
+                action=f"act-{i}",
+                target_type="user",
+                target_id=f"u-{i}",
+                status="success",
+            )
+        )
+    db.add(
+        AdminOperationLog(
+            admin_user_id="admin",
+            action="failed-act",
+            target_type="model",
+            target_id="m-1",
+            status="error",
+        )
+    )
+    db.commit()
+
+    summary = admin_audit_risk_summary(db)
+    assert summary["total"] == 4
+    assert summary["errors"] == 1
+    assert summary["targetTypes"] == 2

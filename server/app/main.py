@@ -47,6 +47,7 @@ from app.admin_service import (
     admin_overview,
     admin_record_detail,
     admin_restore_user,
+    admin_audit_risk_summary,
     admin_task_timeline,
     admin_users_summary,
     build_admin_audit_logs_csv,
@@ -156,6 +157,7 @@ from app.prompt_library_service import (
     build_recommendation_messages,
     import_prompt_scene_templates,
     list_scene_templates,
+    scene_template_summary,
     parse_recommendation_payload,
     recommendation_candidates,
     record_scene_template_event,
@@ -3632,7 +3634,11 @@ async def admin_prompt_library(
         limit=limit,
         offset=offset,
     )
-    return {"templates": [serialize_scene_template(item) for item in rows], "total": total}
+    return {
+        "templates": [serialize_scene_template(item) for item in rows],
+        "total": total,
+        "summary": scene_template_summary(db, search=search, category_id=categoryId),
+    }
 
 
 @app.post("/api/admin/prompt-library/import")
@@ -4408,6 +4414,16 @@ async def admin_audit_logs(
         "total": total,
         "page": safe_page,
         "pageSize": safe_page_size,
+        "riskSummary": admin_audit_risk_summary(
+            db,
+            action=action,
+            admin_user_id=adminUserId,
+            target_type=targetType,
+            target_id=targetId,
+            status=status,
+            start_at=startAt,
+            end_at=endAt,
+        ),
     }
 
 

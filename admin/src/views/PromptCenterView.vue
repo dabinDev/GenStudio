@@ -48,7 +48,12 @@
       </article>
     </section>
 
-    <section class="admin-prompt-center__starter">
+    <div class="admin-prompt-center__guide-toggle">
+      <el-button link type="primary" @click="showGuide = !showGuide">
+        {{ showGuide ? '收起运营引导' : '展开运营引导' }}
+      </el-button>
+    </div>
+    <section v-show="showGuide" class="admin-prompt-center__starter">
       <div class="admin-prompt-center__starter-head">
         <div>
           <h3>模板样例</h3>
@@ -249,6 +254,9 @@
                 <strong>v{{ item.version }} · {{ item.enabled ? '启用' : '停用' }}</strong>
                 <div class="admin-content-page__version-actions">
                   <small>{{ formatDate(item.createdAt) }}</small>
+                  <el-button size="small" @click="toggleDiff(item)">
+                    {{ diffVersionId === item.id ? '收起对比' : '对比当前' }}
+                  </el-button>
                   <el-button
                     v-if="canUpdateSettings && !starterExampleActive && activeTemplate"
                     size="small"
@@ -260,7 +268,17 @@
                 </div>
               </header>
               <p>{{ item.name }}</p>
-              <pre>{{ item.content }}</pre>
+              <div v-if="diffVersionId === item.id" class="admin-content-page__version-diff">
+                <div>
+                  <strong>此版本 v{{ item.version }}</strong>
+                  <pre>{{ item.content }}</pre>
+                </div>
+                <div>
+                  <strong>当前编辑内容</strong>
+                  <pre>{{ form.content }}</pre>
+                </div>
+              </div>
+              <pre v-else>{{ item.content }}</pre>
             </article>
           </div>
         </section>
@@ -356,6 +374,11 @@ const visibleModelStatus = computed(() =>
 const restoringVersion = ref<number | null>(null);
 const promptVarLabel = '{{prompt}}';
 const capabilityVarLabel = '{{capability}}';
+const showGuide = ref(true);
+const diffVersionId = ref('');
+function toggleDiff(version: PromptTemplateVersion) {
+  diffVersionId.value = diffVersionId.value === version.id ? '' : version.id;
+}
 const promptStarterExamples: Array<PromptTemplate & { description: string }> = [
   {
     id: 'starter-text-copy',
@@ -764,6 +787,30 @@ onMounted(() => {
   background: var(--el-fill-color-light);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.admin-content-page__version-diff {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 8px 0 0;
+}
+
+.admin-content-page__version-diff pre {
+  max-height: 220px;
+  overflow: auto;
+  margin: 6px 0 0;
+  padding: 10px;
+  border-radius: 10px;
+  background: var(--el-fill-color-light);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.admin-prompt-center__guide-toggle {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
 }
 
 .admin-content-page__version-list header {

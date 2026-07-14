@@ -1969,6 +1969,41 @@ def count_admin_audit_logs(
     return query.count()
 
 
+def admin_audit_risk_summary(
+    db: Session,
+    *,
+    action: str = "",
+    admin_user_id: str = "",
+    target_type: str = "",
+    target_id: str = "",
+    status: str = "",
+    start_at: str = "",
+    end_at: str = "",
+) -> dict[str, int]:
+    query = _admin_audit_query(
+        db,
+        action=action,
+        admin_user_id=admin_user_id,
+        target_type=target_type,
+        target_id=target_id,
+        status=status,
+        start_at=start_at,
+        end_at=end_at,
+    )
+    logs = query.all()
+    high = sum(1 for item in logs if _audit_risk_level(item) == "high")
+    medium = sum(1 for item in logs if _audit_risk_level(item) == "medium")
+    errors = sum(1 for item in logs if item.status == "error")
+    target_types = len({item.target_type or "unknown" for item in logs})
+    return {
+        "total": len(logs),
+        "highRisk": high,
+        "mediumRisk": medium,
+        "errors": errors,
+        "targetTypes": target_types,
+    }
+
+
 def _serialize_audit_log(item: AdminOperationLog) -> dict[str, Any]:
     return {
         "id": item.id,

@@ -271,6 +271,10 @@
         <el-form label-position="top">
           <el-form-item label="积分调整">
             <el-input-number v-model="adjustAmount" :precision="0" :step="1" :disabled="!canAdjustCredits" />
+            <div class="admin-user-credits__quick-amounts">
+              <el-button v-for="amt in [100, 500, 1000]" :key="amt" size="small" :disabled="!canAdjustCredits" @click="adjustAmount = amt">+{{ amt }}</el-button>
+              <el-button v-for="amt in [-100, -500]" :key="`neg${amt}`" size="small" :disabled="!canAdjustCredits" @click="adjustAmount = amt">{{ amt }}</el-button>
+            </div>
           </el-form-item>
           <el-form-item label="调整原因">
             <el-input

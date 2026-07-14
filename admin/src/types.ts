@@ -392,9 +392,18 @@ export interface PromptSceneTemplateQuery {
   offset?: number;
 }
 
+export interface PromptSceneTemplateSummary {
+  total: number;
+  enabled: number;
+  impressions: number;
+  clicks: number;
+  uses: number;
+}
+
 export interface PromptSceneTemplateListPayload {
   templates: PromptSceneTemplate[];
   total: number;
+  summary?: PromptSceneTemplateSummary;
 }
 
 export interface PromptSceneTemplateUpdatePayload {

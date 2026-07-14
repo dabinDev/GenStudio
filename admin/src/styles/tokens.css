@@ -6,8 +6,8 @@
   --admin-color-border: #d9e2ec;
   --admin-color-text: #172033;
   --admin-color-text-muted: #64748b;
-  --admin-color-primary: #2563eb;
-  --admin-color-primary-strong: #1d4ed8;
+  --admin-color-primary: #0891b2;
+  --admin-color-primary-strong: #0e7490;
   --admin-color-success: #0f9f6e;
   --admin-color-warning: #d97706;
   --admin-color-danger: #dc2626;
@@ -32,8 +32,8 @@
     --admin-color-border: #334155;
     --admin-color-text: #eef4ff;
     --admin-color-text-muted: #a7b4c8;
-    --admin-color-primary: #60a5fa;
-    --admin-color-primary-strong: #3b82f6;
+    --admin-color-primary: #29c3bb;
+    --admin-color-primary-strong: #16a89f;
     --admin-shadow-panel: 0 18px 45px rgb(0 0 0 / 24%);
   }
 }

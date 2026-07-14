@@ -4142,3 +4142,65 @@ body,
 .el-select__wrapper {
   border-radius: 10px;
 }
+
+/* Creator-studio glass style port v21 */
+[data-theme='dark'] {
+  --admin-color-bg: #0a0b0b;
+  --admin-page-bg: #0a0b0b;
+  --el-bg-color-page: #0a0b0b;
+  --admin-color-surface: rgba(255, 255, 255, 0.05);
+  --admin-color-surface-muted: rgba(255, 255, 255, 0.07);
+  --admin-color-border: rgba(255, 255, 255, 0.1);
+  --el-bg-color: rgba(22, 26, 30, 0.72);
+  --el-bg-color-overlay: rgba(26, 30, 34, 0.82);
+  --el-fill-color-blank: rgba(255, 255, 255, 0.04);
+  --el-border-color: rgba(255, 255, 255, 0.12);
+  --el-border-color-light: rgba(255, 255, 255, 0.09);
+  --el-table-bg-color: transparent;
+  --el-table-tr-bg-color: transparent;
+  --el-table-header-bg-color: rgba(255, 255, 255, 0.04);
+  --el-table-row-hover-bg-color: rgba(255, 255, 255, 0.06);
+}
+
+[data-theme='light'] {
+  --admin-color-bg: #f6f9fb;
+  --admin-page-bg: #f6f9fb;
+}
+
+.el-card,
+.admin-page,
+.admin-dashboard__header,
+.admin-dashboard__panel,
+.admin-metric-card {
+  border-radius: 16px;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+[data-theme='dark'] .el-card,
+[data-theme='dark'] .admin-page,
+[data-theme='dark'] .admin-dashboard__header,
+[data-theme='dark'] .admin-dashboard__panel,
+[data-theme='dark'] .admin-metric-card {
+  box-shadow: 0 20px 60px rgb(0 0 0 / 32%);
+}
+
+[data-theme='light'] .el-card,
+[data-theme='light'] .admin-page,
+[data-theme='light'] .admin-dashboard__header,
+[data-theme='light'] .admin-dashboard__panel,
+[data-theme='light'] .admin-metric-card {
+  box-shadow: 0 20px 55px rgb(52 84 114 / 12%);
+}
+
+[data-theme='dark'] .admin-sidebar,
+[data-theme='dark'] .admin-topbar {
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+}
+
+[data-theme='dark'] .admin-content-page__table,
+[data-theme='dark'] .admin-model-center__table,
+[data-theme='dark'] .admin-user-credits__table {
+  background: transparent;
+}

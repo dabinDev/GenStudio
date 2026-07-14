@@ -4204,3 +4204,158 @@ body,
 [data-theme='dark'] .admin-user-credits__table {
   background: transparent;
 }
+
+/* ===== OpenAI-inspired minimal style v22 (overrides v20/v21) ===== */
+[data-theme='light'] {
+  --el-color-primary: #10a37f;
+  --el-color-primary-light-3: #4fb89e;
+  --el-color-primary-light-5: #87d0bf;
+  --el-color-primary-light-7: #bfe7de;
+  --el-color-primary-light-8: #d9f0ea;
+  --el-color-primary-light-9: #ecf8f4;
+  --el-color-primary-dark-2: #0d8268;
+  --el-switch-on-color: #10a37f;
+  --admin-color-primary: #10a37f;
+  --admin-color-primary-strong: #0d8268;
+  --admin-color-bg: #f7f7f8;
+  --admin-page-bg: #f7f7f8;
+  --el-bg-color-page: #f7f7f8;
+  --admin-color-surface: #ffffff;
+  --admin-color-surface-muted: #f4f4f5;
+  --admin-color-border: #e3e3e6;
+  --el-bg-color: #ffffff;
+  --el-bg-color-overlay: #ffffff;
+  --el-fill-color-blank: #ffffff;
+  --el-border-color: #e3e3e6;
+  --el-border-color-light: #ececf0;
+  --el-text-color-primary: #0d0d0d;
+  --el-text-color-regular: #353740;
+  --el-text-color-secondary: #6e6e80;
+}
+
+[data-theme='dark'] {
+  --el-color-primary: #19c39a;
+  --el-color-primary-light-3: #45cfaf;
+  --el-color-primary-light-5: #1a5f52;
+  --el-color-primary-light-7: #17453d;
+  --el-color-primary-light-8: #143a33;
+  --el-color-primary-light-9: #11302b;
+  --el-color-primary-dark-2: #3fceac;
+  --el-switch-on-color: #19c39a;
+  --admin-color-primary: #19c39a;
+  --admin-color-primary-strong: #10a37f;
+  --admin-color-bg: #202123;
+  --admin-page-bg: #202123;
+  --el-bg-color-page: #202123;
+  --admin-color-surface: #2a2b32;
+  --admin-color-surface-muted: #343541;
+  --admin-color-border: #3e3f4b;
+  --el-bg-color: #2a2b32;
+  --el-bg-color-overlay: #2a2b32;
+  --el-fill-color-blank: #2a2b32;
+  --el-fill-color: #343541;
+  --el-fill-color-light: #343541;
+  --el-fill-color-lighter: #3a3b45;
+  --el-border-color: #3e3f4b;
+  --el-border-color-light: #444654;
+  --el-text-color-primary: #ececf1;
+  --el-text-color-regular: #c5c5d2;
+  --el-text-color-secondary: #9a9aa8;
+  --el-table-bg-color: transparent;
+  --el-table-tr-bg-color: transparent;
+  --el-table-header-bg-color: #343541;
+  --el-table-row-hover-bg-color: #343541;
+}
+
+/* 卡片：干净、细边框、克制阴影、去玻璃 */
+.el-card,
+.admin-page,
+.admin-dashboard__header,
+.admin-dashboard__panel,
+.admin-metric-card {
+  border-radius: 12px;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+[data-theme='light'] .el-card,
+[data-theme='light'] .admin-page,
+[data-theme='light'] .admin-dashboard__header,
+[data-theme='light'] .admin-dashboard__panel,
+[data-theme='light'] .admin-metric-card {
+  background: #ffffff;
+  border: 1px solid #e3e3e6;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 4%);
+}
+
+[data-theme='dark'] .el-card,
+[data-theme='dark'] .admin-page,
+[data-theme='dark'] .admin-dashboard__header,
+[data-theme='dark'] .admin-dashboard__panel,
+[data-theme='dark'] .admin-metric-card {
+  background: #2a2b32;
+  border: 1px solid #3e3f4b;
+  box-shadow: none;
+}
+
+/* 侧栏/顶栏：去毛玻璃，实色 */
+[data-theme='dark'] .admin-sidebar,
+[data-theme='dark'] .admin-topbar {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background: #1c1c1f !important;
+}
+
+[data-theme='light'] .admin-sidebar,
+[data-theme='light'] .admin-topbar {
+  background: #ffffff !important;
+}
+
+/* 主按钮：OpenAI 黑（浅色）/白（深色），去渐变与亮度滤镜 */
+[data-theme='light'] .el-button--primary:not(.is-link):not(.is-text) {
+  --el-button-bg-color: #0d0d0d;
+  --el-button-border-color: #0d0d0d;
+  --el-button-hover-bg-color: #2d2d2d;
+  --el-button-hover-border-color: #2d2d2d;
+  --el-button-active-bg-color: #000000;
+  --el-button-active-border-color: #000000;
+  --el-button-text-color: #ffffff;
+  background-image: none;
+}
+
+[data-theme='dark'] .el-button--primary:not(.is-link):not(.is-text) {
+  --el-button-bg-color: #ffffff;
+  --el-button-border-color: #ffffff;
+  --el-button-hover-bg-color: #ececf1;
+  --el-button-hover-border-color: #ececf1;
+  --el-button-active-bg-color: #d4d4dc;
+  --el-button-active-border-color: #d4d4dc;
+  --el-button-text-color: #0d0d0d;
+  background-image: none;
+}
+
+.el-button--primary:not(.is-link):not(.is-text):hover,
+.el-button--primary:not(.is-link):not(.is-text):active {
+  filter: none;
+}
+
+/* 品牌标题：去青绿渐变，改中性色 */
+.admin-topbar h1 {
+  background: none !important;
+  -webkit-text-fill-color: currentColor !important;
+  color: var(--el-text-color-primary);
+}
+
+.admin-brand::before {
+  background: #10a37f !important;
+}
+
+.admin-menu-mark {
+  background: var(--admin-color-surface-muted) !important;
+  color: var(--admin-color-primary);
+}
+
+/* 去掉动态光晕背景，保持 OpenAI 式干净留白 */
+.admin-ambient {
+  display: none;
+}

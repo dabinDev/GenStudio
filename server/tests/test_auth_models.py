@@ -290,6 +290,41 @@ def test_login_with_local_account_establishes_session() -> None:
     assert login_client.get("/api/auth/me").json()["user"]["nickname"] == "Login User"
 
 
+def test_change_my_password_requires_current_and_updates() -> None:
+    client = TestClient(app)
+    registered = client.post(
+        "/api/auth/register",
+        json={"email": "pwchange@example.com", "password": "OldPass123!", "nickname": "PW User"},
+    )
+    assert registered.status_code == 200
+
+    wrong = client.post(
+        "/api/users/me/password",
+        headers=csrf_headers(client),
+        json={"currentPassword": "WrongPass", "newPassword": "NewPass456!"},
+    )
+    assert wrong.status_code == 400
+
+    ok = client.post(
+        "/api/users/me/password",
+        headers=csrf_headers(client),
+        json={"currentPassword": "OldPass123!", "newPassword": "NewPass456!"},
+    )
+    assert ok.status_code == 200
+
+    old_login = TestClient(app).post(
+        "/api/auth/login",
+        json={"identifier": "pwchange@example.com", "password": "OldPass123!"},
+    )
+    assert old_login.status_code != 200
+
+    new_login = TestClient(app).post(
+        "/api/auth/login",
+        json={"identifier": "pwchange@example.com", "password": "NewPass456!"},
+    )
+    assert new_login.status_code == 200
+
+
 def test_login_records_client_ip_from_forwarded_for() -> None:
     client = TestClient(app)
     registered = client.post(

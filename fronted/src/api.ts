@@ -223,6 +223,10 @@ export async function logout(): Promise<void> {
   setCsrfToken("");
 }
 
+export async function changeMyPassword(body: { currentPassword: string; newPassword: string }): Promise<void> {
+  await postApi<{ ok: boolean }>("/api/users/me/password", body);
+}
+
 export async function updateMyProfile(body: { nickname?: string; phone?: string; avatarUrl?: string }): Promise<UserProfile> {
   const payload = await putApi<{ user: UserProfile }>("/api/users/me", body);
   return payload.user;

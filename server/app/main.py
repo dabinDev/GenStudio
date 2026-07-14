@@ -213,10 +213,11 @@ from app.schemas import (
     ModelUpdate,
     PromptOptimizeRequest,
     PromptTemplateUpdate,
+    ChangePasswordRequest,
     ProfileUpdateRequest,
     RegisterRequest,
 )
-from app.security import decrypt_secret, hash_password
+from app.security import decrypt_secret, hash_password, verify_password
 from app.storage import create_presigned_put_url
 from app.user_maintenance import merge_duplicate_users_by_identity
 
@@ -2836,6 +2837,32 @@ async def update_me(
     db.commit()
     db.refresh(current_user)
     return {"user": serialize_user(current_user).model_dump()}
+
+
+@app.post("/api/users/me/password")
+async def change_my_password(
+    payload: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    new_password = payload.newPassword.strip()
+    if len(new_password) < 6:
+        raise HTTPException(status_code=400, detail={"message": "新密码长度不能少于 6 位。"})
+    credential = (
+        db.query(UserCredential)
+        .filter(UserCredential.user_id == current_user.id, UserCredential.provider == "local")
+        .one_or_none()
+    )
+    if not credential:
+        raise HTTPException(status_code=400, detail={"message": "当前账号未使用本地密码登录，无法修改密码。"})
+    if not verify_password(payload.currentPassword, credential.password_hash):
+        raise HTTPException(status_code=400, detail={"message": "当前密码不正确。"})
+    credential.password_hash = hash_password(new_password)
+    credential.failed_attempts = 0
+    credential.locked_until = None
+    db.commit()
+    return {"ok": True}
 
 
 @app.get("/api/credits/me")

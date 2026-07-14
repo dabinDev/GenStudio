@@ -246,6 +246,13 @@ const authForm = reactive({
   registerPassword: "",
   error: "",
 });
+const passwordForm = reactive({
+  currentPassword: "",
+  newPassword: "",
+  confirmPassword: "",
+  error: "",
+  success: "",
+});
 const profileForm = reactive({
   nickname: "",
   phone: "",
@@ -1938,6 +1945,33 @@ async function handleProfileSave() {
   } catch (error) {
     profileForm.error = error instanceof Error ? error.message : "保存个人信息失败。";
     showToast(profileForm.error, "error");
+  }
+}
+
+async function handleChangePassword() {
+  passwordForm.error = "";
+  passwordForm.success = "";
+  if (passwordForm.newPassword.length < 6) {
+    passwordForm.error = "新密码长度不能少于 6 位。";
+    return;
+  }
+  if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+    passwordForm.error = "两次输入的新密码不一致。";
+    return;
+  }
+  try {
+    await auth.changePassword({
+      currentPassword: passwordForm.currentPassword,
+      newPassword: passwordForm.newPassword,
+    });
+    passwordForm.success = "密码已修改。";
+    passwordForm.currentPassword = "";
+    passwordForm.newPassword = "";
+    passwordForm.confirmPassword = "";
+    showToast("密码已修改");
+  } catch (error) {
+    passwordForm.error = error instanceof Error ? error.message : "修改密码失败。";
+    showToast(passwordForm.error, "error");
   }
 }
 
@@ -4685,6 +4719,40 @@ async function removeUnavailableModels() {
           </div>
           <div v-if="profileForm.error" class="inline-message inline-danger">{{ profileForm.error }}</div>
           <div v-if="profileForm.success" class="inline-message inline-success">{{ profileForm.success }}</div>
+        </section>
+
+        <section class="settings-list-panel profile-editor">
+          <div class="settings-list-toolbar">
+            <div class="settings-toolbar-copy">
+              <strong>修改密码</strong>
+              <span>仅本地注册账号可修改密码；官网授权登录的账号请在官网修改。</span>
+            </div>
+            <div class="settings-row-actions">
+              <button
+                class="button-secondary"
+                :disabled="!auth.state.user || auth.state.loading || !passwordForm.currentPassword || !passwordForm.newPassword"
+                @click="handleChangePassword"
+              >
+                {{ auth.state.loading ? "提交中..." : "修改密码" }}
+              </button>
+            </div>
+          </div>
+          <div class="profile-form-grid">
+            <label class="field">
+              <span>当前密码</span>
+              <input v-model="passwordForm.currentPassword" type="password" :disabled="!auth.state.user" placeholder="当前登录密码" />
+            </label>
+            <label class="field">
+              <span>新密码（至少 6 位）</span>
+              <input v-model="passwordForm.newPassword" type="password" :disabled="!auth.state.user" placeholder="新密码" />
+            </label>
+            <label class="field">
+              <span>确认新密码</span>
+              <input v-model="passwordForm.confirmPassword" type="password" :disabled="!auth.state.user" placeholder="再次输入新密码" />
+            </label>
+          </div>
+          <div v-if="passwordForm.error" class="inline-message inline-danger">{{ passwordForm.error }}</div>
+          <div v-if="passwordForm.success" class="inline-message inline-success">{{ passwordForm.success }}</div>
         </section>
 
         <section v-if="showDevAuth" class="settings-list-panel profile-actions">

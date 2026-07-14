@@ -109,6 +109,11 @@ class LoginRequest(BaseModel):
         return value.strip().lower()
 
 
+class ChangePasswordRequest(BaseModel):
+    currentPassword: str
+    newPassword: str
+
+
 class ProfileUpdateRequest(BaseModel):
     nickname: str | None = None
     phone: str | None = None

@@ -1,6 +1,7 @@
 import { reactive } from "vue";
 
 import {
+  changeMyPassword,
   devLogin,
   fetchCsrfToken,
   fetchCurrentUser,
@@ -98,6 +99,19 @@ export function useAuthStore() {
     }
   }
 
+  async function changePassword(payload: { currentPassword: string; newPassword: string }) {
+    state.loading = true;
+    state.error = "";
+    try {
+      await changeMyPassword(payload);
+    } catch (error) {
+      state.error = error instanceof Error ? error.message : "修改密码失败。";
+      throw error;
+    } finally {
+      state.loading = false;
+    }
+  }
+
   async function logoutCurrentUser() {
     state.loading = true;
     state.error = "";
@@ -120,6 +134,7 @@ export function useAuthStore() {
     login,
     loginForDevelopment,
     updateProfile,
+    changePassword,
     logoutCurrentUser,
   };
 }

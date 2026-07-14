@@ -4359,3 +4359,108 @@ body,
 .admin-ambient {
   display: none;
 }
+
+/* =====================================================================
+   Admin consolidation v23 — 收敛层：统一按钮态、修复品牌折叠按钮
+   目的：清除 v3/v20/v21 遗留的青蓝按钮态泄漏，让禁用态/次级态与
+   v22 的 OpenAI 黑白主色一致；重排侧栏折叠按钮到品牌行角落。
+   仅追加、不改旧 marker，测试位置断言不受影响。
+   ===================================================================== */
+
+/* ---- A. 禁用态主按钮：清除 v3 青蓝，改中性灰 ---- */
+[data-theme='light'] .el-button--primary.is-disabled,
+[data-theme='light'] .el-button--primary.is-disabled:hover,
+[data-theme='light'] .el-button--primary.is-disabled:focus,
+[data-theme='light'] .el-button--primary.is-disabled.is-plain {
+  color: #9a9aa8;
+  background: #f1f1f3;
+  background-image: none;
+  border-color: #e3e3e6;
+}
+
+[data-theme='dark'] .el-button--primary.is-disabled,
+[data-theme='dark'] .el-button--primary.is-disabled:hover,
+[data-theme='dark'] .el-button--primary.is-disabled:focus,
+[data-theme='dark'] .el-button--primary.is-disabled.is-plain {
+  color: #6e6e80;
+  background: #343541;
+  background-image: none;
+  border-color: #3e3f4b;
+}
+
+/* ---- B. plain 主按钮（如“详情”）：从过重黑改为克制中性描边，理顺层级 ---- */
+[data-theme='light'] .el-button--primary.is-plain:not(.is-disabled) {
+  --el-button-bg-color: #ffffff;
+  --el-button-border-color: #d5d5db;
+  --el-button-text-color: #0d0d0d;
+  --el-button-hover-bg-color: #f4f4f5;
+  --el-button-hover-border-color: #b5b5bd;
+  --el-button-hover-text-color: #0d0d0d;
+  --el-button-active-bg-color: #ececee;
+  background-image: none;
+}
+
+[data-theme='dark'] .el-button--primary.is-plain:not(.is-disabled) {
+  --el-button-bg-color: transparent;
+  --el-button-border-color: #4a4b57;
+  --el-button-text-color: #ececf1;
+  --el-button-hover-bg-color: #343541;
+  --el-button-hover-border-color: #5a5b67;
+  --el-button-hover-text-color: #ffffff;
+  --el-button-active-bg-color: #2a2b32;
+  background-image: none;
+}
+
+/* ---- C. 品牌折叠按钮：移入品牌行右上角，做成低调图标按钮 ---- */
+.admin-brand {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--admin-space-3);
+}
+
+.admin-brand__title {
+  display: flex;
+  flex-direction: column;
+  gap: var(--admin-space-1);
+  min-width: 0;
+}
+
+.admin-sidebar-collapse {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  margin: 0;
+  padding: 0;
+  color: var(--admin-color-text-muted);
+  background: var(--admin-color-surface-muted);
+  border: 1px solid var(--admin-color-border);
+  border-radius: 8px;
+  line-height: 1;
+}
+
+.admin-sidebar-collapse:hover {
+  color: var(--admin-color-primary);
+  border-color: color-mix(in srgb, var(--admin-color-primary) 40%, var(--admin-color-border));
+}
+
+.admin-sidebar-collapse-glyph {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.admin-layout--collapsed .admin-brand {
+  justify-content: center;
+}
+
+.admin-layout--collapsed .admin-brand__title {
+  display: none;
+}
+
+/* ---- D. 侧栏菜单图标块：清除 v15 暗色靛蓝填充，暗浅两色统一为中性底+主色图标 ---- */
+[data-theme='dark'] .admin-menu-mark,
+[data-theme='dark'] .admin-menu .el-menu-item.is-active .admin-menu-mark {
+  color: var(--admin-color-primary);
+  background: var(--admin-color-surface-muted) !important;
+  background-image: none !important;
+}

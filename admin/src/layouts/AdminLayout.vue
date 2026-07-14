@@ -10,17 +10,20 @@
     </div>
     <aside class="admin-sidebar">
       <div class="admin-brand">
-        <strong>创意工坊</strong>
-        <span>管理后台</span>
+        <div class="admin-brand__title">
+          <strong>创意工坊</strong>
+          <span>管理后台</span>
+        </div>
+        <button
+          class="admin-sidebar-collapse"
+          type="button"
+          :title="collapsed ? '展开侧栏' : '收起侧栏'"
+          :aria-label="collapsed ? '展开侧栏' : '收起侧栏'"
+          @click="toggleSidebar"
+        >
+          <span class="admin-sidebar-collapse-glyph" aria-hidden="true">{{ collapsed ? '»' : '«' }}</span>
+        </button>
       </div>
-      <button
-        class="admin-sidebar-collapse"
-        type="button"
-        :title="collapsed ? '展开侧栏' : '收起侧栏'"
-        @click="toggleSidebar"
-      >
-        <span class="admin-sidebar-collapse-glyph" aria-hidden="true">{{ collapsed ? '»' : '«' }}</span>
-      </button>
       <el-menu :default-active="activePath" router class="admin-menu">
         <el-menu-item v-for="item in menuItems" :key="item.path" :index="item.path">
           <span class="admin-menu-mark"><el-icon><component :is="iconFor(item.path)" /></el-icon></span>

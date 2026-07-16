@@ -754,7 +754,7 @@ def test_admin_model_health_check_route_uses_kkyi_video_test_request(monkeypatch
     assert response.status_code == 200
     assert response.json()["health"]["latest"]["status"] == "success"
     assert captured["method"] == "POST"
-    assert captured["url"] == "https://token.example.com/v1/video/generations"
+    assert captured["url"] == "https://token.example.com/v1/videos"
     assert captured["body"] == normalized_body
     assert captured["normalized_model_name"] == "kkyi-video"
     assert captured["normalized_sub_model_id"] == sub_model.id

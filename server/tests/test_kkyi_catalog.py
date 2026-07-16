@@ -560,7 +560,7 @@ def test_seedance_2_enables_real_person_mode_by_default(monkeypatch) -> None:
     assert body["metadata"]["realPersonMode"] is True
 
 
-def test_catalog_video_model_uses_kkyi_generation_path_and_flat_parameters(monkeypatch) -> None:
+def test_catalog_video_model_uses_kkyi_video_create_path_and_flat_parameters(monkeypatch) -> None:
     with SessionLocal() as db:
         upsert_catalog_model_detail(db, kkyi_video_detail())
         db.commit()
@@ -624,7 +624,7 @@ def test_catalog_video_model_uses_kkyi_generation_path_and_flat_parameters(monke
     )
 
     assert response.status_code == 200
-    assert captured["url"] == "https://ai-api.kkidc.com/v1/video/generations"
+    assert captured["url"] == "https://ai-api.kkidc.com/v1/videos"
     assert captured["body"] == {
         "model": "seedance-2.0-fast-image-to-video",
         "prompt": "video test",
@@ -638,7 +638,7 @@ def test_catalog_video_model_uses_kkyi_generation_path_and_flat_parameters(monke
     }
 
 
-def test_kkyi_video_model_without_catalog_link_uses_generation_path(monkeypatch) -> None:
+def test_kkyi_video_model_without_catalog_link_uses_video_create_path(monkeypatch) -> None:
     upload_name = "kk-veo-reference.jpg"
     (main_module.LOCAL_UPLOAD_DIR / upload_name).write_bytes(b"fake-kk-reference")
     captured: dict[str, object] = {}
@@ -688,7 +688,7 @@ def test_kkyi_video_model_without_catalog_link_uses_generation_path(monkeypatch)
     )
 
     assert response.status_code == 200
-    assert captured["url"] == "https://ai-api.kkidc.com/v1/video/generations"
+    assert captured["url"] == "https://ai-api.kkidc.com/v1/videos"
     assert captured["body"] == {
         "model": "gemini-veo-3.1-generate-preview-8s",
         "prompt": "reference video",
@@ -858,7 +858,7 @@ def test_catalog_image_model_expands_local_references_from_images_parameter(monk
     assert captured["files"] == [("image", ("catalog-reference.png", b"\x89PNG\r\n\x1a\n", "image/png"))]
 
 
-def test_catalog_video_model_test_uses_kkyi_generation_path_and_flat_parameters(monkeypatch) -> None:
+def test_catalog_video_model_test_uses_kkyi_video_create_path_and_flat_parameters(monkeypatch) -> None:
     with SessionLocal() as db:
         upsert_catalog_model_detail(db, kkyi_video_detail())
         db.commit()
@@ -896,7 +896,7 @@ def test_catalog_video_model_test_uses_kkyi_generation_path_and_flat_parameters(
     )
 
     assert response.status_code == 200
-    assert captured["url"] == "https://ai-api.kkidc.com/v1/video/generations"
+    assert captured["url"] == "https://ai-api.kkidc.com/v1/videos"
     assert captured["body"] == {
         "model": "kuaikuai-2-flash-pro",
         "prompt": "ping test, one second static shot",

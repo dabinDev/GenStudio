@@ -3129,7 +3129,7 @@ async def run_admin_model_health_check_for_model(
         body = build_test_body(model.capability, sub_model.model_name, adapter)
         target_path = resolve_test_path(model.capability, adapter)
         if is_kkyi_video_model(sub_model, api_key.base_url):
-            target_path = "/v1/video/generations"
+            target_path = "/v1/videos"
             body = normalize_kkyi_video_body(body, sub_model.model_name, sub_model)
         target_url = resolve_url(api_key.base_url, target_path)
         response, raw = await forward_json("POST", target_url, decrypt_secret(api_key.api_key_ciphertext), body)
@@ -4665,7 +4665,7 @@ async def proxy_test(
     body = build_test_body(str(capability), model, str(adapter) if adapter else None)
     target_path = resolve_test_path(str(capability), str(adapter) if adapter else None)
     if is_kkyi_video_model(sub_model, base_url):
-        target_path = "/v1/video/generations"
+        target_path = "/v1/videos"
         body = normalize_kkyi_video_body(body, sub_model.model_name, sub_model)
     target_url = resolve_url(base_url, target_path)
     started_at = time.perf_counter()
@@ -5899,7 +5899,7 @@ async def proxy_video_create(
             request_body = normalize_kkyi_video_body(request_body, sub_model.model_name, sub_model)
         else:
             request_body = expand_local_video_references(copy.deepcopy(request_body))
-    target_path = "/v1/video/generations" if kkyi_video else resolve_video_create_path(adapter)
+    target_path = "/v1/videos" if kkyi_video else resolve_video_create_path(adapter)
     target_url = resolve_url(base_url, target_path)
     prompt = extract_video_prompt(request_body if isinstance(request_body, dict) else {})
     if current_user and model_group and sub_model:

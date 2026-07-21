@@ -25,6 +25,14 @@ export const publicStateOptions = [
   { label: '未公用', value: 'private' },
 ] as const;
 
+export const publicAccentOptions = [
+  { value: '#28C5FF', label: 'Cyan' },
+  { value: '#FF6B8A', label: 'Coral' },
+  { value: '#9EE841', label: 'Green' },
+  { value: '#F5B642', label: 'Amber' },
+  { value: '#A77BFF', label: 'Violet' },
+] as const;
+
 export interface ModelCenterFilters {
   capability: string;
   publicState: string;
@@ -34,6 +42,7 @@ export interface ModelCenterFilters {
 export interface ModelEditForm {
   publicDisplayName: string;
   publicDescription: string;
+  publicAccentColor: string;
   inputHint: string;
   iconUrl: string;
   publicTagsText: string;
@@ -96,6 +105,7 @@ export function createEditForm(model: AdminModel): ModelEditForm {
   return {
     publicDisplayName: model.publicDisplayName || '',
     publicDescription: model.publicDescription || '',
+    publicAccentColor: model.publicAccentColor || '',
     inputHint: model.inputHint || '',
     iconUrl: model.iconUrl || '',
     publicTagsText: serializePublicTags(model.publicTags),
@@ -108,6 +118,7 @@ export function buildAdminModelUpdatePayload(form: ModelEditForm): AdminModelUpd
   return {
     publicDisplayName: form.publicDisplayName.trim(),
     publicDescription: form.publicDescription.trim(),
+    publicAccentColor: form.publicAccentColor.trim(),
     inputHint: form.inputHint.trim(),
     iconUrl: form.iconUrl.trim(),
     publicTags: parsePublicTags(form.publicTagsText),

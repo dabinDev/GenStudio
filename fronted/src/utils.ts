@@ -143,6 +143,23 @@ export function canEditModel(model: Pick<ModelDefinition, "serverManaged" | "isP
   return model.canEdit === true;
 }
 
+const PUBLIC_MODEL_ACCENT_BY_CAPABILITY: Record<Capability, string> = {
+  text: "#28C5FF",
+  image: "#FF6B8A",
+  video: "#9EE841",
+};
+
+export function publicModelAccent(model: Pick<ModelDefinition, "capability" | "publicAccentColor">): string {
+  const accent = model.publicAccentColor?.trim().toUpperCase() || "";
+  return /^#[0-9A-F]{6}$/.test(accent) ? accent : PUBLIC_MODEL_ACCENT_BY_CAPABILITY[model.capability];
+}
+
+export function publicModelCardDescription(
+  model: Pick<ModelDefinition, "description" | "isPublic" | "canEdit" | "publicDescription">,
+): string {
+  return model.publicDescription?.trim() || safeModelDescription(model, "平台公共模型，可直接用于创作。");
+}
+
 export function publicShareTargetModels(models: ModelDefinition[], selectedIds: string[]): ModelDefinition[] {
   const selected = new Set(selectedIds);
   return models.filter((model) => selected.has(model.id) && model.serverManaged && model.canEdit === true && !model.isPublic);
@@ -204,9 +221,11 @@ export function filterSettingsModels(
   models: ModelDefinition[],
   capability: Capability | "all",
   query: string,
+  includePublic = false,
 ): ModelDefinition[] {
   const normalizedQuery = query.trim().toLowerCase();
   return models.filter((model) => {
+    if (model.isPublic && !includePublic) return false;
     if (capability !== "all" && model.capability !== capability) return false;
     if (!normalizedQuery) return true;
     const searchable = [

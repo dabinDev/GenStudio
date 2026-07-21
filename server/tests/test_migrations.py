@@ -31,3 +31,12 @@ def test_prompt_scene_template_migration_creates_library_tables() -> None:
     assert "ix_prompt_scene_templates_enabled" in sql
     assert "ix_prompt_scene_template_events_template_id" in sql
     assert "FOREIGN KEY(template_id) REFERENCES prompt_scene_templates" in sql
+
+
+def test_public_model_accent_migration_and_startup_patch_add_the_color_column() -> None:
+    root = Path(__file__).resolve().parents[1]
+    migration_sql = (root / "migrations" / "008_public_model_accent_color.sql").read_text(encoding="utf-8")
+    database_source = (root / "app" / "database.py").read_text(encoding="utf-8")
+
+    assert "ALTER TABLE models ADD COLUMN public_accent_color VARCHAR(7) NOT NULL DEFAULT '';" in migration_sql
+    assert '"public_accent_color": "VARCHAR(7) NOT NULL DEFAULT \'\'"' in database_source

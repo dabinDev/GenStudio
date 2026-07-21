@@ -333,7 +333,15 @@ def _add_transaction(
     return transaction
 
 
-def admin_adjust_credits(db: Session, *, admin: User, target_user: User, amount: int, reason: str) -> CreditTransaction:
+def admin_adjust_credits(
+    db: Session,
+    *,
+    admin: User,
+    target_user: User,
+    amount: int,
+    reason: str,
+    notification_delivery: str = "",
+) -> CreditTransaction:
     clean_reason = reason.strip()
     if not clean_reason:
         raise HTTPException(status_code=400, detail={"message": "请填写积分调整原因。"})
@@ -352,6 +360,15 @@ def admin_adjust_credits(db: Session, *, admin: User, target_user: User, amount:
     account.updated_at = utcnow()
     db.commit()
     db.refresh(account)
+    notification_metadata: dict[str, Any] = {}
+    if clean_amount > 0 and notification_delivery in {"single", "batch"}:
+        notification_metadata = {
+            "notification": {
+                "kind": "admin_credit_grant",
+                "delivery": notification_delivery,
+                "dismissedAt": None,
+            }
+        }
     transaction = _add_transaction(
         db,
         account,
@@ -360,6 +377,7 @@ def admin_adjust_credits(db: Session, *, admin: User, target_user: User, amount:
         status="succeeded",
         reason=clean_reason,
         operator_user_id=admin.id,
+        metadata=notification_metadata,
     )
     write_credit_admin_log(
         db,
@@ -587,6 +605,27 @@ def list_credit_transactions(
     if user_id:
         query = query.filter(CreditTransaction.user_id == user_id)
     return query.order_by(CreditTransaction.created_at.desc()).limit(min(max(limit, 1), 200)).all()
+
+
+def dismiss_credit_grant_notification(db: Session, *, user_id: str, transaction_id: str) -> CreditTransaction:
+    transaction = db.get(CreditTransaction, transaction_id)
+    if not transaction or transaction.user_id != user_id:
+        raise HTTPException(status_code=404, detail={"message": "积分赠送通知不存在。"})
+    metadata = parse_json_object(transaction.metadata_json, {})
+    notification = metadata.get("notification") if isinstance(metadata, dict) else None
+    if (
+        transaction.type != "admin_adjustment"
+        or transaction.amount <= 0
+        or not isinstance(notification, dict)
+        or notification.get("kind") != "admin_credit_grant"
+    ):
+        raise HTTPException(status_code=404, detail={"message": "积分赠送通知不存在。"})
+    notification["dismissedAt"] = f"{utcnow().isoformat(timespec='seconds')}Z"
+    metadata["notification"] = notification
+    transaction.metadata_json = json_dumps_safe(metadata)
+    db.commit()
+    db.refresh(transaction)
+    return transaction
 
 
 def serialize_credit_account(account: UserCreditAccount | None) -> dict[str, Any] | None:

@@ -49,6 +49,8 @@ import {
   modelDisplayNameForModel,
   modelParameterSourceLabel,
   publicShareTargetModels,
+  publicModelAccent,
+  publicModelCardDescription,
   resolvePostAuthTarget,
   resolveSidebarFilter,
   renderMarkdownPreview,
@@ -441,6 +443,24 @@ describe("model selection helpers", () => {
     expect(filterSettingsModels(models, "video", "seed-2").map((item) => item.id)).toEqual(["kk-video"]);
     expect(filterSettingsModels(models, "image", "claude")).toEqual([]);
     expect(filterSettingsModels(models, "all", "").map((item) => item.id)).toEqual(["kk-claude", "kk-image", "kk-video"]);
+  });
+
+  it("hides public models from ordinary settings while preserving public card presentation", () => {
+    const privateModel = { ...textModel, id: "private-model" };
+    const publicModel = {
+      ...textModel,
+      id: "public-model",
+      capability: "video" as const,
+      adapter: "video-unified-generic" as const,
+      isPublic: true,
+      publicDescription: "Fast product films",
+    };
+
+    expect(filterSettingsModels([privateModel, publicModel], "all", "", false).map((model) => model.id)).toEqual(["private-model"]);
+    expect(filterSettingsModels([privateModel, publicModel], "all", "", true).map((model) => model.id)).toEqual(["private-model", "public-model"]);
+    expect(publicModelAccent({ ...publicModel, publicAccentColor: "#c857f1" })).toBe("#C857F1");
+    expect(publicModelAccent({ ...publicModel, publicAccentColor: "" })).toBe("#9EE841");
+    expect(publicModelCardDescription(publicModel)).toBe("Fast product films");
   });
 
   it("keeps the active creation capability even when that capability has no models", () => {

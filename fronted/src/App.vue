@@ -94,6 +94,8 @@ import {
   filterSettingsModels,
   pickPrimaryModel,
   prioritizeModelOptions,
+  publicModelAccent,
+  publicModelCardDescription,
   publicShareTargetModels,
   renderMarkdownPreview,
   resolveAuthRedirect,
@@ -123,6 +125,7 @@ import {
   type VideoModeValue,
   authCodeCallbackNextPath,
 } from "./utils";
+import { creditGrantNoticeDelivery, creditGrantNoticeMessage, nextCreditGrantNotice } from "./creditNotices";
 import {
   applyFetchedModelsToDraft,
   canFetchModelListForDraft,
@@ -266,6 +269,8 @@ const toastState = reactive({
   message: "",
   type: "success" as "success" | "error" | "info",
 });
+const dismissingCreditGrantNotice = ref(false);
+let creditRefreshTimer: number | null = null;
 
 const textModelId = ref("");
 const imageModelId = ref("");
@@ -463,15 +468,19 @@ const settingsCapabilityTabs: Array<{ value: Capability | "all"; label: string }
   { value: "all", label: "全部" },
 ];
 
+const settingsVisibleModels = computed(() =>
+  filterSettingsModels(store.models.value, "all", "", Boolean(auth.state.user?.isAdmin)),
+);
+
 const settingsCapabilityCounts = computed<Record<Capability | "all", number>>(() => ({
-  all: store.models.value.length,
-  text: store.models.value.filter((model) => model.capability === "text").length,
-  image: store.models.value.filter((model) => model.capability === "image").length,
-  video: store.models.value.filter((model) => model.capability === "video").length,
+  all: settingsVisibleModels.value.length,
+  text: settingsVisibleModels.value.filter((model) => model.capability === "text").length,
+  image: settingsVisibleModels.value.filter((model) => model.capability === "image").length,
+  video: settingsVisibleModels.value.filter((model) => model.capability === "video").length,
 }));
 
 const filteredSettingsModels = computed(() =>
-  filterSettingsModels(store.models.value, settingsState.activeCapability, settingsState.searchQuery),
+  filterSettingsModels(settingsVisibleModels.value, settingsState.activeCapability, settingsState.searchQuery, true),
 );
 
 const selectedVisibleSettingsModels = computed(() =>
@@ -491,7 +500,7 @@ const unavailableEditableSettingsModels = computed(() =>
 );
 
 const configuredCount = computed(() =>
-  store.models.value.filter((model) => {
+  settingsVisibleModels.value.filter((model) => {
     const setting = getSetting(model.id);
     return isModelConfigured(model, setting);
   }).length,
@@ -535,6 +544,7 @@ const activeModelParameterSourceLabel = computed(() => modelParameterSourceLabel
 const currentCreditAccount = computed(() => auth.state.user?.credits || null);
 const availableCredits = computed(() => currentCreditAccount.value?.balance ?? 0);
 const reservedCredits = computed(() => currentCreditAccount.value?.reservedBalance ?? 0);
+const currentCreditGrantNotice = computed(() => nextCreditGrantNotice(auth.state.creditTransactions));
 const activeCreditCost = computed(() => effectiveCreditCostForCapability(activeModel.value, activeCapability.value));
 const activeCreditCostLabel = computed(() => creditCostLabel(activeModel.value, activeCapability.value));
 const activeCreditSourceLabel = computed(() => creditPriceSourceLabel(activeModel.value?.creditPriceSource || ""));
@@ -880,6 +890,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  if (creditRefreshTimer !== null) window.clearInterval(creditRefreshTimer);
   stopTextPolling();
   stopImagePolling();
   stopVideoPolling();
@@ -922,7 +933,21 @@ watch(
   () => auth.state.user?.id,
   () => {
     syncProfileForm();
-    },
+  },
+);
+
+watch(
+  () => auth.state.user?.id,
+  (userId) => {
+    if (creditRefreshTimer !== null) {
+      window.clearInterval(creditRefreshTimer);
+      creditRefreshTimer = null;
+    }
+    if (userId) {
+      creditRefreshTimer = window.setInterval(() => void refreshCreditsQuietly(), 30_000);
+    }
+  },
+  { immediate: true },
 );
 
 watch(
@@ -1094,6 +1119,19 @@ async function refreshCreditsQuietly() {
     await auth.refreshCredits();
   } catch {
     // Do not hide completed generation results because a balance refresh failed.
+  }
+}
+
+async function dismissCurrentCreditGrantNotice() {
+  const notice = currentCreditGrantNotice.value;
+  if (!notice || dismissingCreditGrantNotice.value) return;
+  dismissingCreditGrantNotice.value = true;
+  try {
+    await auth.dismissCreditGrantNotice(notice.id);
+  } catch {
+    showToast("关闭积分赠送提示失败，请稍后重试。", "error");
+  } finally {
+    dismissingCreditGrantNotice.value = false;
   }
 }
 
@@ -1796,6 +1834,7 @@ async function initializeSession() {
   await auth.loadCurrentUser();
   await refreshServerModels();
   if (auth.state.user) {
+    await refreshCreditsQuietly();
     await refreshConversations();
   }
 }
@@ -1824,6 +1863,7 @@ function mapServerModel(item: ServerModelDefinition): ModelDefinition {
     subModels: item.subModels,
     publicDisplayName: item.publicDisplayName,
     publicDescription: item.publicDescription,
+    publicAccentColor: item.publicAccentColor,
     inputHint: item.inputHint,
     iconUrl: item.iconUrl,
     publicTags: item.publicTags,
@@ -3413,6 +3453,15 @@ function modelSafeDescription(model: ModelDefinition | null | undefined): string
   return safeModelDescription(model, "选择模型后即可套用模板、上传素材并开始创作。");
 }
 
+function publicModelCardStyle(model: ModelDefinition): Record<string, string> {
+  return { "--public-model-accent": publicModelAccent(model) };
+}
+
+function publicModelCardPrice(model: ModelDefinition): string {
+  const price = Math.max(0, Number(model.creditPrice || 0));
+  return price ? `${price} 积分 / 次` : "免费使用";
+}
+
 function hideBrokenModelIcon(event: Event) {
   const target = event.target;
   if (target instanceof HTMLImageElement) {
@@ -3857,6 +3906,7 @@ async function removeUnavailableModels() {
           :key="model.id"
           :data-model-id="model.id"
           :class="['sidebar-model-item', model.id === activeModelIdForSidebar() ? 'sidebar-model-active' : '', model.isPublic ? 'sidebar-model-public' : '']"
+          :style="model.isPublic ? publicModelCardStyle(model) : undefined"
           @click="selectModel(model)"
         >
           <div :class="['model-avatar', `model-avatar-${model.capability}`, modelIconUrl(model) ? 'model-avatar-has-icon' : '']">
@@ -3864,12 +3914,18 @@ async function removeUnavailableModels() {
             <span>{{ model.capability === "text" ? "T" : model.capability === "image" ? "I" : "V" }}</span>
           </div>
           <div class="model-info">
+            <span v-if="model.isPublic" class="public-model-card-kicker">平台模型</span>
             <strong>{{ modelDisplayName(model) }}</strong>
-            <span>{{ modelSummaryText(model) }}</span>
-            <span :class="['parameter-source-chip', hasCatalogParameters(model) ? 'parameter-source-chip-exact' : 'parameter-source-chip-generic']">
+            <span v-if="model.isPublic" class="public-model-card-description">{{ publicModelCardDescription(model) }}</span>
+            <span v-else>{{ modelSummaryText(model) }}</span>
+            <span v-if="!model.isPublic" :class="['parameter-source-chip', hasCatalogParameters(model) ? 'parameter-source-chip-exact' : 'parameter-source-chip-generic']">
               {{ modelParameterSourceLabel(model) }}
             </span>
             <span v-if="model.isPublic" class="sidebar-public-tag">公共</span>
+            <div v-if="model.isPublic" class="public-model-card-details">
+              <span v-for="tag in model.publicTags?.slice(0, 2)" :key="tag" class="public-model-card-tag">{{ tag }}</span>
+              <span class="public-model-card-price">{{ publicModelCardPrice(model) }}</span>
+            </div>
           </div>
           <span :class="['model-tag', `tag-${model.capability}`]">
             {{ CAPABILITY_LABELS[model.capability] }}
@@ -3925,6 +3981,23 @@ async function removeUnavailableModels() {
           <button class="topbar-icon-button" @click="navigate('profile')"><svg class="topbar-icon-glyph" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg><span>个人</span></button>
         </div>
       </div>
+
+      <section v-if="currentCreditGrantNotice" class="credit-grant-notice" role="status" aria-live="polite">
+        <div class="credit-grant-notice-copy">
+          <span class="credit-grant-notice-label">{{ creditGrantNoticeDelivery(currentCreditGrantNotice) === "batch" ? "批量积分赠送" : "积分赠送" }}</span>
+          <p>{{ creditGrantNoticeMessage(currentCreditGrantNotice) }}</p>
+        </div>
+        <button
+          class="credit-grant-notice-dismiss"
+          type="button"
+          :disabled="dismissingCreditGrantNotice"
+          aria-label="Close credit grant notice"
+          title="关闭积分赠送提示"
+          @click="dismissCurrentCreditGrantNotice"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
+        </button>
+      </section>
 
       <section
         v-if="view !== 'auth' && view !== 'auth-error' && view !== 'settings' && view !== 'profile'"
@@ -4793,7 +4866,7 @@ async function removeUnavailableModels() {
             <p class="muted">{{ auth.state.user ? "配置会保存到创意工坊数据库，密钥只由后端调用。" : "未登录时配置会缓存在当前浏览器，登录后可保存到数据库。" }}</p>
           </div>
           <div class="settings-hero-stats">
-            <span class="badge">{{ store.models.value.length }} 个模型</span>
+            <span class="badge">{{ settingsVisibleModels.length }} 个模型</span>
             <span class="badge badge-success">{{ configuredCount }} 个已配置</span>
           </div>
         </section>

@@ -115,6 +115,7 @@ from app.catalog_service import (
 from app.credit_service import (
     admin_adjust_credits,
     clear_model_price,
+    dismiss_credit_grant_notification,
     estimate_credit_price,
     grant_signup_bonus,
     get_credit_settings,
@@ -2878,6 +2879,17 @@ async def my_credits(
     }
 
 
+@app.post("/api/credits/notifications/{transaction_id}/dismiss")
+async def dismiss_my_credit_notification(
+    transaction_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    transaction = dismiss_credit_grant_notification(db, user_id=current_user.id, transaction_id=transaction_id)
+    return {"transaction": serialize_credit_transaction(transaction)}
+
+
 @app.get("/api/credits/pricing/estimate")
 async def credit_pricing_estimate(
     capability: str,
@@ -3933,7 +3945,14 @@ async def admin_adjust_user_credits(
     user = db.get(User, user_id)
     if not user:
         raise HTTPException(status_code=404, detail={"message": "用户不存在。"})
-    transaction = admin_adjust_credits(db, admin=admin, target_user=user, amount=payload.amount, reason=payload.reason)
+    transaction = admin_adjust_credits(
+        db,
+        admin=admin,
+        target_user=user,
+        amount=payload.amount,
+        reason=payload.reason,
+        notification_delivery="single",
+    )
     account = get_or_create_credit_account(db, user.id)
     return {
         "account": serialize_credit_account(account),
@@ -4037,7 +4056,14 @@ async def admin_batch_adjust_credits(
             results.append({"userId": user_id, "ok": False, "message": "用户不存在"})
             continue
         try:
-            admin_adjust_credits(db, admin=admin, target_user=user, amount=payload.amount, reason=payload.reason)
+            admin_adjust_credits(
+                db,
+                admin=admin,
+                target_user=user,
+                amount=payload.amount,
+                reason=payload.reason,
+                notification_delivery="batch",
+            )
             results.append({"userId": user_id, "ok": True})
         except HTTPException as exc:
             db.rollback()

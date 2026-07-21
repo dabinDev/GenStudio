@@ -290,6 +290,7 @@ def init_db() -> None:
             model_columns = {
                 "public_display_name": "VARCHAR(255) NOT NULL DEFAULT ''",
                 "public_description": "TEXT",
+                "public_accent_color": "VARCHAR(7) NOT NULL DEFAULT ''",
                 "input_hint": "TEXT",
                 "icon_url": "TEXT",
                 "public_tags_json": "TEXT",

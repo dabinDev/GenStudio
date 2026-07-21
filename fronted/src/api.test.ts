@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   ApiRequestError,
+  dismissCreditGrantNotice,
   fetchCsrfToken,
   fetchMyCredits,
   loginWithPassword,
@@ -190,5 +191,22 @@ describe("auth api helpers", () => {
     await expect(fetchMyCredits()).resolves.toMatchObject({ account: { balance: 3 } });
 
     expect(requests).toEqual(["/api/credits/me"]);
+  });
+
+  it("dismisses a credit grant notice with the session csrf token", async () => {
+    setCsrfToken("csrf-credit-notice");
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ transaction: { id: "credit-1" } }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(dismissCreditGrantNotice("credit-1")).resolves.toMatchObject({ id: "credit-1" });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/credits/notifications/credit-1/dismiss",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "include",
+        headers: expect.objectContaining({ "X-CSRF-Token": "csrf-credit-notice" }),
+      }),
+    );
   });
 });

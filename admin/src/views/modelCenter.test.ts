@@ -20,6 +20,7 @@ import type { AdminModel } from '@/types';
 import {
   buildAdminModelUpdatePayload,
   batchHealthSummary,
+  createEditForm,
   createModelCenterState,
   createModelHealthState,
   displayModelDescription,
@@ -328,6 +329,7 @@ describe('model center state', () => {
     const payload = buildAdminModelUpdatePayload({
       publicDisplayName: '精选模型',
       publicDescription: ' 面向公开使用 ',
+      publicAccentColor: ' #C857F1 ',
       inputHint: '输入创作需求',
       iconUrl: 'https://cdn.example.com/model.png',
       publicTagsText: '绘画,  图片\n推荐',
@@ -338,12 +340,21 @@ describe('model center state', () => {
     expect(payload).toEqual({
       publicDisplayName: '精选模型',
       publicDescription: '面向公开使用',
+      publicAccentColor: '#C857F1',
       inputHint: '输入创作需求',
       iconUrl: 'https://cdn.example.com/model.png',
       publicTags: ['绘画', '图片', '推荐'],
       promptOptimizeEnabled: false,
       defaultParameters: { temperature: 0.7 },
     });
+  });
+
+  it('preserves the public accent color in the edit form and save payload', () => {
+    const form = createEditForm(makeModel({ publicAccentColor: '#FF6B8A' }));
+    const payload = buildAdminModelUpdatePayload(form);
+
+    expect(form.publicAccentColor).toBe('#FF6B8A');
+    expect(payload.publicAccentColor).toBe('#FF6B8A');
   });
 
   it('validates default parameter JSON before saving', () => {

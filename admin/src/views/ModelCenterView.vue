@@ -245,6 +245,33 @@
         </section>
 
         <el-form label-position="top">
+          <el-form-item label="Public card color">
+            <div class="admin-model-center__accent-swatches" role="radiogroup" aria-label="Public card color">
+              <button
+                v-for="option in publicAccentOptions"
+                :key="option.value"
+                type="button"
+                :class="['admin-model-center__accent-swatch', editForm.publicAccentColor === option.value ? 'admin-model-center__accent-swatch--active' : '']"
+                :style="{ '--public-accent-swatch': option.value }"
+                :aria-label="option.label"
+                :aria-checked="editForm.publicAccentColor === option.value"
+                :disabled="!canUpdateActiveModel"
+                :title="option.label"
+                role="radio"
+                @click="editForm.publicAccentColor = option.value"
+              ></button>
+              <button
+                type="button"
+                :class="['admin-model-center__accent-swatch', !editForm.publicAccentColor ? 'admin-model-center__accent-swatch--active' : '']"
+                aria-label="Use capability default"
+                :aria-checked="!editForm.publicAccentColor"
+                :disabled="!canUpdateActiveModel"
+                title="Use capability default"
+                role="radio"
+                @click="editForm.publicAccentColor = ''"
+              ><span></span></button>
+            </div>
+          </el-form-item>
           <el-form-item label="公开名称">
             <el-input v-model="editForm.publicDisplayName" :disabled="!canUpdateActiveModel" />
           </el-form-item>
@@ -380,6 +407,7 @@ import {
   displayModelDescription,
   MODEL_CENTER_TITLE,
   nextActiveModelAfterRemoval,
+  publicAccentOptions,
   publicStateLabel,
   publicStateOptions,
   selectedIdsAfterRemoval,

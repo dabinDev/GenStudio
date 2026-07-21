@@ -3,6 +3,7 @@ import type {
   Capability,
   ConversationDefinition,
   CreditBundle,
+  CreditTransaction,
   ServerModelDefinition,
   PromptLibraryEventType,
   PromptSceneRecommendation,
@@ -239,6 +240,11 @@ export async function fetchServerModels(): Promise<ServerModelDefinition[]> {
 
 export async function fetchMyCredits(): Promise<CreditBundle> {
   return getApi<CreditBundle>("/api/credits/me");
+}
+
+export async function dismissCreditGrantNotice(transactionId: string): Promise<CreditTransaction> {
+  const payload = await postApi<{ transaction: CreditTransaction }>(`/api/credits/notifications/${encodeURIComponent(transactionId)}/dismiss`);
+  return payload.transaction;
 }
 
 export async function fetchCatalogModels(capability?: Capability): Promise<CatalogModelDefinition[]> {

@@ -27,6 +27,7 @@ export interface ModelDefinition {
   catalog?: CatalogModelDefinition | null;
   publicDisplayName?: string;
   publicDescription?: string;
+  publicAccentColor?: string;
   inputHint?: string;
   iconUrl?: string;
   publicTags?: string[];
@@ -132,6 +133,7 @@ export interface ServerModelDefinition {
   subModels: SubModelDefinition[];
   publicDisplayName?: string;
   publicDescription?: string;
+  publicAccentColor?: string;
   inputHint?: string;
   iconUrl?: string;
   publicTags?: string[];

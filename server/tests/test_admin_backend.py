@@ -2548,6 +2548,116 @@ def test_admin_credit_settings_and_user_adjustment_routes() -> None:
     main_module.rate_limiter.clear()
 
 
+def test_credit_grant_notification_marks_positive_individual_adjustments() -> None:
+    import app.main as main_module
+    from app.auth import get_current_user
+    from app.database import get_db
+    from app.main import app
+
+    db = make_db()
+    admin = make_user(db, "cage_ben@sina.com", external_id="credit-notice-admin")
+    recipient = make_user(db, "credit-notice-recipient@example.com", external_id="credit-notice-recipient")
+
+    def override_db():
+        yield db
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[get_current_user] = lambda: admin
+    client = TestClient(app)
+
+    response = client.post(
+        f"/api/admin/users/{recipient.id}/credits/adjust",
+        json={"amount": 120, "reason": "活动奖励"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["transaction"]["metadata"]["notification"] == {
+        "kind": "admin_credit_grant",
+        "delivery": "single",
+        "dismissedAt": None,
+    }
+
+    app.dependency_overrides.clear()
+    main_module.rate_limiter.clear()
+
+
+def test_credit_grant_notification_marks_positive_batch_adjustments() -> None:
+    import app.main as main_module
+    from app.auth import get_current_user
+    from app.database import get_db
+    from app.main import app
+
+    db = make_db()
+    admin = make_user(db, "cage_ben@sina.com", external_id="credit-batch-notice-admin")
+    first = make_user(db, "credit-batch-first@example.com", external_id="credit-batch-first")
+    second = make_user(db, "credit-batch-second@example.com", external_id="credit-batch-second")
+
+    def override_db():
+        yield db
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[get_current_user] = lambda: admin
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/admin/credits/batch-adjust",
+        json={"userIds": [first.id, second.id], "amount": 60, "reason": "补偿额度"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["successCount"] == 2
+    for recipient in (first, second):
+        transaction = db.query(CreditTransaction).filter(CreditTransaction.user_id == recipient.id).one()
+        assert json.loads(transaction.metadata_json)["notification"] == {
+            "kind": "admin_credit_grant",
+            "delivery": "batch",
+            "dismissedAt": None,
+        }
+
+    app.dependency_overrides.clear()
+    main_module.rate_limiter.clear()
+
+
+def test_credit_grant_notification_only_allows_the_recipient_to_dismiss() -> None:
+    import app.main as main_module
+    from app.auth import get_current_user
+    from app.database import get_db
+    from app.main import app
+
+    db = make_db()
+    admin = make_user(db, "cage_ben@sina.com", external_id="credit-dismiss-admin")
+    recipient = make_user(db, "credit-dismiss-recipient@example.com", external_id="credit-dismiss-recipient")
+    other_user = make_user(db, "credit-dismiss-other@example.com", external_id="credit-dismiss-other")
+
+    def override_db():
+        yield db
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[get_current_user] = lambda: admin
+    client = TestClient(app)
+    adjustment = client.post(
+        f"/api/admin/users/{recipient.id}/credits/adjust",
+        json={"amount": 15, "reason": "创作激励"},
+    )
+    assert adjustment.status_code == 200
+    transaction_id = adjustment.json()["transaction"]["id"]
+
+    app.dependency_overrides[get_current_user] = lambda: other_user
+    assert client.post(f"/api/credits/notifications/{transaction_id}/dismiss").status_code == 404
+
+    app.dependency_overrides[get_current_user] = lambda: recipient
+    dismissed = client.post(f"/api/credits/notifications/{transaction_id}/dismiss")
+    assert dismissed.status_code == 200
+    assert dismissed.json()["transaction"]["metadata"]["notification"]["dismissedAt"]
+
+    credits = client.get("/api/credits/me")
+    assert credits.status_code == 200
+    assert credits.json()["transactions"][0]["metadata"]["notification"]["dismissedAt"]
+
+    app.dependency_overrides.clear()
+    main_module.rate_limiter.clear()
+
+
 def test_admin_identifier_permissions_are_enforced_on_sensitive_admin_routes() -> None:
     import app.main as main_module
     from app.auth import get_current_user

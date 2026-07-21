@@ -154,6 +154,7 @@ export interface AdminModel {
   subModels?: AdminSubModel[];
   publicDisplayName: string;
   publicDescription: string;
+  publicAccentColor?: string;
   inputHint: string;
   iconUrl: string;
   publicTags: string[];
@@ -175,6 +176,7 @@ export interface AdminModelListQuery {
 export interface AdminModelUpdate {
   publicDisplayName?: string;
   publicDescription?: string;
+  publicAccentColor?: string;
   inputHint?: string;
   iconUrl?: string;
   publicTags?: string[];

@@ -3,6 +3,7 @@ import { reactive } from "vue";
 import {
   changeMyPassword,
   devLogin,
+  dismissCreditGrantNotice as dismissCreditGrantNoticeRequest,
   fetchCsrfToken,
   fetchCurrentUser,
   fetchMyCredits,
@@ -12,11 +13,12 @@ import {
   setCsrfToken,
   updateMyProfile,
 } from "../api";
-import type { UserProfile } from "../types";
+import type { CreditTransaction, UserProfile } from "../types";
 
 const state = reactive({
   loading: false,
   user: null as UserProfile | null,
+  creditTransactions: [] as CreditTransaction[],
   error: "",
 });
 
@@ -45,6 +47,13 @@ export function useAuthStore() {
       ...state.user,
       credits: credits.account,
     };
+    state.creditTransactions = credits.transactions;
+  }
+
+  async function dismissCreditGrantNotice(transactionId: string) {
+    if (!state.user) return;
+    await dismissCreditGrantNoticeRequest(transactionId);
+    await refreshCredits();
   }
 
   async function registerWithPassword(payload: { email?: string; phone?: string; password: string; nickname?: string }) {
@@ -118,6 +127,7 @@ export function useAuthStore() {
     try {
       await logout();
       state.user = null;
+      state.creditTransactions = [];
     } catch (error) {
       state.error = error instanceof Error ? error.message : "退出登录失败。";
       throw error;
@@ -130,6 +140,7 @@ export function useAuthStore() {
     state,
     loadCurrentUser,
     refreshCredits,
+    dismissCreditGrantNotice,
     registerWithPassword,
     login,
     loginForDevelopment,

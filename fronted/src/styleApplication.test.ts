@@ -2,9 +2,10 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const appVue = () => readFileSync(resolve(process.cwd(), "src/App.vue"), "utf8");
-const stylesCss = () => readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
-const catalogTs = () => readFileSync(resolve(process.cwd(), "src/catalog.ts"), "utf8");
+const readSource = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8").replace(/\r\n/g, "\n");
+const appVue = () => readSource("src/App.vue");
+const stylesCss = () => readSource("src/styles.css");
+const catalogTs = () => readSource("src/catalog.ts");
 
 describe("workbench style application", () => {
   it("does not import chat prototype components that are not rendered by App", () => {
@@ -517,6 +518,46 @@ describe("workbench style application", () => {
     expect(styles.indexOf(".shell .settings-row-actions-more", overrideIndex)).toBeGreaterThan(overrideIndex);
     expect(styles.indexOf(".shell .settings-row-action-menu", overrideIndex)).toBeGreaterThan(overrideIndex);
     expect(styles.indexOf("grid-template-columns: repeat(2, minmax(0, 1fr))", overrideIndex)).toBeGreaterThan(overrideIndex);
+  });
+
+  it("separates public creator models from private settings and gives them distinct cards", () => {
+    const source = appVue();
+    const styles = stylesCss();
+    const overrideIndex = styles.indexOf("Public model creator cards v1");
+
+    expect(source).toContain("Boolean(auth.state.user?.isAdmin)");
+    expect(source).toContain("publicModelAccent(model)");
+    expect(source).toContain("publicModelCardDescription(model)");
+    expect(source).toContain("model.publicTags?.slice(0, 2)");
+    expect(source).toContain("public-model-card-price");
+    expect(overrideIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf(".shell .sidebar-model-public", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf("--public-model-accent", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".public-model-card-description", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles.indexOf(".public-model-card-price", overrideIndex)).toBeGreaterThan(overrideIndex);
+  });
+
+  it("does not expose public model counts to ordinary users in settings", () => {
+    const source = appVue();
+
+    expect(source).toContain("const settingsVisibleModels = computed");
+    expect(source).toContain("all: settingsVisibleModels.value.length");
+    expect(source).toContain("settingsVisibleModels.value.filter((model) => model.capability === \"text\").length");
+    expect(source).toContain("{{ settingsVisibleModels.length }} 个模型");
+  });
+
+  it("keeps administrator credit grants visible at the top of the workspace until dismissal", () => {
+    const source = appVue();
+    const styles = stylesCss();
+    const noticeIndex = styles.indexOf("Persistent credit grants stay beneath the workspace controls until dismissed.");
+
+    expect(source).toContain("nextCreditGrantNotice(auth.state.creditTransactions)");
+    expect(source).toContain('class="credit-grant-notice"');
+    expect(source).toContain("dismissCurrentCreditGrantNotice");
+    expect(source).toContain("window.setInterval(() => void refreshCreditsQuietly(), 30_000)");
+    expect(noticeIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf(".shell .credit-grant-notice", noticeIndex)).toBeGreaterThan(noticeIndex);
+    expect(styles.indexOf(".shell .credit-grant-notice-dismiss", noticeIndex)).toBeGreaterThan(noticeIndex);
   });
 
   it("turns the empty creative canvas into a compact workbench status strip", () => {

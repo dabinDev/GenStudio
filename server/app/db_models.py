@@ -280,6 +280,7 @@ class ModelGroup(Base):
     is_public: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     public_display_name: Mapped[str] = mapped_column(String(255), default="")
     public_description: Mapped[str] = mapped_column(Text, default="")
+    public_accent_color: Mapped[str] = mapped_column(String(7), default="")
     input_hint: Mapped[str] = mapped_column(Text, default="")
     icon_url: Mapped[str] = mapped_column(Text, default="")
     public_tags_json: Mapped[str] = mapped_column(Text, default="[]")

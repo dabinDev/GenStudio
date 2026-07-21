@@ -205,6 +205,8 @@ def update_admin_model(db: Session, admin: User, model_id: str, payload: AdminMo
         model.public_display_name = payload.publicDisplayName.strip()
     if payload.publicDescription is not None:
         model.public_description = payload.publicDescription.strip()
+    if payload.publicAccentColor is not None:
+        model.public_accent_color = payload.publicAccentColor
     if payload.inputHint is not None:
         model.input_hint = payload.inputHint.strip()
     if payload.iconUrl is not None:

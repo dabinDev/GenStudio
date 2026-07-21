@@ -213,9 +213,11 @@ def test_admin_can_publish_and_unpublish_model() -> None:
 
 def test_admin_can_update_public_model_metadata() -> None:
     from app.admin_service import update_admin_model
+    from app.model_service import serialize_model
 
     db = make_db()
     admin = make_user(db, "cage_ben@sina.com")
+    viewer = make_user(db, "public-model-viewer@example.com", external_id="public-model-viewer")
     model = make_model(db, admin)
 
     updated = update_admin_model(
@@ -228,6 +230,7 @@ def test_admin_can_update_public_model_metadata() -> None:
             inputHint="请输入你的创作要求",
             iconUrl="https://example.com/gpt.svg",
             publicTags=["recommended", "stable"],
+            publicAccentColor="#28c5ff",
             promptOptimizeEnabled=False,
             defaultParameters={"temperature": "0.7"},
             isPublic=True,
@@ -240,8 +243,14 @@ def test_admin_can_update_public_model_metadata() -> None:
     assert updated.input_hint == "请输入你的创作要求"
     assert updated.icon_url == "https://example.com/gpt.svg"
     assert updated.prompt_optimize_enabled is False
+    assert updated.public_accent_color == "#28C5FF"
     assert "recommended" in updated.public_tags_json
     assert "temperature" in updated.default_parameters_json
+
+    public_payload = serialize_model(updated, viewer).model_dump()
+    assert public_payload["publicDescription"] == updated.public_description
+    assert public_payload["publicAccentColor"] == "#28C5FF"
+    assert public_payload["baseUrl"] == ""
 
 
 def test_admin_model_list_filters_by_capability_public_state_and_search() -> None:

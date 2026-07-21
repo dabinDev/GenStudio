@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import re
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -253,6 +254,7 @@ class ModelOut(BaseModel):
     subModels: list[SubModelOut] = Field(default_factory=list)
     publicDisplayName: str = ""
     publicDescription: str = ""
+    publicAccentColor: str = ""
     inputHint: str = ""
     iconUrl: str = ""
     publicTags: list[str] = Field(default_factory=list)
@@ -266,12 +268,23 @@ class ModelOut(BaseModel):
 class AdminModelUpdate(BaseModel):
     publicDisplayName: str | None = None
     publicDescription: str | None = None
+    publicAccentColor: str | None = None
     inputHint: str | None = None
     iconUrl: str | None = None
     publicTags: list[str] | None = None
     promptOptimizeEnabled: bool | None = None
     defaultParameters: dict[str, Any] | None = None
     isPublic: bool | None = None
+
+    @field_validator("publicAccentColor")
+    @classmethod
+    def validate_public_accent_color(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().upper()
+        if normalized and not re.fullmatch(r"#[0-9A-F]{6}", normalized):
+            raise ValueError("publicAccentColor must be a #RRGGBB color")
+        return normalized
 
 
 class AdminModelBatchRequest(BaseModel):

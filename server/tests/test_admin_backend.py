@@ -2632,6 +2632,50 @@ def test_admin_read_routes_enforce_permission_points() -> None:
     main_module.rate_limiter.clear()
 
 
+def test_generic_public_model_routes_require_model_update_permission() -> None:
+    import app.main as main_module
+    from app.auth import get_current_user
+    from app.database import get_db
+    from app.main import app
+
+    db = make_db()
+    owner = make_user(db, "cage_ben@sina.com", external_id="public-model-owner")
+    viewer = make_user(db, "viewer-public-model@example.com", external_id="viewer-public-model")
+    operator = make_user(db, "operator-public-model@example.com", external_id="operator-public-model")
+    admin = make_user(db, "admin-public-model@example.com", external_id="admin-public-model")
+    db.add_all(
+        [
+            AdminRoleAssignment(user_id=viewer.id, role="viewer", assigned_by=owner.id),
+            AdminRoleAssignment(user_id=operator.id, role="operator", assigned_by=owner.id),
+            AdminRoleAssignment(user_id=admin.id, role="admin", assigned_by=owner.id),
+        ],
+    )
+    model = make_model(db, owner, name="Shared model")
+    model.is_public = True
+    db.commit()
+
+    def override_db():
+        yield db
+
+    app.dependency_overrides[get_db] = override_db
+    client = TestClient(app)
+
+    app.dependency_overrides[get_current_user] = lambda: viewer
+    listed = client.get("/api/models")
+    assert listed.status_code == 200
+    assert listed.json()["models"][0]["canEdit"] is False
+    assert client.put(f"/api/models/{model.id}", json={"name": "Viewer edit"}).status_code == 403
+
+    app.dependency_overrides[get_current_user] = lambda: operator
+    assert client.put(f"/api/models/{model.id}", json={"name": "Operator edit"}).status_code == 403
+
+    app.dependency_overrides[get_current_user] = lambda: admin
+    assert client.put(f"/api/models/{model.id}", json={"name": "Admin edit"}).status_code == 200
+
+    app.dependency_overrides.clear()
+    main_module.rate_limiter.clear()
+
+
 def test_admin_record_routes_check_record_view_permission(monkeypatch) -> None:
     import app.main as main_module
     from app.auth import get_current_user

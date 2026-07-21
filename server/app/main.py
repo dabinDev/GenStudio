@@ -2912,10 +2912,10 @@ async def models(
     settings: Settings = Depends(get_settings),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    is_admin = is_admin_user(current_user, settings)
+    can_edit_public = can(current_user, "model:update", settings)
     return {
         "models": [
-            serialize_model(item, current_user, is_admin=is_admin).model_dump()
+            serialize_model(item, current_user, is_admin=can_edit_public).model_dump()
             for item in list_model_groups(db, current_user)
         ]
     }
@@ -2983,9 +2983,9 @@ async def update_model(
     settings: Settings = Depends(get_settings),
     _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
-    is_admin = is_admin_user(current_user, settings)
-    model = update_model_group(db, current_user, model_id, payload, is_admin=is_admin)
-    return {"model": serialize_model(model, current_user, is_admin=is_admin).model_dump()}
+    can_edit_public = can(current_user, "model:update", settings)
+    model = update_model_group(db, current_user, model_id, payload, is_admin=can_edit_public)
+    return {"model": serialize_model(model, current_user, is_admin=can_edit_public).model_dump()}
 
 
 @app.delete("/api/models/{model_id}")

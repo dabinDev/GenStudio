@@ -2676,6 +2676,173 @@ def test_generic_public_model_routes_require_model_update_permission() -> None:
     main_module.rate_limiter.clear()
 
 
+def test_generic_public_model_delete_requires_model_delete_permission() -> None:
+    import app.main as main_module
+    from app.auth import get_current_user
+    from app.database import get_db
+    from app.main import app
+
+    db = make_db()
+    owner = make_user(db, "cage_ben@sina.com", external_id="public-model-delete-owner")
+    viewer = make_user(db, "viewer-public-delete@example.com", external_id="viewer-public-delete")
+    db.add(AdminRoleAssignment(user_id=viewer.id, role="viewer", assigned_by=owner.id))
+    model = make_model(db, owner, name="Shared model to delete")
+    model.is_public = True
+    db.commit()
+
+    def override_db():
+        yield db
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[get_current_user] = lambda: viewer
+    client = TestClient(app)
+
+    assert client.delete(f"/api/models/{model.id}").status_code == 403
+    assert db.get(ModelGroup, model.id) is not None
+
+    app.dependency_overrides.clear()
+    main_module.rate_limiter.clear()
+
+
+def test_generic_public_model_primary_change_requires_model_update_permission() -> None:
+    import app.main as main_module
+    from app.auth import get_current_user
+    from app.database import get_db
+    from app.main import app
+
+    db = make_db()
+    owner = make_user(db, "cage_ben@sina.com", external_id="public-model-primary-owner")
+    viewer = make_user(db, "viewer-public-primary@example.com", external_id="viewer-public-primary")
+    db.add(AdminRoleAssignment(user_id=viewer.id, role="viewer", assigned_by=owner.id))
+    model = make_model(db, owner, name="Shared model primary")
+    model.is_public = True
+    secondary = SubModel(
+        model_group_id=model.id,
+        api_key_id=model.api_key_id,
+        model_name="shared-secondary",
+        display_name="Shared secondary",
+        capability=model.capability,
+        adapter=model.adapter,
+    )
+    db.add(secondary)
+    db.commit()
+
+    def override_db():
+        yield db
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[get_current_user] = lambda: viewer
+    client = TestClient(app)
+
+    assert client.post(f"/api/models/{model.id}/primary", json={"subModelId": secondary.id}).status_code == 403
+
+    app.dependency_overrides.clear()
+    main_module.rate_limiter.clear()
+
+
+def test_generic_public_model_sync_requires_model_update_permission(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.main as main_module
+    import httpx
+    from app.auth import get_current_user
+    from app.database import get_db
+    from app.main import app
+
+    async def fake_forward_json(*_args, **_kwargs):
+        return httpx.Response(200, json={"data": []}), {"data": []}
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    db = make_db()
+    owner = make_user(db, "cage_ben@sina.com", external_id="public-model-sync-owner")
+    viewer = make_user(db, "viewer-public-sync@example.com", external_id="viewer-public-sync")
+    db.add(AdminRoleAssignment(user_id=viewer.id, role="viewer", assigned_by=owner.id))
+    model = make_model(db, owner, name="Shared model sync")
+    model.is_public = True
+    db.commit()
+
+    def override_db():
+        yield db
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[get_current_user] = lambda: viewer
+    client = TestClient(app)
+
+    assert client.post(f"/api/models/{model.id}/sync").status_code == 403
+
+    app.dependency_overrides.clear()
+    main_module.rate_limiter.clear()
+
+
+def test_generic_public_model_create_requires_model_publish_permission() -> None:
+    import app.main as main_module
+    from app.auth import get_current_user
+    from app.database import get_db
+    from app.main import app
+
+    db = make_db()
+    owner = make_user(db, "cage_ben@sina.com", external_id="public-model-create-owner")
+    viewer = make_user(db, "viewer-public-create@example.com", external_id="viewer-public-create")
+    db.add(AdminRoleAssignment(user_id=viewer.id, role="viewer", assigned_by=owner.id))
+    db.commit()
+
+    def override_db():
+        yield db
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[get_current_user] = lambda: viewer
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/models",
+        json={
+            "name": "Viewer shared model",
+            "vendor": "OpenAI",
+            "capability": "text",
+            "adapter": "text-chat",
+            "baseUrl": "https://token.example.com",
+            "apiKey": "sk-test",
+            "primaryModelName": "gpt-4o",
+            "isPublic": True,
+        },
+    )
+
+    assert response.status_code == 403
+
+    app.dependency_overrides.clear()
+    main_module.rate_limiter.clear()
+
+
+def test_generic_public_model_visibility_change_requires_publish_permission(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.main as main_module
+    from app.auth import get_current_user
+    from app.database import get_db
+    from app.main import app
+
+    def can_update_only(_user, permission: str, _settings) -> bool:
+        return permission == "model:update"
+
+    monkeypatch.setattr(main_module, "can", can_update_only)
+    db = make_db()
+    owner = make_user(db, "cage_ben@sina.com", external_id="public-model-visibility-owner")
+    editor = make_user(db, "editor-public-visibility@example.com", external_id="editor-public-visibility")
+    model = make_model(db, owner, name="Shared model visibility")
+    model.is_public = True
+    db.commit()
+
+    def override_db():
+        yield db
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[get_current_user] = lambda: editor
+    client = TestClient(app)
+
+    response = client.put(f"/api/models/{model.id}", json={"isPublic": False})
+    assert response.status_code == 403, response.text
+    assert db.get(ModelGroup, model.id).is_public is True
+
+    app.dependency_overrides.clear()
+    main_module.rate_limiter.clear()
+
+
 def test_admin_record_routes_check_record_view_permission(monkeypatch) -> None:
     import app.main as main_module
     from app.auth import get_current_user

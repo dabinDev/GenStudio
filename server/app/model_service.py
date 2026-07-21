@@ -246,6 +246,8 @@ def should_default_public_model(payload: ModelCreate) -> bool:
 
 
 def create_model_group(db: Session, user: User, payload: ModelCreate, *, is_admin: bool = False) -> ModelGroup:
+    if payload.isPublic and not is_admin:
+        raise HTTPException(status_code=403, detail={"message": "Only users with model publish permission can create public models."})
     catalog_model = get_catalog_model_by_external_id(db, payload.catalogModelId)
     api_key = ApiKey(
         user_id=user.id,
@@ -369,7 +371,16 @@ def list_api_keys(db: Session, user: User) -> list[ApiKey]:
     return db.query(ApiKey).filter(ApiKey.user_id == user.id).order_by(ApiKey.created_at.desc()).all()
 
 
-def update_model_group(db: Session, user: User, model_id: str, payload: ModelUpdate, *, is_admin: bool = False) -> ModelGroup:
+def update_model_group(
+    db: Session,
+    user: User,
+    model_id: str,
+    payload: ModelUpdate,
+    *,
+    is_admin: bool = False,
+    can_publish_public: bool = False,
+    can_unpublish_public: bool = False,
+) -> ModelGroup:
     model = get_model_group(db, user, model_id, is_admin=is_admin, require_edit=True)
     selected_catalog_model = model.catalog_model
     if payload.name is not None:
@@ -387,6 +398,12 @@ def update_model_group(db: Session, user: User, model_id: str, payload: ModelUpd
         selected_catalog_model = get_catalog_model_by_external_id(db, payload.catalogModelId)
         model.catalog_model_id = selected_catalog_model.id if selected_catalog_model else None
     if payload.isPublic is not None:
+        next_public_state = bool(payload.isPublic)
+        if next_public_state != model.is_public:
+            if next_public_state and not can_publish_public:
+                raise HTTPException(status_code=403, detail={"message": "Model publish permission is required."})
+            if not next_public_state and not can_unpublish_public:
+                raise HTTPException(status_code=403, detail={"message": "Model unpublish permission is required."})
         if not is_admin:
             raise HTTPException(status_code=403, detail={"message": "只有管理员可以调整公共模型。"})
         model.is_public = bool(payload.isPublic)
@@ -463,7 +480,8 @@ def update_model_group(db: Session, user: User, model_id: str, payload: ModelUpd
         model.primary_sub_model_id = existing.id
 
     db.commit()
-    return get_model_group(db, user, model_id, is_admin=is_admin)
+    db.refresh(model)
+    return model
 
 
 def delete_model_group(db: Session, user: User, model_id: str, *, is_admin: bool = False) -> None:

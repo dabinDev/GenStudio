@@ -2969,9 +2969,10 @@ async def create_model(
     settings: Settings = Depends(get_settings),
     _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
-    is_admin = is_admin_user(current_user, settings)
-    model = create_model_group(db, current_user, payload, is_admin=is_admin)
-    return {"model": serialize_model(model, current_user, is_admin=is_admin).model_dump()}
+    can_publish_public = can(current_user, "model:publish", settings)
+    can_edit_public = can(current_user, "model:update", settings)
+    model = create_model_group(db, current_user, payload, is_admin=can_publish_public)
+    return {"model": serialize_model(model, current_user, is_admin=can_edit_public).model_dump()}
 
 
 @app.put("/api/models/{model_id}")
@@ -2984,7 +2985,15 @@ async def update_model(
     _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
     can_edit_public = can(current_user, "model:update", settings)
-    model = update_model_group(db, current_user, model_id, payload, is_admin=can_edit_public)
+    model = update_model_group(
+        db,
+        current_user,
+        model_id,
+        payload,
+        is_admin=can_edit_public,
+        can_publish_public=can(current_user, "model:publish", settings),
+        can_unpublish_public=can(current_user, "model:unpublish", settings),
+    )
     return {"model": serialize_model(model, current_user, is_admin=can_edit_public).model_dump()}
 
 
@@ -2996,7 +3005,7 @@ async def delete_model(
     settings: Settings = Depends(get_settings),
     _csrf: None = Depends(require_csrf),
 ) -> dict[str, bool]:
-    delete_model_group(db, current_user, model_id, is_admin=is_admin_user(current_user, settings))
+    delete_model_group(db, current_user, model_id, is_admin=can(current_user, "model:delete", settings))
     return {"ok": True}
 
 
@@ -3012,9 +3021,9 @@ async def set_model_primary(
     sub_model_id = str(payload.get("subModelId") or "").strip()
     if not sub_model_id:
         raise HTTPException(status_code=400, detail={"message": "缺少子模型 ID。"})
-    is_admin = is_admin_user(current_user, settings)
-    model = set_primary_sub_model(db, current_user, model_id, sub_model_id, is_admin=is_admin)
-    return {"model": serialize_model(model, current_user, is_admin=is_admin).model_dump()}
+    can_edit_public = can(current_user, "model:update", settings)
+    model = set_primary_sub_model(db, current_user, model_id, sub_model_id, is_admin=can_edit_public)
+    return {"model": serialize_model(model, current_user, is_admin=can_edit_public).model_dump()}
 
 
 @app.post("/api/models/{model_id}/sync")
@@ -3025,8 +3034,8 @@ async def sync_model_list(
     settings: Settings = Depends(get_settings),
     _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
-    is_admin = is_admin_user(current_user, settings)
-    model = get_model_group(db, current_user, model_id, is_admin=is_admin, require_edit=True)
+    can_edit_public = can(current_user, "model:update", settings)
+    model = get_model_group(db, current_user, model_id, is_admin=can_edit_public, require_edit=True)
     api_key = model.api_key
     target_url = resolve_url(api_key.base_url, "/v1/models")
     started_at = time.perf_counter()
@@ -3039,7 +3048,7 @@ async def sync_model_list(
     duration_ms = elapsed_ms(started_at)
     if not response.is_success or not isinstance(raw, dict):
         raise upstream_error(raw, "获取模型列表失败。", response.status_code)
-    result = sync_models_from_raw(db, model, raw, duration_ms, user=current_user, is_admin=is_admin)
+    result = sync_models_from_raw(db, model, raw, duration_ms, user=current_user, is_admin=can_edit_public)
     return result.model_dump()
 
 

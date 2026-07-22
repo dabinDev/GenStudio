@@ -4769,113 +4769,134 @@ async function removeUnavailableModels() {
       </section>
 
       <section v-else-if="view === 'profile'" class="settings-page profile-page">
-        <section class="settings-hero profile-hero">
-          <div>
+        <header class="profile-account-header">
+          <div class="profile-account-heading">
             <p class="eyebrow">账户中心</p>
             <h2>个人信息</h2>
-            <p class="muted">当前账号的密钥、模型、子模型和创作历史都会按用户隔离保存。</p>
+            <p>管理账号资料、安全设置与创作资产。</p>
           </div>
-          <div class="profile-card">
+          <div class="profile-account-identity">
             <div class="profile-avatar">{{ profileAvatarLabel }}</div>
-            <strong>{{ profileDisplayName }}</strong>
-            <span>{{ userAccountLabel }}</span>
+            <div>
+              <span>当前账号</span>
+              <strong>{{ profileDisplayName }}</strong>
+              <small>{{ userAccountLabel }}</small>
+            </div>
           </div>
-        </section>
+          <div class="profile-account-credit credit-balance">
+            <span>可用积分</span>
+            <strong>{{ auth.state.user ? formatCredits(availableCredits) : "-" }}</strong>
+            <small v-if="reservedCredits">预扣 {{ formatCredits(reservedCredits) }}</small>
+            <small v-else>用于聊天、图片与视频创作</small>
+          </div>
+        </header>
 
-        <section class="settings-list-panel profile-grid">
-          <article class="profile-stat">
+        <section class="profile-account-metrics" aria-label="账户概览">
+          <article>
             <span>用户 ID</span>
-            <strong>{{ auth.state.user?.externalUserId || "-" }}</strong>
+            <strong :title="auth.state.user?.externalUserId || '-'">{{ auth.state.user?.externalUserId || "-" }}</strong>
           </article>
-          <article class="profile-stat">
+          <article>
             <span>已保存模型</span>
             <strong>{{ store.models.value.length }}</strong>
           </article>
-          <article class="profile-stat">
+          <article>
             <span>已配置模型</span>
             <strong>{{ configuredCount }}</strong>
           </article>
-          <article class="profile-stat">
+          <article>
             <span>历史对话</span>
             <strong>{{ conversationState.conversations.length }}</strong>
           </article>
-          <article class="profile-stat credit-balance">
-            <span>积分余额</span>
-            <strong>{{ auth.state.user ? formatCredits(availableCredits) : "-" }}</strong>
-            <small v-if="reservedCredits">预扣 {{ formatCredits(reservedCredits) }}</small>
-          </article>
         </section>
 
-        <section class="settings-list-panel profile-editor">
-          <div class="settings-list-toolbar">
-            <div class="settings-toolbar-copy">
-              <strong>账号资料</strong>
-              <span>本地注册账号和官网授权账号共用同一个用户资料，模型与创作记录继续按用户隔离。</span>
+        <section class="profile-account-workspace">
+          <section class="profile-account-panel profile-account-details">
+            <div class="profile-account-panel-head">
+              <div>
+                <p class="eyebrow">基本资料</p>
+                <h3>账号资料</h3>
+                <span>这些信息用于创作记录和账号识别。</span>
+              </div>
+              <span class="profile-account-status">已登录</span>
             </div>
-            <div class="settings-row-actions">
-              <button class="button-secondary" :disabled="!auth.state.user || auth.state.loading" @click="handleProfileSave">
+            <div class="profile-form-grid profile-account-details-grid">
+              <label class="field">
+                <span>昵称</span>
+                <input v-model="profileForm.nickname" :disabled="!auth.state.user" placeholder="创作者名称" />
+              </label>
+              <label class="field">
+                <span>手机号</span>
+                <input v-model="profileForm.phone" :disabled="!auth.state.user" placeholder="可选" />
+              </label>
+              <label class="field field-full">
+                <span>头像 URL</span>
+                <input v-model="profileForm.avatarUrl" :disabled="!auth.state.user" placeholder="https://..." />
+              </label>
+            </div>
+            <div v-if="profileForm.error" class="inline-message inline-danger">{{ profileForm.error }}</div>
+            <div v-if="profileForm.success" class="inline-message inline-success">{{ profileForm.success }}</div>
+            <div class="profile-account-panel-actions">
+              <span>保存后将同步到当前登录账号。</span>
+              <button :disabled="!auth.state.user || auth.state.loading" @click="handleProfileSave">
                 {{ auth.state.loading ? "保存中..." : "保存资料" }}
               </button>
+            </div>
+          </section>
+
+          <aside class="profile-account-side">
+            <section class="profile-account-panel profile-account-security">
+              <div class="profile-account-panel-head">
+                <div>
+                  <p class="eyebrow">账号安全</p>
+                  <h3>修改密码</h3>
+                  <span>仅本地注册账号可在此修改密码。</span>
+                </div>
+              </div>
+              <div class="profile-account-security-fields">
+                <label class="field">
+                  <span>当前密码</span>
+                  <input v-model="passwordForm.currentPassword" type="password" :disabled="!auth.state.user" placeholder="当前登录密码" />
+                </label>
+                <label class="field">
+                  <span>新密码（至少 6 位）</span>
+                  <input v-model="passwordForm.newPassword" type="password" :disabled="!auth.state.user" placeholder="新密码" />
+                </label>
+                <label class="field">
+                  <span>确认新密码</span>
+                  <input v-model="passwordForm.confirmPassword" type="password" :disabled="!auth.state.user" placeholder="再次输入新密码" />
+                </label>
+              </div>
+              <div v-if="passwordForm.error" class="inline-message inline-danger">{{ passwordForm.error }}</div>
+              <div v-if="passwordForm.success" class="inline-message inline-success">{{ passwordForm.success }}</div>
+              <div class="profile-account-panel-actions profile-account-security-actions">
+                <span>官网授权账号请前往官网修改。</span>
+                <button
+                  class="button-secondary"
+                  :disabled="!auth.state.user || auth.state.loading || !passwordForm.currentPassword || !passwordForm.newPassword"
+                  @click="handleChangePassword"
+                >
+                  {{ auth.state.loading ? "提交中..." : "修改密码" }}
+                </button>
+              </div>
+            </section>
+
+            <section class="profile-account-danger">
+              <div>
+                <strong>退出当前账号</strong>
+                <span>退出后需要重新授权登录。</span>
+              </div>
               <button v-if="auth.state.user" class="button-danger" :disabled="auth.state.loading" @click="handleLogout">退出登录</button>
               <button v-else @click="navigate('auth')">去登录</button>
-            </div>
-          </div>
-          <div class="profile-form-grid">
-            <label class="field">
-              <span>昵称</span>
-              <input v-model="profileForm.nickname" :disabled="!auth.state.user" placeholder="创作者名称" />
-            </label>
-            <label class="field">
-              <span>手机号</span>
-              <input v-model="profileForm.phone" :disabled="!auth.state.user" placeholder="可选" />
-            </label>
-            <label class="field field-full">
-              <span>头像 URL</span>
-              <input v-model="profileForm.avatarUrl" :disabled="!auth.state.user" placeholder="https://..." />
-            </label>
-          </div>
-          <div v-if="profileForm.error" class="inline-message inline-danger">{{ profileForm.error }}</div>
-          <div v-if="profileForm.success" class="inline-message inline-success">{{ profileForm.success }}</div>
+            </section>
+          </aside>
         </section>
 
-        <section class="settings-list-panel profile-editor">
-          <div class="settings-list-toolbar">
-            <div class="settings-toolbar-copy">
-              <strong>修改密码</strong>
-              <span>仅本地注册账号可修改密码；官网授权登录的账号请在官网修改。</span>
-            </div>
-            <div class="settings-row-actions">
-              <button
-                class="button-secondary"
-                :disabled="!auth.state.user || auth.state.loading || !passwordForm.currentPassword || !passwordForm.newPassword"
-                @click="handleChangePassword"
-              >
-                {{ auth.state.loading ? "提交中..." : "修改密码" }}
-              </button>
-            </div>
-          </div>
-          <div class="profile-form-grid">
-            <label class="field">
-              <span>当前密码</span>
-              <input v-model="passwordForm.currentPassword" type="password" :disabled="!auth.state.user" placeholder="当前登录密码" />
-            </label>
-            <label class="field">
-              <span>新密码（至少 6 位）</span>
-              <input v-model="passwordForm.newPassword" type="password" :disabled="!auth.state.user" placeholder="新密码" />
-            </label>
-            <label class="field">
-              <span>确认新密码</span>
-              <input v-model="passwordForm.confirmPassword" type="password" :disabled="!auth.state.user" placeholder="再次输入新密码" />
-            </label>
-          </div>
-          <div v-if="passwordForm.error" class="inline-message inline-danger">{{ passwordForm.error }}</div>
-          <div v-if="passwordForm.success" class="inline-message inline-success">{{ passwordForm.success }}</div>
-        </section>
-
-        <section v-if="showDevAuth" class="settings-list-panel profile-actions">
-          <div>
+        <section v-if="showDevAuth" class="profile-account-callback profile-account-callback-dev">
+          <div class="profile-account-callback-copy">
+            <p class="eyebrow">开发工具</p>
             <h3>官网授权回跳</h3>
-            <p class="muted">正式环境使用官网生成的短期 code 访问 /auth/callback?code=xxx；本地测试可输入 dev:alice、dev:bob、dev:carol 模拟多个用户。</p>
+            <span>使用短期 code 模拟多个用户的授权登录。</span>
           </div>
           <div class="auth-code-form">
             <label class="field">
@@ -4884,19 +4905,20 @@ async function removeUnavailableModels() {
             </label>
             <button @click="handleAuthCodeLogin">授权登录</button>
           </div>
-          <div class="settings-row-actions">
+          <div class="profile-account-callback-actions">
             <button class="button-secondary" @click="devAuthCode = 'dev:alice'">Alice</button>
             <button class="button-secondary" @click="devAuthCode = 'dev:bob'">Bob</button>
             <button class="button-secondary" @click="devAuthCode = 'dev:carol'">Carol</button>
             <button class="button-secondary" @click="refreshConversations">刷新历史</button>
           </div>
         </section>
-        <section v-else class="settings-list-panel profile-actions">
-          <div>
+        <section v-else class="profile-account-callback">
+          <div class="profile-account-callback-copy">
+            <p class="eyebrow">授权状态</p>
             <h3>官网授权回调</h3>
-            <p class="muted">正式环境由官网生成短期 code 跳转登录，本地调试入口仅在开发环境开放。</p>
+            <span>正式环境由官网生成短期 code 跳转登录，创作数据继续按账号隔离。</span>
           </div>
-          <div class="settings-row-actions">
+          <div class="profile-account-callback-actions">
             <button class="button-secondary" @click="refreshConversations">刷新历史记录</button>
           </div>
         </section>

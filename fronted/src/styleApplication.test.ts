@@ -796,4 +796,26 @@ describe("workbench style application", () => {
     expect(mobileStyles).toContain(".settings-model-row > .settings-check-cell");
     expect(mobileStyles).toContain("width: auto !important");
   });
+
+  it("gives the profile view a dedicated responsive account-center layout", () => {
+    const source = appVue();
+    const styles = redesignCss();
+
+    expect(source).toContain("profile-account-header");
+    expect(source).toContain("profile-account-metrics");
+    expect(source).toContain("profile-account-workspace");
+    expect(source).toContain("profile-account-details");
+    expect(source).toContain("profile-account-security");
+    expect(source).toContain("profile-account-danger");
+    expect(source).not.toContain('class="settings-row-actions profile-editor-actions"');
+    expect(styles).toContain("Profile account center v1");
+    expect(styles).toContain("grid-template-columns: minmax(0, 1.45fr) minmax(300px, 0.75fr) !important");
+    expect(styles).toContain("white-space: nowrap !important");
+    expect(styles).toContain("@media (max-width: 860px)");
+
+    const markerIndex = styles.indexOf("Profile account center v1");
+    const regionSelectorIndex = styles.indexOf(".shell .profile-account-header,", markerIndex);
+    const regionRule = styles.slice(regionSelectorIndex, styles.indexOf(".shell .profile-account-header {", regionSelectorIndex));
+    expect(regionRule).toContain("flex: 0 0 auto !important");
+  });
 });

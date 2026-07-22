@@ -427,6 +427,7 @@ describe("workbench style application", () => {
   it("uses stable avatar and icon fallbacks instead of raw nickname slicing", () => {
     const source = appVue();
     const styles = stylesCss();
+    const redesign = redesignCss();
     const overrideIndex = styles.indexOf("Creative Workshop stable avatar fallbacks v27");
 
     expect(source).toContain("accountAvatarLabel");
@@ -439,11 +440,11 @@ describe("workbench style application", () => {
     expect(source).toContain("{{ accountDisplayName }}");
     expect(source).toContain("{{ profileDisplayName }}");
     expect(source).not.toContain("auth.state.user?.nickname?.slice(0, 1)");
-    expect(source).toContain("hero-model-mark-label");
+    expect(source).toContain("creator-model-bar");
     expect(overrideIndex).toBeGreaterThan(-1);
     expect(styles.indexOf(".shell .model-avatar-icon-failed img", overrideIndex)).toBeGreaterThan(overrideIndex);
     expect(styles.indexOf("display: none !important", overrideIndex)).toBeGreaterThan(overrideIndex);
-    expect(styles.indexOf(".shell .hero-model-mark-label", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(redesign).toContain(".shell .creator-model-bar .model-avatar");
     expect(styles.indexOf(".shell .account-avatar", overrideIndex)).toBeGreaterThan(overrideIndex);
   });
 
@@ -562,21 +563,19 @@ describe("workbench style application", () => {
     expect(styles.indexOf(".shell .credit-grant-notice-dismiss", noticeIndex)).toBeGreaterThan(noticeIndex);
   });
 
-  it("turns the empty creative canvas into a compact workbench status strip", () => {
+  it("keeps the empty creative canvas compact beneath the persistent model bar", () => {
     const source = appVue();
-    const styles = stylesCss();
-    const overrideIndex = styles.indexOf("Creative Workshop compact creation workbench v32");
+    const styles = redesignCss();
 
     expect(source).toContain("empty-canvas-workbench");
-    expect(source).toContain("empty-canvas-model-strip");
+    expect(source).toContain("empty-canvas-copy");
+    expect(source).toContain("creator-model-bar");
+    expect(source).not.toContain("empty-canvas-model-strip");
     expect(source).toContain("empty-canvas-primary-action");
-    expect(overrideIndex).toBeGreaterThan(-1);
-    expect(styles.indexOf(".shell .empty-canvas-workbench", overrideIndex)).toBeGreaterThan(overrideIndex);
-    expect(styles.indexOf(".shell .empty-canvas-model-strip", overrideIndex)).toBeGreaterThan(overrideIndex);
-    expect(styles.indexOf(".shell .empty-canvas-primary-action", overrideIndex)).toBeGreaterThan(overrideIndex);
-    expect(styles.indexOf("min-height: 0 !important", overrideIndex)).toBeGreaterThan(overrideIndex);
-    expect(styles.indexOf("grid-template-columns: auto minmax(0, 1fr) auto", overrideIndex)).toBeGreaterThan(overrideIndex);
-    expect(styles.indexOf("max-width: 980px", overrideIndex)).toBeGreaterThan(overrideIndex);
+    expect(styles).toContain(".shell .empty-canvas-workbench");
+    expect(styles).toContain(".shell .empty-canvas-copy h3");
+    expect(styles).toContain(".shell .empty-canvas-primary-action");
+    expect(styles).toContain("width: min(680px, 100%) !important");
   });
 
   it("does not keep the old embedded admin shell in the creative workspace", () => {
@@ -710,5 +709,25 @@ describe("workbench style application", () => {
     expect(styles).toContain("z-index: 320 !important");
     expect(styles).toContain(".settings-row-action-scrim");
     expect(styles).toContain(".settings-row-actions-more-up .settings-row-action-menu");
+  });
+
+  it("uses one model-aware frame for all creator capabilities", () => {
+    const source = appVue();
+    const styles = redesignCss();
+
+    expect(source).toContain("creator-model-identity");
+    expect(source).toContain(':style="activeModelIdentityStyle"');
+    expect(styles).toContain('.studio-panel[data-view="text"]');
+    expect(styles).toContain('.studio-panel[data-view="images"]');
+    expect(styles).toContain('.studio-panel[data-view="videos"]');
+    expect(styles).toContain("var(--model-accent)");
+  });
+
+  it("keeps media controls and creator text contained on mobile", () => {
+    const styles = redesignCss();
+
+    expect(styles).toContain("@media (max-width: 720px)");
+    expect(styles).toContain("overflow-wrap: anywhere");
+    expect(styles).toContain("grid-template-columns: minmax(0, 1fr)");
   });
 });

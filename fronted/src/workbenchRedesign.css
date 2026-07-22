@@ -538,3 +538,701 @@
     display: none !important;
   }
 }
+
+/* Creator pages share one quiet frame; the active model supplies the accent. */
+.shell .studio-panel {
+  --model-accent: var(--capability-image);
+  min-width: 0 !important;
+  color: var(--text-main) !important;
+  background: var(--surface-page) !important;
+}
+
+.shell .studio-panel[data-view="text"] {
+  --model-accent: var(--capability-text);
+}
+
+.shell .studio-panel[data-view="images"] {
+  --model-accent: var(--capability-image);
+}
+
+.shell .studio-panel[data-view="videos"] {
+  --model-accent: var(--capability-video);
+}
+
+.shell .studio-canvas {
+  padding: 14px 20px 12px !important;
+  color: var(--text-main) !important;
+  background: var(--surface-page) !important;
+}
+
+.shell .studio-canvas::before,
+.shell .studio-canvas::after,
+.shell .composer-card::before,
+.shell .composer-card::after {
+  display: none !important;
+}
+
+.shell .creator-model-bar {
+  display: grid !important;
+  grid-template-columns: 42px minmax(0, 1fr) auto !important;
+  gap: 11px !important;
+  align-items: center !important;
+  width: min(1080px, 100%) !important;
+  min-height: 68px !important;
+  margin: 0 auto 14px !important;
+  padding: 10px 12px !important;
+  border: 1px solid var(--line-soft) !important;
+  border-left: 3px solid var(--model-accent) !important;
+  border-radius: var(--radius-panel) !important;
+  background: var(--surface-panel) !important;
+  box-shadow: 0 1px 2px rgba(28, 43, 55, 0.04) !important;
+}
+
+.shell .creator-model-bar .model-avatar {
+  width: 40px !important;
+  height: 40px !important;
+  border: 1px solid color-mix(in srgb, var(--model-accent) 24%, var(--line-soft)) !important;
+  border-radius: var(--radius-control) !important;
+  color: var(--model-accent) !important;
+  background: color-mix(in srgb, var(--model-accent) 11%, var(--surface-soft)) !important;
+  box-shadow: none !important;
+}
+
+.shell .creator-model-bar-copy {
+  display: grid !important;
+  grid-template-columns: max-content minmax(0, 1fr) !important;
+  gap: 2px 8px !important;
+  min-width: 0 !important;
+}
+
+.shell .creator-model-bar-copy > span {
+  align-self: center !important;
+  color: var(--model-accent) !important;
+  font-size: 11px !important;
+  font-weight: 750 !important;
+}
+
+.shell .creator-model-bar-copy > strong {
+  min-width: 0 !important;
+  overflow: hidden !important;
+  color: var(--text-main) !important;
+  font-size: 14px !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+.shell .creator-model-bar-copy > small {
+  grid-column: 1 / -1 !important;
+  min-width: 0 !important;
+  overflow: hidden !important;
+  color: var(--text-subtle) !important;
+  font-size: 12px !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+.shell .creator-model-bar-meta {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  gap: 5px !important;
+  max-width: 330px !important;
+}
+
+.shell .creator-model-bar-meta > span,
+.shell .creator-model-bar-meta > strong {
+  min-height: 26px !important;
+  padding: 4px 8px !important;
+  border: 1px solid var(--line-soft) !important;
+  border-radius: var(--radius-control) !important;
+  color: var(--text-subtle) !important;
+  background: var(--surface-soft) !important;
+  font-size: 11px !important;
+  font-weight: 650 !important;
+  line-height: 16px !important;
+}
+
+.shell .creator-model-bar-meta > strong,
+.shell .creator-model-bar-meta .creator-model-public-badge {
+  color: var(--model-accent) !important;
+  border-color: color-mix(in srgb, var(--model-accent) 24%, var(--line-soft)) !important;
+  background: color-mix(in srgb, var(--model-accent) 8%, var(--surface-soft)) !important;
+}
+
+.shell .conversation-timeline {
+  width: min(1080px, 100%) !important;
+  margin-inline: auto !important;
+  padding: 4px 0 22px !important;
+}
+
+.shell .studio-panel[data-view="text"] .conversation-timeline {
+  max-width: 860px !important;
+}
+
+.shell .message-card {
+  gap: 9px !important;
+  margin-bottom: 14px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.shell .message-avatar {
+  width: 32px !important;
+  height: 32px !important;
+  border-radius: var(--radius-control) !important;
+  box-shadow: none !important;
+}
+
+.shell .message-avatar-ai {
+  color: #ffffff !important;
+  background: var(--model-accent) !important;
+}
+
+.shell .message-bubble {
+  min-width: 0 !important;
+  padding: 11px 13px !important;
+  border: 1px solid var(--line-soft) !important;
+  border-radius: var(--radius-panel) !important;
+  color: var(--text-main) !important;
+  background: var(--surface-panel) !important;
+  box-shadow: none !important;
+}
+
+.shell .message-user .message-bubble {
+  border-color: color-mix(in srgb, var(--model-accent) 22%, var(--line-soft)) !important;
+  background: color-mix(in srgb, var(--model-accent) 5%, var(--surface-panel)) !important;
+}
+
+.shell .message-meta,
+.shell .message-meta span,
+.shell .message-content,
+.shell .markdown-preview {
+  color: var(--text-main) !important;
+}
+
+.shell .message-meta span {
+  color: var(--text-faint) !important;
+}
+
+.shell .message-assets {
+  gap: 8px !important;
+  margin-top: 9px !important;
+}
+
+.shell .message-asset-card {
+  border: 1px solid var(--line-soft) !important;
+  border-radius: var(--radius-panel) !important;
+  background: var(--surface-soft) !important;
+  box-shadow: none !important;
+}
+
+.shell .empty-canvas-workbench {
+  min-height: 260px !important;
+  padding: 34px 16px 18px !important;
+}
+
+.shell .empty-canvas-workbench .empty-canvas-card {
+  display: grid !important;
+  width: min(680px, 100%) !important;
+  min-height: 0 !important;
+  gap: 14px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  text-align: center !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.shell .empty-canvas-workbench .empty-canvas-card::before {
+  display: none !important;
+}
+
+.shell .empty-canvas-copy h3 {
+  margin: 0 0 5px !important;
+  color: var(--text-main) !important;
+  font-size: 20px !important;
+  line-height: 1.3 !important;
+  letter-spacing: 0 !important;
+}
+
+.shell .empty-canvas-copy p {
+  margin: 0 !important;
+  color: var(--text-subtle) !important;
+}
+
+.shell .empty-canvas-actions {
+  justify-content: center !important;
+}
+
+.shell .empty-canvas-primary-action,
+.shell .studio-panel .composer-submit-button {
+  min-height: 40px !important;
+  border: 1px solid var(--model-accent) !important;
+  border-radius: var(--radius-control) !important;
+  color: #ffffff !important;
+  background: var(--model-accent) !important;
+  box-shadow: none !important;
+}
+
+.shell .composer-card,
+.shell .composer-card-expanded,
+.shell .composer-card-collapsed {
+  position: relative !important;
+  width: min(1120px, calc(100% - 40px)) !important;
+  max-width: none !important;
+  margin: 0 auto 14px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.shell .composer-handle-row {
+  min-height: 26px !important;
+  margin: 0 !important;
+}
+
+.shell .composer-collapse-toggle {
+  min-height: 26px !important;
+  padding: 0 9px !important;
+  border: 1px solid var(--line-soft) !important;
+  border-radius: var(--radius-control) !important;
+  color: var(--text-subtle) !important;
+  background: var(--surface-panel) !important;
+  box-shadow: none !important;
+}
+
+.shell .composer-compact-bar,
+.shell .composer-topline,
+.shell .composer-template-library,
+.shell .composer-surface {
+  border-color: var(--line-soft) !important;
+  color: var(--text-main) !important;
+  background: var(--surface-panel) !important;
+  box-shadow: none !important;
+}
+
+.shell .composer-compact-bar {
+  min-height: 52px !important;
+  border: 1px solid var(--line-soft) !important;
+  border-left: 3px solid var(--model-accent) !important;
+  border-radius: var(--radius-panel) !important;
+}
+
+.shell .composer-topline {
+  min-height: 42px !important;
+  padding: 7px 10px !important;
+  border: 1px solid var(--line-soft) !important;
+  border-bottom: 0 !important;
+  border-radius: var(--radius-panel) var(--radius-panel) 0 0 !important;
+}
+
+.shell .composer-topline .gameplay-btn {
+  color: var(--model-accent) !important;
+  border: 1px solid color-mix(in srgb, var(--model-accent) 22%, var(--line-soft)) !important;
+  border-radius: var(--radius-control) !important;
+  background: color-mix(in srgb, var(--model-accent) 8%, var(--surface-soft)) !important;
+  box-shadow: none !important;
+}
+
+.shell .composer-status-stack > span:last-child,
+.shell .credit-balance span,
+.shell .credit-balance small {
+  color: var(--text-subtle) !important;
+}
+
+.shell .credit-balance strong {
+  color: var(--text-main) !important;
+}
+
+.shell .composer-template-library {
+  padding: 9px 10px !important;
+  border: 1px solid var(--line-soft) !important;
+  border-bottom: 0 !important;
+  border-radius: 0 !important;
+}
+
+.shell .composer-template-heading {
+  display: flex !important;
+  align-items: flex-end !important;
+  justify-content: space-between !important;
+  gap: 12px !important;
+  margin-bottom: 7px !important;
+}
+
+.shell .composer-template-heading strong,
+.shell .composer-template-heading small,
+.shell .composer-template-heading span {
+  color: var(--text-subtle) !important;
+  font-size: 11px !important;
+}
+
+.shell .composer-template-grid {
+  display: flex !important;
+  gap: 6px !important;
+  overflow-x: auto !important;
+  padding: 0 0 2px !important;
+  scrollbar-width: thin !important;
+}
+
+.shell .composer-template-card {
+  flex: 0 0 168px !important;
+  min-height: 48px !important;
+  padding: 7px 9px !important;
+  border: 1px solid var(--line-soft) !important;
+  border-radius: var(--radius-control) !important;
+  color: var(--text-main) !important;
+  background: var(--surface-soft) !important;
+  box-shadow: none !important;
+}
+
+.shell .composer-template-card::before,
+.shell .composer-template-summary,
+.shell .composer-template-example {
+  display: none !important;
+}
+
+.shell .composer-template-card-top strong {
+  color: var(--text-main) !important;
+}
+
+.shell .composer-template-card-top small {
+  color: var(--model-accent) !important;
+}
+
+.shell .composer-surface {
+  position: relative !important;
+  isolation: auto !important;
+  overflow: visible !important;
+  padding: 12px !important;
+  border: 1px solid var(--line-soft) !important;
+  border-radius: 0 0 var(--radius-panel) var(--radius-panel) !important;
+  background: var(--surface-panel) !important;
+  backdrop-filter: none !important;
+}
+
+.shell .composer-surface::before {
+  display: none !important;
+}
+
+.shell .composer-surface:focus-within {
+  border-color: var(--model-accent) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--model-accent) 14%, transparent) !important;
+}
+
+.shell .prompt-input-wrap {
+  min-width: 0 !important;
+  border: 1px solid var(--line-soft) !important;
+  border-radius: var(--radius-panel) !important;
+  background: var(--surface-soft) !important;
+}
+
+.shell .composer-input {
+  min-height: 96px !important;
+  color: var(--text-main) !important;
+  background: transparent !important;
+}
+
+.shell .prompt-ai-button {
+  min-width: 38px !important;
+  min-height: 34px !important;
+  margin: 7px !important;
+  border: 1px solid color-mix(in srgb, var(--model-accent) 22%, var(--line-soft)) !important;
+  border-radius: var(--radius-control) !important;
+  color: var(--model-accent) !important;
+  background: color-mix(in srgb, var(--model-accent) 8%, var(--surface-panel)) !important;
+  box-shadow: none !important;
+}
+
+.shell .composer-footer-bar {
+  gap: 10px !important;
+  margin-top: 10px !important;
+  padding-top: 10px !important;
+  border-top: 1px solid var(--line-soft) !important;
+}
+
+.shell .composer-quick-fields,
+.shell .composer-control-cluster {
+  min-width: 0 !important;
+  gap: 6px !important;
+}
+
+.shell .composer-quick-fields label,
+.shell .composer-keyword-compact,
+.shell .composer-pill,
+.shell .composer-query-button {
+  min-height: 36px !important;
+  border: 1px solid var(--line-soft) !important;
+  border-radius: var(--radius-control) !important;
+  color: var(--text-main) !important;
+  background: var(--surface-soft) !important;
+  box-shadow: none !important;
+}
+
+.shell .composer-quick-fields input,
+.shell .composer-quick-fields select {
+  color: var(--text-main) !important;
+  background: transparent !important;
+}
+
+.shell .composer-pill-active,
+.shell .composer-pill:hover {
+  color: var(--model-accent) !important;
+  border-color: color-mix(in srgb, var(--model-accent) 30%, var(--line-soft)) !important;
+  background: color-mix(in srgb, var(--model-accent) 7%, var(--surface-soft)) !important;
+}
+
+.shell .studio-panel[data-view="images"] .composer-attach-row {
+  grid-template-columns: minmax(180px, 0.7fr) minmax(0, 1.3fr) !important;
+}
+
+.shell .studio-panel[data-view="videos"] .composer-video-attach-row {
+  grid-template-columns: minmax(180px, 0.7fr) minmax(0, 1.3fr) !important;
+}
+
+.shell .studio-panel .composer-attach-button {
+  min-height: 96px !important;
+  padding: 12px !important;
+  border: 1px dashed color-mix(in srgb, var(--model-accent) 42%, var(--line-soft)) !important;
+  border-radius: var(--radius-panel) !important;
+  color: var(--model-accent) !important;
+  background: color-mix(in srgb, var(--model-accent) 5%, var(--surface-soft)) !important;
+  box-shadow: none !important;
+}
+
+.shell .studio-panel .composer-attach-button:hover:not(:disabled) {
+  border-color: var(--model-accent) !important;
+  background: color-mix(in srgb, var(--model-accent) 9%, var(--surface-soft)) !important;
+  transform: none !important;
+}
+
+.shell .composer-frame-actions {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 6px !important;
+}
+
+.shell .reference-strip {
+  gap: 7px !important;
+  margin-top: 9px !important;
+  padding: 8px !important;
+  border: 1px solid var(--line-soft) !important;
+  border-radius: var(--radius-panel) !important;
+  background: var(--surface-soft) !important;
+}
+
+.shell .reference-thumb {
+  width: 92px !important;
+  aspect-ratio: 4 / 3;
+  overflow: hidden !important;
+  border: 1px solid var(--line-soft) !important;
+  border-radius: var(--radius-control) !important;
+  background: var(--surface-panel) !important;
+}
+
+.shell .reference-thumb img {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+}
+
+.shell .composer-popover {
+  z-index: 420 !important;
+  border: 1px solid var(--line-strong) !important;
+  border-radius: var(--radius-panel) !important;
+  color: var(--text-main) !important;
+  background: var(--surface-float) !important;
+  box-shadow: var(--shadow-float) !important;
+}
+
+.shell .composer-popover strong,
+.shell .composer-popover span,
+.shell .composer-popover label {
+  color: var(--text-main) !important;
+}
+
+.shell .segmented-option {
+  min-height: 34px !important;
+  border: 1px solid var(--line-soft) !important;
+  border-radius: var(--radius-control) !important;
+  color: var(--text-subtle) !important;
+  background: var(--surface-soft) !important;
+  box-shadow: none !important;
+}
+
+.shell .segmented-option-active {
+  color: #ffffff !important;
+  border-color: var(--model-accent) !important;
+  background: var(--model-accent) !important;
+}
+
+.shell .composer-input,
+.shell .settings-model-main,
+.shell .settings-model-hint,
+.shell .message-content,
+.shell .markdown-preview {
+  overflow-wrap: anywhere;
+}
+
+.shell .sidebar-model-item {
+  --model-accent: var(--capability-image);
+  border: 1px solid var(--line-soft) !important;
+  border-left: 3px solid color-mix(in srgb, var(--model-accent) 46%, var(--line-soft)) !important;
+  border-radius: var(--radius-panel) !important;
+  color: var(--text-main) !important;
+  background: var(--surface-panel) !important;
+  box-shadow: none !important;
+}
+
+.shell .sidebar-model-item .model-avatar {
+  color: var(--model-accent) !important;
+  background: color-mix(in srgb, var(--model-accent) 9%, var(--surface-soft)) !important;
+}
+
+.shell .sidebar-model-active {
+  border-left-color: var(--model-accent) !important;
+  background: color-mix(in srgb, var(--model-accent) 7%, var(--surface-panel)) !important;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--model-accent) 12%, transparent) !important;
+}
+
+.shell .sidebar-model-public {
+  border-left-color: var(--model-accent) !important;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--model-accent) 8%, transparent), transparent 72%),
+    var(--surface-panel) !important;
+}
+
+.shell .public-model-card-kicker,
+.shell .sidebar-public-tag,
+.shell .public-model-card-price {
+  color: var(--model-accent) !important;
+}
+
+@media (max-width: 1024px) {
+  .shell .creator-model-bar,
+  .shell .conversation-timeline {
+    width: min(100%, 920px) !important;
+  }
+
+  .shell .composer-card,
+  .shell .composer-card-expanded,
+  .shell .composer-card-collapsed {
+    width: calc(100% - 24px) !important;
+  }
+
+  .shell .composer-footer-bar {
+    grid-template-columns: minmax(0, 1fr) auto !important;
+  }
+}
+
+@media (max-width: 720px) {
+  .shell .studio-canvas {
+    padding: 9px 8px !important;
+  }
+
+  .shell .creator-model-bar {
+    grid-template-columns: 36px minmax(0, 1fr) !important;
+    gap: 8px !important;
+    min-height: 58px !important;
+    margin-bottom: 9px !important;
+    padding: 8px !important;
+  }
+
+  .shell .creator-model-bar .model-avatar {
+    width: 34px !important;
+    height: 34px !important;
+  }
+
+  .shell .creator-model-bar-meta {
+    grid-column: 1 / -1 !important;
+    max-width: none !important;
+    justify-content: flex-start !important;
+  }
+
+  .shell .creator-model-bar-meta > span:not(.creator-model-public-badge) {
+    display: none !important;
+  }
+
+  .shell .empty-canvas-workbench {
+    min-height: 180px !important;
+    padding: 22px 8px 12px !important;
+  }
+
+  .shell .empty-canvas-copy h3 {
+    font-size: 18px !important;
+  }
+
+  .shell .composer-card,
+  .shell .composer-card-expanded,
+  .shell .composer-card-collapsed {
+    width: calc(100% - 12px) !important;
+    margin-bottom: 6px !important;
+  }
+
+  .shell .composer-topline {
+    flex-wrap: wrap !important;
+  }
+
+  .shell .credit-balance {
+    margin-left: auto !important;
+  }
+
+  .shell .composer-template-heading > small {
+    display: none !important;
+  }
+
+  .shell .composer-template-card {
+    flex-basis: 142px !important;
+  }
+
+  .shell .studio-panel[data-view="images"] .composer-attach-row,
+  .shell .studio-panel[data-view="videos"] .composer-video-attach-row,
+  .shell .composer-footer-bar,
+  .shell .composer-frame-actions {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .shell .studio-panel .composer-attach-button {
+    min-height: 54px !important;
+  }
+
+  .shell .composer-quick-fields,
+  .shell .composer-control-cluster,
+  .shell .composer-action-group {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .shell .composer-action-group {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .shell .composer-popover {
+    position: fixed !important;
+    inset: auto 8px calc(env(safe-area-inset-bottom, 0px) + 8px) 8px !important;
+    z-index: 460 !important;
+    width: auto !important;
+    max-width: none !important;
+    max-height: min(64vh, 520px) !important;
+    overflow: auto !important;
+  }
+
+  .shell .message-card {
+    grid-template-columns: 28px minmax(0, 1fr) !important;
+  }
+
+  .shell .message-avatar {
+    width: 28px !important;
+    height: 28px !important;
+  }
+
+  .shell .message-bubble {
+    padding: 9px 10px !important;
+  }
+}

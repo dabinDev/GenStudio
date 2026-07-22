@@ -127,6 +127,11 @@ import {
 } from "./utils";
 import { creditGrantNoticeDelivery, creditGrantNoticeMessage, nextCreditGrantNotice } from "./creditNotices";
 import {
+  modelActionMenuPlacement,
+  toggledModelActionMenuId,
+  type ModelActionMenuPlacement,
+} from "./modelActionMenu";
+import {
   applyFetchedModelsToDraft,
   canFetchModelListForDraft,
   canSaveModelDraft,
@@ -402,6 +407,11 @@ const modelSelectState = reactive({
   openId: "",
   query: "",
   placement: "down" as "down" | "up",
+});
+
+const modelActionMenuState = reactive({
+  openId: "",
+  placement: "down" as ModelActionMenuPlacement,
 });
 
 const IMAGE_RATIO_OPTIONS = ["1:1", "16:9", "9:16", "4:3", "3:4"];
@@ -746,6 +756,10 @@ function submitActiveComposer(capability: Capability) {
 }
 
 function handleComposerShortcutKey(event: KeyboardEvent) {
+  if (event.key === "Escape" && modelActionMenuState.openId) {
+    closeModelActionMenu();
+    return;
+  }
   const action = composerShortcutFromKeyboardEvent(event);
   const capability = activeCapability.value;
   if (!action || !capability || !canUseComposerShortcut()) return;
@@ -914,6 +928,11 @@ watch(
 );
 
 watch(
+  () => [settingsState.activeCapability, settingsState.searchQuery],
+  () => closeModelActionMenu(),
+);
+
+watch(
   () =>
     currentMessages.value
       .filter((message) => message.status === "processing")
@@ -1028,6 +1047,7 @@ function openAdminConsole() {
 function navigate(nextView: ViewName) {
   closeComposerPopover();
   closeModelSelect();
+  closeModelActionMenu();
   if (!requireLoginForView(nextView)) return;
   window.location.hash = `/${nextView}`;
   setView(nextView);
@@ -1296,6 +1316,19 @@ function closeModelSelect() {
   modelSelectState.openId = "";
   modelSelectState.query = "";
   modelSelectState.placement = "down";
+}
+
+function closeModelActionMenu() {
+  modelActionMenuState.openId = "";
+  modelActionMenuState.placement = "down";
+}
+
+function toggleModelActionMenu(modelId: string, event: MouseEvent) {
+  const nextId = toggledModelActionMenuId(modelActionMenuState.openId, modelId);
+  modelActionMenuState.openId = nextId;
+  if (!nextId) return;
+  const trigger = event.currentTarget as HTMLElement;
+  modelActionMenuState.placement = modelActionMenuPlacement(trigger.getBoundingClientRect(), window.innerHeight);
 }
 
 function filteredModelSelectOptions(options: string[], selectedModel = ""): string[] {
@@ -3523,6 +3556,7 @@ async function setPrimaryModel(modelId: string, model: ModelDefinition, setting:
 
 function openCreateDialog() {
   closeModelSelect();
+  closeModelActionMenu();
   settingsState.dialogMode = "create";
   settingsState.draft = createEmptyDraft();
   syncDraftAutoName();
@@ -3535,6 +3569,7 @@ function openEditDialog(model: ModelDefinition) {
     return;
   }
   closeModelSelect();
+  closeModelActionMenu();
   settingsState.dialogMode = "edit";
   settingsState.draft = createDraftFromModel(model);
   settingsState.dialogOpen = true;
@@ -3542,6 +3577,7 @@ function openEditDialog(model: ModelDefinition) {
 
 function closeSettingsDialog() {
   closeModelSelect();
+  closeModelActionMenu();
   settingsState.dialogOpen = false;
 }
 
@@ -4934,6 +4970,7 @@ async function removeUnavailableModels() {
                 `settings-model-row-${model.capability}`,
                 model.isPublic ? 'settings-model-row-public' : '',
                 isModelSelectOpen(modelSelectKey('row', model.id)) ? 'settings-model-row-select-open' : '',
+                modelActionMenuState.openId === model.id ? 'settings-model-row-action-open' : '',
               ]"
               :data-model-id="model.id"
             >
@@ -5024,13 +5061,34 @@ async function removeUnavailableModels() {
                   <button class="button-secondary settings-action-button" :disabled="!canEditModel(model)" @click="fetchModelList(model, getSetting(model.id))">获取模型</button>
                   <button class="button-secondary settings-action-button" @click="testModel(model, getSetting(model.id))">测试</button>
                 </div>
-                <details class="settings-row-actions-more">
-                  <summary class="button-secondary settings-action-button">操作</summary>
-                  <div class="settings-row-action-menu">
+                <div
+                  :class="[
+                    'settings-row-actions-more',
+                    modelActionMenuState.placement === 'up' ? 'settings-row-actions-more-up' : '',
+                  ]"
+                  @keydown.escape.stop="closeModelActionMenu"
+                >
+                  <button
+                    type="button"
+                    class="button-secondary settings-action-button"
+                    :aria-expanded="modelActionMenuState.openId === model.id"
+                    @click.stop="(event) => toggleModelActionMenu(model.id, event)"
+                  >
+                    操作
+                  </button>
+                  <button
+                    v-if="modelActionMenuState.openId === model.id"
+                    type="button"
+                    class="settings-row-action-scrim"
+                    tabindex="-1"
+                    aria-label="关闭模型操作"
+                    @click="closeModelActionMenu"
+                  ></button>
+                  <div v-if="modelActionMenuState.openId === model.id" class="settings-row-action-menu" @click.stop>
                     <button class="button-secondary settings-action-button" :disabled="!canEditModel(model)" @click="openEditDialog(model)">编辑</button>
-                    <button class="button-danger settings-action-button" :disabled="!canEditModel(model)" @click="removeModelFromWorkbench(model.id)">删除</button>
+                    <button class="button-danger settings-action-button" :disabled="!canEditModel(model)" @click="removeModelFromWorkbench(model.id); closeModelActionMenu()">删除</button>
                   </div>
-                </details>
+                </div>
               </div>
               <div v-if="settingsState.modelListState[model.id]?.error" class="settings-row-detail inline-message inline-danger">{{ settingsState.modelListState[model.id].error }}</div>
               <div v-if="settingsState.testState[model.id]?.error" class="settings-row-detail inline-message inline-danger">{{ settingsState.testState[model.id].error }}</div>

@@ -684,4 +684,14 @@ describe("workbench style application", () => {
     expect(source).toContain("primaryNavSection === 'models'");
     expect(source).toContain("primaryNavSection === 'account'");
   });
+
+  it("uses explicit model action menu state instead of an untracked details popup", () => {
+    const source = appVue();
+
+    expect(source).toContain("modelActionMenuState.openId");
+    expect(source).toContain("settings-model-row-action-open");
+    expect(source).toContain("toggleModelActionMenu(model.id, event)");
+    expect(source).toContain('aria-label="关闭模型操作"');
+    expect(source).not.toContain('<details class="settings-row-actions-more">');
+  });
 });

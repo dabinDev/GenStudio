@@ -807,6 +807,7 @@ describe("workbench style application", () => {
     expect(source).toContain("profile-account-details");
     expect(source).toContain("profile-account-security");
     expect(source).toContain("profile-account-danger");
+    expect(source).toContain("正式环境由官网生成短期 code 跳转登录，回调地址为 /auth/callback?code=xxx。");
     expect(source).not.toContain('class="settings-row-actions profile-editor-actions"');
     expect(styles).toContain("Profile account center v1");
     expect(styles).toContain("grid-template-columns: minmax(0, 1.45fr) minmax(300px, 0.75fr) !important");
@@ -817,5 +818,10 @@ describe("workbench style application", () => {
     const regionSelectorIndex = styles.indexOf(".shell .profile-account-header,", markerIndex);
     const regionRule = styles.slice(regionSelectorIndex, styles.indexOf(".shell .profile-account-header {", regionSelectorIndex));
     expect(regionRule).toContain("flex: 0 0 auto !important");
+
+    const compactIndex = styles.indexOf("@media (max-width: 860px)", markerIndex);
+    const compactStyles = styles.slice(compactIndex, styles.indexOf("@media screen and (max-width: 720px)", compactIndex));
+    expect(compactStyles).toContain(".shell .profile-account-metrics");
+    expect(compactStyles).toContain("grid-template-columns: repeat(2, minmax(0, 1fr)) !important");
   });
 });

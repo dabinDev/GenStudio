@@ -149,14 +149,17 @@ Complete the section with restrained borders, neutral surfaces, 8px radii, clear
 
 ```css
 @media (max-width: 860px) {
-  .shell .profile-account-workspace,
-  .shell .profile-account-metrics {
+  .shell .profile-account-workspace {
     grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .shell .profile-account-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
   }
 }
 ```
 
-At `720px`, stack header content and form fields, make commands full-width where needed, and prevent horizontal overflow.
+At `720px`, stack header content and form fields, keep the compact 2-by-2 metric grid, make commands full-width where needed, and prevent horizontal overflow.
 
 - [ ] **Step 3: Run the focused test and verify GREEN**
 

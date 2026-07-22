@@ -4896,7 +4896,7 @@ async function removeUnavailableModels() {
           <div class="profile-account-callback-copy">
             <p class="eyebrow">开发工具</p>
             <h3>官网授权回跳</h3>
-            <span>使用短期 code 模拟多个用户的授权登录。</span>
+            <span>使用短期 code 模拟多个用户的授权登录；回调地址为 /auth/callback?code=xxx。</span>
           </div>
           <div class="auth-code-form">
             <label class="field">
@@ -4916,7 +4916,7 @@ async function removeUnavailableModels() {
           <div class="profile-account-callback-copy">
             <p class="eyebrow">授权状态</p>
             <h3>官网授权回调</h3>
-            <span>正式环境由官网生成短期 code 跳转登录，创作数据继续按账号隔离。</span>
+            <span>正式环境由官网生成短期 code 跳转登录，回调地址为 /auth/callback?code=xxx。</span>
           </div>
           <div class="profile-account-callback-actions">
             <button class="button-secondary" @click="refreshConversations">刷新历史记录</button>

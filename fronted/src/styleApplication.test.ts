@@ -568,6 +568,7 @@ describe("workbench style application", () => {
     const styles = redesignCss();
 
     expect(source).toContain("empty-canvas-workbench");
+    expect(source).toContain('v-else-if="!activeModel" class="empty-canvas empty-canvas-workbench"');
     expect(source).toContain("empty-canvas-copy");
     expect(source).toContain("creator-model-bar");
     expect(source).not.toContain("empty-canvas-model-strip");
@@ -711,6 +712,13 @@ describe("workbench style application", () => {
     expect(styles).toContain(".settings-row-actions-more-up .settings-row-action-menu");
   });
 
+  it("keeps the model action scrim transparent when the global button hover rule applies", () => {
+    const styles = redesignCss();
+
+    expect(styles).toContain(".settings-row-action-scrim:hover:not(:disabled)");
+    expect(styles).toContain("background: transparent !important");
+  });
+
   it("uses one model-aware frame for all creator capabilities", () => {
     const source = appVue();
     const styles = redesignCss();
@@ -729,5 +737,63 @@ describe("workbench style application", () => {
     expect(styles).toContain("@media (max-width: 720px)");
     expect(styles).toContain("overflow-wrap: anywhere");
     expect(styles).toContain("grid-template-columns: minmax(0, 1fr)");
+  });
+
+  it("keeps the mobile model identity, empty state, and composer in one scroll flow", () => {
+    const styles = redesignCss();
+    const mobileIndex = styles.lastIndexOf("@media (max-width: 720px)");
+
+    expect(mobileIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf(".shell .studio-panel {", mobileIndex)).toBeGreaterThan(mobileIndex);
+    expect(styles.indexOf("display: block !important", mobileIndex)).toBeGreaterThan(mobileIndex);
+    expect(styles.indexOf("overflow: visible !important", mobileIndex)).toBeGreaterThan(mobileIndex);
+    const emptyStateIndex = styles.indexOf(".shell .empty-canvas-workbench {", mobileIndex);
+    expect(emptyStateIndex).toBeGreaterThan(mobileIndex);
+    expect(styles.slice(emptyStateIndex, emptyStateIndex + 180)).toContain("min-height: 180px !important");
+    expect(styles.slice(emptyStateIndex, emptyStateIndex + 180)).not.toContain("display: none !important");
+    const composerIndex = styles.indexOf(".shell .studio-panel .composer-card {", mobileIndex);
+    expect(composerIndex).toBeGreaterThan(mobileIndex);
+    expect(styles.slice(composerIndex, composerIndex + 180)).toContain("position: relative !important");
+  });
+
+  it("keeps tablet topbar commands on one line", () => {
+    const styles = redesignCss();
+    const tabletIndex = styles.indexOf("@media (max-width: 1100px)");
+
+    expect(tabletIndex).toBeGreaterThan(-1);
+    expect(styles.indexOf("white-space: nowrap !important", tabletIndex)).toBeGreaterThan(tabletIndex);
+    expect(styles.indexOf(".shell .topbar-icon-button span", tabletIndex)).toBeGreaterThan(tabletIndex);
+    const tabletStyles = styles.slice(tabletIndex, styles.indexOf("@media (max-width: 1024px)", tabletIndex));
+    expect(tabletStyles).not.toContain(".shell .empty-canvas-workbench");
+  });
+
+  it("keeps mobile settings action sheets fixed to the viewport", () => {
+    const styles = redesignCss();
+    const settingsPanelIndex = styles.indexOf(".shell .settings-list-panel,");
+
+    expect(settingsPanelIndex).toBeGreaterThan(-1);
+    const containingBlockReset = styles.slice(settingsPanelIndex, settingsPanelIndex + 420);
+    expect(containingBlockReset).toContain(".shell .settings-model-board");
+    expect(containingBlockReset).toContain("transform: none !important");
+    expect(containingBlockReset).toContain("filter: none !important");
+    expect(containingBlockReset).toContain("backdrop-filter: none !important");
+    expect(containingBlockReset).toContain("-webkit-backdrop-filter: none !important");
+    expect(containingBlockReset).toContain("contain: none !important");
+    expect(containingBlockReset).toContain("perspective: none !important");
+  });
+
+  it("forces every mobile settings model row into one explicit column", () => {
+    const styles = redesignCss();
+    const mobileIndex = styles.lastIndexOf("@media (max-width: 720px)");
+
+    expect(mobileIndex).toBeGreaterThan(-1);
+    const mobileStyles = styles.slice(mobileIndex);
+    expect(mobileStyles).toContain('.shell[data-theme="light"] .settings-page .settings-model-row');
+    expect(mobileStyles).toContain('.shell[data-theme="dark"] .settings-page .settings-model-row');
+    expect(mobileStyles).toContain("grid-template-columns: minmax(0, 1fr) !important");
+    expect(mobileStyles).toContain(".settings-model-row > :not(.settings-check-cell)");
+    expect(mobileStyles).toContain("grid-column: 1 / -1 !important");
+    expect(mobileStyles).toContain(".settings-model-row > .settings-check-cell");
+    expect(mobileStyles).toContain("width: auto !important");
   });
 });

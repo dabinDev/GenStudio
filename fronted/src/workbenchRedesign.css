@@ -173,6 +173,17 @@
   box-shadow: none !important;
 }
 
+/* Fixed action sheets must stay anchored to the viewport, not a filtered list ancestor. */
+.shell .settings-list-panel,
+.shell .settings-model-board {
+  transform: none !important;
+  filter: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  contain: none !important;
+  perspective: none !important;
+}
+
 .shell .settings-board-head,
 .shell .settings-model-row {
   grid-template-columns: 28px minmax(260px, 1.35fr) minmax(210px, 0.95fr) minmax(94px, 0.42fr) minmax(238px, 0.78fr) !important;
@@ -322,6 +333,13 @@
   background: transparent !important;
   box-shadow: none !important;
   cursor: default !important;
+  transform: none !important;
+}
+
+.shell .settings-row-action-scrim:hover:not(:disabled) {
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
   transform: none !important;
 }
 
@@ -495,6 +513,10 @@
   .shell .settings-model-row-action-open .settings-row-action-scrim {
     background: rgba(9, 14, 18, 0.24) !important;
     backdrop-filter: blur(2px) !important;
+  }
+
+  .shell .settings-model-row-action-open .settings-row-action-scrim:hover:not(:disabled) {
+    background: rgba(9, 14, 18, 0.24) !important;
   }
 
   .shell .settings-model-row-action-open .settings-row-action-menu {
@@ -1113,6 +1135,37 @@
   color: var(--model-accent) !important;
 }
 
+@media (max-width: 1100px) {
+  .shell .workspace-topbar button,
+  .shell .workspace-topbar .topbar-conversation-title {
+    white-space: nowrap !important;
+  }
+
+  .shell .workspace-topbar-actions {
+    gap: 6px !important;
+  }
+
+  .shell .topbar-model-label,
+  .shell .topbar-icon-button span,
+  .shell .theme-toggle-button > span:last-child {
+    display: none !important;
+  }
+
+  .shell .topbar-icon-button {
+    flex: 0 0 38px !important;
+    width: 38px !important;
+    min-width: 38px !important;
+    padding: 0 !important;
+  }
+
+  .shell .theme-toggle-button {
+    flex: 0 0 54px !important;
+    min-width: 54px !important;
+    padding-inline: 7px !important;
+  }
+
+}
+
 @media (max-width: 1024px) {
   .shell .creator-model-bar,
   .shell .conversation-timeline {
@@ -1131,7 +1184,15 @@
 }
 
 @media (max-width: 720px) {
+  .shell .studio-panel {
+    display: block !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+  }
+
   .shell .studio-canvas {
+    min-height: auto !important;
+    overflow: visible !important;
     padding: 9px 8px !important;
   }
 
@@ -1172,6 +1233,13 @@
   .shell .composer-card-collapsed {
     width: calc(100% - 12px) !important;
     margin-bottom: 6px !important;
+  }
+
+  .shell .studio-panel .composer-card {
+    position: relative !important;
+    top: auto !important;
+    bottom: auto !important;
+    z-index: 2 !important;
   }
 
   .shell .composer-topline {
@@ -1234,5 +1302,24 @@
 
   .shell .message-bubble {
     padding: 9px 10px !important;
+  }
+
+  .shell[data-theme="light"] .settings-page .settings-model-row,
+  .shell[data-theme="dark"] .settings-page .settings-model-row {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .shell[data-theme="light"] .settings-page .settings-model-row > :not(.settings-check-cell),
+  .shell[data-theme="dark"] .settings-page .settings-model-row > :not(.settings-check-cell) {
+    grid-column: 1 / -1 !important;
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .shell[data-theme="light"] .settings-page .settings-model-row > .settings-check-cell,
+  .shell[data-theme="dark"] .settings-page .settings-model-row > .settings-check-cell {
+    grid-column: auto !important;
+    width: auto !important;
+    min-width: 0 !important;
   }
 }

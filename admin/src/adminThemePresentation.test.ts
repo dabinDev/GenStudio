@@ -13,7 +13,7 @@ const modelCenterVue = () => readFileSync(resolve(process.cwd(), 'src/views/Mode
 const auditLogsVue = () => readFileSync(resolve(process.cwd(), 'src/views/AuditLogsView.vue'), 'utf8');
 const viteConfig = () => readFileSync(resolve(process.cwd(), 'vite.config.ts'), 'utf8');
 const mainTs = () => readFileSync(resolve(process.cwd(), 'src/main.ts'), 'utf8');
-const stylesCss = () => readFileSync(resolve(process.cwd(), 'src/styles/global.css'), 'utf8');
+const stylesCss = () => readFileSync(resolve(process.cwd(), 'src/styles/global.css'), 'utf8').replace(/\r\n/g, '\n');
 const packageJson = () => readFileSync(resolve(process.cwd(), 'package.json'), 'utf8');
 
 const mojibakeFragments = [

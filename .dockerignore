@@ -5,6 +5,8 @@
 node_modules
 fronted/node_modules
 fronted/dist
+admin/node_modules
+admin/dist
 server/.venv
 server/.pytest_cache
 server/uvicorn.*.log

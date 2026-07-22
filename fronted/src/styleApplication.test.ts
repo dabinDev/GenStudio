@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 const readSource = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8").replace(/\r\n/g, "\n");
 const appVue = () => readSource("src/App.vue");
 const stylesCss = () => readSource("src/styles.css");
+const redesignCss = () => readSource("src/workbenchRedesign.css");
+const mainTs = () => readSource("src/main.ts");
 const catalogTs = () => readSource("src/catalog.ts");
 
 describe("workbench style application", () => {
@@ -693,5 +695,20 @@ describe("workbench style application", () => {
     expect(source).toContain("toggleModelActionMenu(model.id, event)");
     expect(source).toContain('aria-label="关闭模型操作"');
     expect(source).not.toContain('<details class="settings-row-actions-more">');
+  });
+
+  it("loads one final redesign layer after the legacy stylesheet", () => {
+    const source = mainTs();
+
+    expect(source.indexOf('./styles.css')).toBeLessThan(source.indexOf('./workbenchRedesign.css'));
+  });
+
+  it("gives open settings action rows and menus an explicit layer", () => {
+    const styles = redesignCss();
+
+    expect(styles).toContain(".settings-model-row-action-open");
+    expect(styles).toContain("z-index: 320 !important");
+    expect(styles).toContain(".settings-row-action-scrim");
+    expect(styles).toContain(".settings-row-actions-more-up .settings-row-action-menu");
   });
 });

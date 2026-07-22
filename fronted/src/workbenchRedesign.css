@@ -1,0 +1,540 @@
+/* GenStudio creator and settings visual ownership layer. */
+.shell {
+  --surface-page: #f3f6f8;
+  --surface-panel: #ffffff;
+  --surface-soft: #f7f9fa;
+  --surface-muted: #edf1f4;
+  --surface-float: #ffffff;
+  --text-main: #17212b;
+  --text-subtle: #5d6b78;
+  --text-faint: #7a8792;
+  --line-soft: #dce3e8;
+  --line-strong: #b8c5ce;
+  --capability-text: #16835a;
+  --capability-image: #d85c63;
+  --capability-video: #3676d8;
+  --status-success: #14734f;
+  --status-warning: #9a6417;
+  --status-danger: #bd3e50;
+  --radius-control: 6px;
+  --radius-panel: 8px;
+  --shadow-float: 0 18px 48px rgba(28, 43, 55, 0.18);
+}
+
+.shell[data-theme="dark"] {
+  --surface-page: #101418;
+  --surface-panel: #171c21;
+  --surface-soft: #1d2329;
+  --surface-muted: #242b32;
+  --surface-float: #20262c;
+  --text-main: #edf1f4;
+  --text-subtle: #a8b2bb;
+  --text-faint: #89959f;
+  --line-soft: #303941;
+  --line-strong: #4a5863;
+  --status-success: #55bf8b;
+  --status-warning: #d7a54f;
+  --status-danger: #ef7785;
+  --shadow-float: 0 20px 56px rgba(0, 0, 0, 0.4);
+}
+
+/* Settings is an operator surface: flat page bands with compact asset rows. */
+.shell .settings-page {
+  gap: 0 !important;
+  padding: 0 20px 28px !important;
+  color: var(--text-main) !important;
+  background: var(--surface-page) !important;
+}
+
+.shell .settings-hero {
+  width: min(1320px, 100%) !important;
+  min-height: 118px !important;
+  margin: 0 auto !important;
+  padding: 22px 4px 18px !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--line-soft) !important;
+  border-radius: 0 !important;
+  color: var(--text-main) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.shell .settings-hero h2 {
+  margin: 3px 0 5px !important;
+  color: var(--text-main) !important;
+  font-size: clamp(24px, 3vw, 32px) !important;
+  line-height: 1.15 !important;
+  letter-spacing: 0 !important;
+}
+
+.shell .settings-hero .eyebrow {
+  color: var(--text-faint) !important;
+  font-size: 11px !important;
+  font-weight: 750 !important;
+  letter-spacing: 0 !important;
+}
+
+.shell .settings-hero .muted,
+.shell .settings-hero-stats .badge {
+  color: var(--text-subtle) !important;
+}
+
+.shell .settings-hero-stats {
+  gap: 6px !important;
+}
+
+.shell .settings-hero-stats .badge {
+  min-height: 28px !important;
+  padding: 4px 9px !important;
+  border: 1px solid var(--line-soft) !important;
+  border-radius: var(--radius-control) !important;
+  background: var(--surface-panel) !important;
+  box-shadow: none !important;
+}
+
+.shell .settings-list-panel {
+  width: min(1320px, 100%) !important;
+  margin: 0 auto !important;
+  padding: 18px 0 0 !important;
+  overflow: visible !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.shell .settings-list-toolbar,
+.shell .settings-filter-bar {
+  gap: 10px !important;
+  padding: 0 0 12px !important;
+  border: 0 !important;
+}
+
+.shell .settings-filter-tabs {
+  gap: 4px !important;
+  padding: 3px !important;
+  border: 1px solid var(--line-soft) !important;
+  border-radius: var(--radius-panel) !important;
+  background: var(--surface-muted) !important;
+}
+
+.shell .settings-filter-tab,
+.shell .settings-filter-tab-active {
+  min-height: 34px !important;
+  padding: 0 12px !important;
+  border: 0 !important;
+  border-radius: 5px !important;
+  color: var(--text-subtle) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.shell .settings-filter-tab-active {
+  color: var(--text-main) !important;
+  background: var(--surface-panel) !important;
+  box-shadow: 0 1px 3px rgba(28, 43, 55, 0.1) !important;
+}
+
+.shell .settings-search-box {
+  min-height: 42px !important;
+  border: 1px solid var(--line-soft) !important;
+  border-radius: var(--radius-panel) !important;
+  color: var(--text-main) !important;
+  background: var(--surface-panel) !important;
+  box-shadow: none !important;
+}
+
+.shell .settings-search-box:focus-within {
+  border-color: var(--line-strong) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--line-strong) 22%, transparent) !important;
+}
+
+.shell .settings-search-box input {
+  color: var(--text-main) !important;
+}
+
+.shell .settings-bulk-actions {
+  gap: 6px !important;
+}
+
+.shell .settings-bulk-actions button,
+.shell .settings-row-actions button,
+.shell .settings-row-actions-more > button {
+  min-height: 34px !important;
+  border-radius: var(--radius-control) !important;
+  box-shadow: none !important;
+}
+
+.shell .settings-model-board {
+  gap: 7px !important;
+  overflow: visible !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.shell .settings-board-head,
+.shell .settings-model-row {
+  grid-template-columns: 28px minmax(260px, 1.35fr) minmax(210px, 0.95fr) minmax(94px, 0.42fr) minmax(238px, 0.78fr) !important;
+  gap: 12px !important;
+}
+
+.shell .settings-board-head {
+  padding: 0 12px 5px !important;
+  color: var(--text-faint) !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+}
+
+.shell .settings-model-row {
+  --model-accent: var(--capability-text);
+  position: relative !important;
+  z-index: 1 !important;
+  min-height: 78px !important;
+  padding: 11px 12px 11px 14px !important;
+  overflow: visible !important;
+  border: 1px solid var(--line-soft) !important;
+  border-left: 3px solid var(--model-accent) !important;
+  border-radius: var(--radius-panel) !important;
+  color: var(--text-main) !important;
+  background: var(--surface-panel) !important;
+  box-shadow: 0 1px 2px rgba(28, 43, 55, 0.04) !important;
+  transform: none !important;
+}
+
+.shell .settings-model-row:hover {
+  border-top-color: var(--line-strong) !important;
+  border-right-color: var(--line-strong) !important;
+  border-bottom-color: var(--line-strong) !important;
+  background: var(--surface-panel) !important;
+  box-shadow: 0 6px 18px rgba(28, 43, 55, 0.08) !important;
+  transform: none !important;
+}
+
+.shell .settings-model-row::before {
+  display: none !important;
+}
+
+.shell .settings-model-row-public {
+  border-left-color: var(--model-accent) !important;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--model-accent) 7%, transparent), transparent 28%),
+    var(--surface-panel) !important;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--model-accent) 9%, transparent) !important;
+}
+
+.shell .settings-model-main {
+  grid-template-columns: 38px minmax(0, 1fr) !important;
+  gap: 10px !important;
+  min-width: 0 !important;
+}
+
+.shell .settings-model-main .model-avatar {
+  width: 38px !important;
+  height: 38px !important;
+  border: 1px solid color-mix(in srgb, var(--model-accent) 24%, var(--line-soft)) !important;
+  border-radius: var(--radius-control) !important;
+  color: var(--model-accent) !important;
+  background: color-mix(in srgb, var(--model-accent) 10%, var(--surface-soft)) !important;
+  box-shadow: none !important;
+}
+
+.shell .settings-model-main strong,
+.shell .settings-primary-model strong {
+  color: var(--text-main) !important;
+}
+
+.shell .settings-model-main > div > span,
+.shell .settings-primary-model > span,
+.shell .settings-model-hint {
+  color: var(--text-subtle) !important;
+}
+
+.shell .settings-model-meta-row {
+  grid-template-columns: repeat(3, max-content) minmax(0, 1fr) !important;
+  gap: 5px !important;
+  margin-top: 5px !important;
+}
+
+.shell .settings-model-hint {
+  min-width: 0 !important;
+  font-size: 11px !important;
+}
+
+.shell .settings-primary-model {
+  min-width: 0 !important;
+  padding: 7px 9px !important;
+  border: 1px solid var(--line-soft) !important;
+  border-radius: var(--radius-control) !important;
+  background: var(--surface-soft) !important;
+  box-shadow: none !important;
+}
+
+.shell .settings-status-cell .badge {
+  justify-content: center !important;
+  min-width: 72px !important;
+  min-height: 28px !important;
+  border-radius: var(--radius-control) !important;
+}
+
+.shell .settings-row-actions {
+  position: relative !important;
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) 82px !important;
+  gap: 6px !important;
+  align-items: center !important;
+}
+
+.shell .settings-row-actions-primary {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 6px !important;
+}
+
+.shell .settings-row-actions-more {
+  position: relative !important;
+  width: 100% !important;
+}
+
+.shell .settings-row-actions-more > button {
+  width: 100% !important;
+}
+
+/* Lift the row itself; a child z-index cannot escape a sibling stacking context. */
+.shell .settings-model-row-action-open,
+.shell .settings-model-row-action-open:hover {
+  position: relative !important;
+  z-index: 320 !important;
+  transform: none !important;
+}
+
+.shell .settings-row-action-scrim {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 300 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  cursor: default !important;
+  transform: none !important;
+}
+
+.shell .settings-row-action-menu {
+  position: absolute !important;
+  top: calc(100% + 6px) !important;
+  right: 0 !important;
+  z-index: 340 !important;
+  display: grid !important;
+  width: 168px !important;
+  gap: 6px !important;
+  padding: 7px !important;
+  border: 1px solid var(--line-soft) !important;
+  border-radius: var(--radius-panel) !important;
+  background: var(--surface-float) !important;
+  box-shadow: var(--shadow-float) !important;
+}
+
+.shell .settings-row-actions-more-up .settings-row-action-menu {
+  top: auto !important;
+  bottom: calc(100% + 6px) !important;
+}
+
+.shell .settings-row-action-menu .settings-action-button {
+  width: 100% !important;
+}
+
+/* The edit dialog is a tool, not another decorative card stack. */
+.shell .settings-dialog-backdrop {
+  z-index: 520 !important;
+  padding: 18px !important;
+  background: rgba(18, 27, 34, 0.48) !important;
+  backdrop-filter: blur(5px) !important;
+}
+
+.shell .settings-dialog {
+  width: min(960px, 100%) !important;
+  max-height: calc(100vh - 36px) !important;
+  overflow: hidden !important;
+  border: 1px solid var(--line-strong) !important;
+  border-radius: var(--radius-panel) !important;
+  color: var(--text-main) !important;
+  background: var(--surface-panel) !important;
+  box-shadow: 0 26px 70px rgba(18, 27, 34, 0.28) !important;
+}
+
+.shell .settings-dialog-head {
+  padding: 18px 20px 14px !important;
+  border-bottom: 1px solid var(--line-soft) !important;
+  background: var(--surface-panel) !important;
+}
+
+.shell .settings-dialog-head h3,
+.shell .settings-dialog-section strong,
+.shell .review-item strong {
+  color: var(--text-main) !important;
+}
+
+.shell .settings-dialog-head > div > span,
+.shell .settings-dialog-section .section-copy span,
+.shell .review-item span {
+  color: var(--text-subtle) !important;
+}
+
+.shell .settings-dialog-workspace {
+  grid-template-columns: 180px minmax(0, 1fr) !important;
+  gap: 14px !important;
+  min-height: 0 !important;
+  padding: 14px 20px !important;
+  overflow: auto !important;
+}
+
+.shell .settings-dialog-workspace .wizard-step,
+.shell .settings-dialog-section,
+.shell .review-item,
+.shell .model-pick-panel,
+.shell .model-fetch-placeholder {
+  border: 1px solid var(--line-soft) !important;
+  border-radius: var(--radius-panel) !important;
+  background: var(--surface-soft) !important;
+  box-shadow: none !important;
+}
+
+.shell .settings-dialog-workspace .wizard-step-active {
+  border-color: color-mix(in srgb, var(--capability-video) 42%, var(--line-soft)) !important;
+  background: color-mix(in srgb, var(--capability-video) 7%, var(--surface-soft)) !important;
+}
+
+.shell .settings-dialog-actions {
+  position: sticky !important;
+  bottom: 0 !important;
+  z-index: 4 !important;
+  padding: 12px 20px !important;
+  border-top: 1px solid var(--line-soft) !important;
+  background: var(--surface-panel) !important;
+}
+
+@media (max-width: 1120px) {
+  .shell .settings-board-head,
+  .shell .settings-model-row {
+    grid-template-columns: 28px minmax(230px, 1.2fr) minmax(190px, 0.9fr) minmax(84px, 0.4fr) !important;
+  }
+
+  .shell .settings-board-head > span:last-child,
+  .shell .settings-model-row .settings-row-actions {
+    grid-column: 2 / -1 !important;
+  }
+
+  .shell .settings-row-actions {
+    grid-template-columns: minmax(0, 1fr) 92px !important;
+  }
+}
+
+@media (max-width: 720px) {
+  .shell .settings-page {
+    padding: 0 10px 18px !important;
+  }
+
+  .shell .settings-hero {
+    min-height: 0 !important;
+    padding: 16px 2px 14px !important;
+  }
+
+  .shell .settings-hero h2 {
+    font-size: 24px !important;
+  }
+
+  .shell .settings-list-panel {
+    padding-top: 12px !important;
+  }
+
+  .shell .settings-filter-tabs {
+    display: flex !important;
+    overflow-x: auto !important;
+  }
+
+  .shell .settings-filter-tab,
+  .shell .settings-filter-tab-active {
+    flex: 0 0 auto !important;
+  }
+
+  .shell .settings-model-row {
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 10px !important;
+    padding: 12px !important;
+  }
+
+  .shell .settings-check-cell {
+    position: absolute !important;
+    top: 14px !important;
+    right: 12px !important;
+    width: auto !important;
+  }
+
+  .shell .settings-model-main {
+    padding-right: 30px !important;
+  }
+
+  .shell .settings-model-meta-row {
+    grid-template-columns: repeat(2, max-content) !important;
+  }
+
+  .shell .settings-model-hint {
+    grid-column: 1 / -1 !important;
+  }
+
+  .shell .settings-row-actions {
+    grid-template-columns: minmax(0, 1fr) 88px !important;
+  }
+
+  .shell .settings-model-row-action-open .settings-row-action-scrim {
+    background: rgba(9, 14, 18, 0.24) !important;
+    backdrop-filter: blur(2px) !important;
+  }
+
+  .shell .settings-model-row-action-open .settings-row-action-menu {
+    position: fixed !important;
+    inset: auto 10px calc(env(safe-area-inset-bottom, 0px) + 12px) 10px !important;
+    z-index: 340 !important;
+    width: auto !important;
+    padding: 10px !important;
+  }
+
+  .shell .settings-dialog-backdrop {
+    padding: 0 !important;
+  }
+
+  .shell .settings-dialog {
+    width: 100% !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+    max-height: none !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+  }
+
+  .shell .settings-dialog-workspace {
+    grid-template-columns: minmax(0, 1fr) !important;
+    padding: 12px !important;
+  }
+
+  .shell .settings-dialog-workspace .wizard-steps {
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 5px !important;
+  }
+
+  .shell .settings-dialog-workspace .wizard-step {
+    min-height: 0 !important;
+    padding: 7px !important;
+  }
+
+  .shell .settings-dialog-workspace .wizard-step small {
+    display: none !important;
+  }
+}

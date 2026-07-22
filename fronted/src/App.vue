@@ -85,6 +85,7 @@ import {
   modelCatalogIconUrl,
   modelCatalogInputHint,
   modelConnectionLabel,
+  modelIdentityAccent,
   modelDisplayNameForModel,
   modelDisplayNameFromPrimary,
   modelParameterSourceLabel,
@@ -466,6 +467,10 @@ const activeModel = computed(() => {
   }
   return null;
 });
+
+const activeModelIdentityStyle = computed<Record<string, string> | undefined>(() =>
+  activeModel.value ? { "--model-accent": modelIdentityAccent(activeModel.value) } : undefined,
+);
 
 const activeSetting = computed(() =>
   activeModel.value ? getSetting(activeModel.value.id) : undefined,
@@ -3490,6 +3495,13 @@ function publicModelCardStyle(model: ModelDefinition): Record<string, string> {
   return { "--public-model-accent": publicModelAccent(model) };
 }
 
+function modelIdentityStyle(model: ModelDefinition): Record<string, string> {
+  return {
+    ...(model.isPublic ? publicModelCardStyle(model) : {}),
+    "--model-accent": modelIdentityAccent(model),
+  };
+}
+
 function publicModelCardPrice(model: ModelDefinition): string {
   const price = Math.max(0, Number(model.creditPrice || 0));
   return price ? `${price} 积分 / 次` : "免费使用";
@@ -3942,7 +3954,7 @@ async function removeUnavailableModels() {
           :key="model.id"
           :data-model-id="model.id"
           :class="['sidebar-model-item', model.id === activeModelIdForSidebar() ? 'sidebar-model-active' : '', model.isPublic ? 'sidebar-model-public' : '']"
-          :style="model.isPublic ? publicModelCardStyle(model) : undefined"
+          :style="modelIdentityStyle(model)"
           @click="selectModel(model)"
         >
           <div :class="['model-avatar', `model-avatar-${model.capability}`, modelIconUrl(model) ? 'model-avatar-has-icon' : '']">
@@ -4039,6 +4051,7 @@ async function removeUnavailableModels() {
         v-if="view !== 'auth' && view !== 'auth-error' && view !== 'settings' && view !== 'profile'"
         :class="['studio-panel', composerUiState.collapsed ? 'studio-panel-composer-collapsed' : 'studio-panel-composer-expanded']"
         :data-view="view"
+        :style="activeModelIdentityStyle"
       >
         <div class="studio-canvas">
           <aside v-if="conversationState.listOpen" class="history-drawer">
@@ -4170,7 +4183,7 @@ async function removeUnavailableModels() {
 
           <div v-else class="empty-canvas empty-canvas-workbench">
             <div class="empty-canvas-card">
-              <div class="empty-canvas-model-strip">
+              <div class="empty-canvas-model-strip creator-model-identity">
                 <div :class="['hero-model-mark', activeModel && modelIconUrl(activeModel) ? 'hero-model-mark-has-icon' : '']">
                   <img v-if="activeModel && modelIconUrl(activeModel)" :src="modelIconUrl(activeModel)" :alt="modelDisplayName(activeModel)" loading="lazy" @error="hideBrokenModelIcon" />
                   <span class="hero-model-mark-label">{{ activeCapability === "text" ? "T" : activeCapability === "image" ? "I" : "V" }}</span>
@@ -4973,6 +4986,7 @@ async function removeUnavailableModels() {
                 modelActionMenuState.openId === model.id ? 'settings-model-row-action-open' : '',
               ]"
               :data-model-id="model.id"
+              :style="modelIdentityStyle(model)"
             >
               <label class="settings-check-cell">
                 <input type="checkbox" :disabled="!canEditModel(model)" :checked="settingsState.selectedIds.includes(model.id)" @change="(event) => toggleSelected(model.id, (event.target as HTMLInputElement).checked)" />

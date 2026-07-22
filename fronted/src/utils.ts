@@ -149,9 +149,21 @@ const PUBLIC_MODEL_ACCENT_BY_CAPABILITY: Record<Capability, string> = {
   video: "#9EE841",
 };
 
+const PRIVATE_MODEL_ACCENT_BY_CAPABILITY: Record<Capability, string> = {
+  text: "#16835A",
+  image: "#D85C63",
+  video: "#3676D8",
+};
+
 export function publicModelAccent(model: Pick<ModelDefinition, "capability" | "publicAccentColor">): string {
   const accent = model.publicAccentColor?.trim().toUpperCase() || "";
   return /^#[0-9A-F]{6}$/.test(accent) ? accent : PUBLIC_MODEL_ACCENT_BY_CAPABILITY[model.capability];
+}
+
+export function modelIdentityAccent(
+  model: Pick<ModelDefinition, "capability" | "isPublic" | "publicAccentColor">,
+): string {
+  return model.isPublic ? publicModelAccent(model) : PRIVATE_MODEL_ACCENT_BY_CAPABILITY[model.capability];
 }
 
 export function publicModelCardDescription(

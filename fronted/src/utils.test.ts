@@ -45,6 +45,7 @@ import {
   modelCatalogInputHint,
   modelCatalogIconUrl,
   modelConnectionLabel,
+  modelIdentityAccent,
   modelDisplayNameFromPrimary,
   modelDisplayNameForModel,
   modelParameterSourceLabel,
@@ -186,6 +187,18 @@ describe("theme helpers", () => {
   it("toggles between day and night modes", () => {
     expect(toggleThemeMode("dark")).toBe("light");
     expect(toggleThemeMode("light")).toBe("dark");
+  });
+});
+
+describe("model identity accents", () => {
+  it("uses capability colors for private models", () => {
+    expect(modelIdentityAccent({ capability: "text", isPublic: false })).toBe("#16835A");
+    expect(modelIdentityAccent({ capability: "image", isPublic: false })).toBe("#D85C63");
+    expect(modelIdentityAccent({ capability: "video", isPublic: false })).toBe("#3676D8");
+  });
+
+  it("uses the configured public model accent when available", () => {
+    expect(modelIdentityAccent({ capability: "image", isPublic: true, publicAccentColor: "#A855F7" })).toBe("#A855F7");
   });
 });
 

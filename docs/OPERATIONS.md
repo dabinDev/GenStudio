@@ -341,8 +341,8 @@ The remote deploy helper should:
 - publish the independent admin console to `/opt/nginx/html/genstudio-admin` and ensure Nginx has a `/admin/` history fallback;
 - keep `/opt/genstudio/deploy/.env` in place and ensure `GENSTUDIO_ADMIN_IDENTIFIERS` contains `cylonai`;
 - write `GENSTUDIO_VERSION`, `GENSTUDIO_COMMIT_SHA`, and `GENSTUDIO_BUILD_TIME` into `/opt/genstudio/deploy/.env`;
-- run `docker compose build genstudio-api`;
-- run `docker compose up -d genstudio-api`;
+- load and inspect the locally verified image archive when `GENSTUDIO_IMAGE_ARCHIVE` and `GENSTUDIO_IMAGE_TAG` are provided;
+- preserve the current `genstudio-api:latest` image under a timestamped rollback tag, retag the verified candidate as `latest`, and run `docker compose up -d --no-build genstudio-api`;
 - run `docker exec nginx nginx -t` and `docker exec nginx nginx -s reload`;
 - verify `curl -fsS http://127.0.0.1:18082/api/health`.
 

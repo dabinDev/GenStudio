@@ -1402,7 +1402,8 @@ def test_image_proxy_records_reference_assets_on_user_message(monkeypatch) -> No
     conversation = response.json()["conversation"]
     user_message = conversation["messages"][0]
     assert user_message["role"] == "user"
-    assert user_message["assets"][0]["url"] == reference_url
+    assert user_message["assets"][0]["url"].startswith("/api/assets/")
+    assert user_message["assets"][0]["url"].endswith("/content")
     assert user_message["assets"][0]["metadata"]["role"] == "reference"
     assert user_message["assets"][0]["metadata"]["source"] == "input"
 
@@ -2049,9 +2050,11 @@ def test_image_proxy_persists_b64_response_as_generated_asset(monkeypatch) -> No
     assert image_url.startswith("/api/assets/generated/")
     assert "b64_json" not in payload["raw"]["data"][0]
     assert payload["raw"]["data"][0]["url"] == image_url
-    assert payload["assistantMessage"]["assets"][0]["url"] == image_url
+    assert payload["assistantMessage"]["assets"][0]["url"].startswith("/api/assets/")
+    assert payload["assistantMessage"]["assets"][0]["url"].endswith("/content")
     conversation = client.get(f"/api/conversations/{payload['conversation']['id']}").json()["conversation"]
-    assert conversation["messages"][-1]["assets"][0]["url"] == image_url
+    assert conversation["messages"][-1]["assets"][0]["url"].startswith("/api/assets/")
+    assert conversation["messages"][-1]["assets"][0]["url"].endswith("/content")
 
     asset_response = client.get(image_url)
     assert asset_response.status_code == 200
@@ -2089,7 +2092,8 @@ def test_image_proxy_persists_data_url_response_as_generated_asset(monkeypatch) 
     assert image_url.startswith("/api/assets/generated/")
     assert payload["raw"]["data"][0]["url"] == image_url
     assert "data:image/png;base64" not in payload["raw"]["data"][0]["url"]
-    assert payload["assistantMessage"]["assets"][0]["url"] == image_url
+    assert payload["assistantMessage"]["assets"][0]["url"].startswith("/api/assets/")
+    assert payload["assistantMessage"]["assets"][0]["url"].endswith("/content")
 
     asset_response = client.get(image_url)
     assert asset_response.status_code == 200
@@ -3359,6 +3363,58 @@ def test_asset_urls_support_head_for_upstream_validation(monkeypatch) -> None:
     assert generated_head.headers["content-type"].startswith("image/png")
     assert generated_head.headers["content-length"] == str(len(b"fake-generated"))
     assert generated_head.content == b""
+
+
+def test_protected_asset_content_and_thumbnail_authorize_owner_or_admin(monkeypatch) -> None:
+    owner = TestClient(app)
+    login(owner, "asset-owner")
+    outsider = TestClient(app)
+    login(outsider, "asset-outsider")
+    admin = TestClient(app)
+    login(admin, "asset-admin")
+    settings = main_module.get_settings()
+    monkeypatch.setattr(settings, "admin_identifiers", ["asset-admin"])
+
+    original_path = main_module.GENERATED_ASSET_DIR / "protected-original.png"
+    thumbnail_path = main_module.GENERATED_ASSET_DIR / "protected-thumbnail.webp"
+    original_path.write_bytes(b"protected-original")
+    thumbnail_path.write_bytes(b"protected-thumbnail")
+    with main_module.SessionLocal() as db:
+        user = db.query(main_module.User).filter(main_module.User.external_user_id == "asset-owner").one()
+        conversation = main_module.Conversation(user_id=user.id, title="Protected", capability="image")
+        db.add(conversation)
+        db.flush()
+        message = main_module.ConversationMessage(
+            conversation_id=conversation.id,
+            user_id=user.id,
+            role="assistant",
+            capability="image",
+            content="done",
+        )
+        db.add(message)
+        db.flush()
+        asset = main_module.GeneratedAsset(
+            user_id=user.id,
+            conversation_id=conversation.id,
+            message_id=message.id,
+            capability="image",
+            asset_type="image",
+            url="/api/assets/generated/protected-original.png",
+            local_path=str(original_path.resolve()),
+            local_thumbnail_path=str(thumbnail_path.resolve()),
+            storage_status="local_pending",
+            content_type="image/png",
+        )
+        db.add(asset)
+        db.commit()
+        asset_id = asset.id
+
+    assert TestClient(app).get(f"/api/assets/{asset_id}/content").status_code == 401
+    assert outsider.get(f"/api/assets/{asset_id}/content").status_code == 404
+    assert owner.get(f"/api/assets/{asset_id}/content").content == b"protected-original"
+    assert owner.get(f"/api/assets/{asset_id}/thumbnail").content == b"protected-thumbnail"
+    assert owner.head(f"/api/assets/{asset_id}/thumbnail").headers["content-length"] == str(len(b"protected-thumbnail"))
+    assert admin.get(f"/api/assets/{asset_id}/content").content == b"protected-original"
 
 
 def test_seedance_video_prompt_uses_text_content_for_title(monkeypatch) -> None:

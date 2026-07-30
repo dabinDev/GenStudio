@@ -172,3 +172,40 @@ def materialize_remote_asset(
         raise ValueError(error_message)
     asset.content_type = result.content_type
     return destination
+
+
+def resolve_asset_delivery(asset: GeneratedAsset, now=None) -> dict[str, str]:
+    current_time = now or utcnow()
+    r2_ready = asset.storage_status == "r2_synced" and bool(asset.r2_url)
+    cache_expired = bool(asset.local_expires_at and asset.local_expires_at <= current_time)
+
+    if r2_ready and cache_expired:
+        return {
+            "url": asset.r2_url,
+            "thumbnail_url": asset.r2_thumbnail_url or asset.r2_url,
+        }
+    if asset.local_path:
+        return {
+            "url": f"/api/assets/{asset.id}/content",
+            "thumbnail_url": (
+                f"/api/assets/{asset.id}/thumbnail"
+                if asset.local_thumbnail_path
+                else asset.thumbnail_url or asset.url
+            ),
+        }
+    if r2_ready:
+        return {
+            "url": asset.r2_url,
+            "thumbnail_url": asset.r2_thumbnail_url or asset.r2_url,
+        }
+    return {"url": asset.url, "thumbnail_url": asset.thumbnail_url or ""}
+
+
+def resolve_stored_asset_path(value: str, *roots: str | Path) -> Path:
+    if not value:
+        raise ValueError("Asset has no local path.")
+    candidate = Path(value).resolve()
+    managed_roots = [Path(root).resolve() for root in roots]
+    if not any(candidate.is_relative_to(root) for root in managed_roots):
+        raise ValueError("Asset path is outside the managed roots.")
+    return candidate

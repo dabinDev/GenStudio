@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 import hashlib
 import httpx
 import os
@@ -16,7 +16,15 @@ from sqlalchemy.orm import Session
 
 os.environ["DATABASE_URL"] = f"sqlite:///{Path(tempfile.gettempdir()) / 'genstudio-asset-storage-test.sqlite3'}"
 
-from app.asset_storage import backfill_asset_storage, materialize_remote_asset, register_asset_storage
+NOW = datetime(2026, 7, 30, 8, 0, 0)
+
+from app.asset_storage import (
+    backfill_asset_storage,
+    materialize_remote_asset,
+    register_asset_storage,
+    resolve_asset_delivery,
+)
+from app.conversation_service import serialize_asset
 from app.database import Base
 from app.db_models import GeneratedAsset
 
@@ -181,3 +189,60 @@ def test_materialize_remote_asset_removes_content_that_cannot_be_decoded(tmp_pat
 
         assert not list((generated_root / "materialized").glob("*"))
         assert not asset.local_path
+
+
+def delivery_asset() -> GeneratedAsset:
+    return GeneratedAsset(
+        id="asset-delivery",
+        user_id="user-1",
+        conversation_id="conversation-1",
+        message_id="message-delivery",
+        capability="image",
+        asset_type="image",
+        url="/api/assets/generated/result.png",
+        thumbnail_url="",
+        metadata_json='{"role":"result"}',
+        storage_status="r2_synced",
+        local_path="C:/managed/result.png",
+        local_thumbnail_path="C:/managed/result.webp",
+        r2_object_key="assets/result.png",
+        r2_thumbnail_key="assets/result.webp",
+        r2_url="https://cdn.example.com/assets/result.png",
+        r2_thumbnail_url="https://cdn.example.com/assets/result.webp",
+        local_expires_at=NOW + timedelta(hours=24),
+        created_at=NOW,
+        storage_updated_at=NOW,
+    )
+
+
+def test_delivery_uses_local_routes_until_the_cache_boundary() -> None:
+    asset = delivery_asset()
+
+    assert resolve_asset_delivery(asset, NOW + timedelta(hours=23, minutes=59, seconds=59)) == {
+        "url": "/api/assets/asset-delivery/content",
+        "thumbnail_url": "/api/assets/asset-delivery/thumbnail",
+    }
+
+
+def test_delivery_switches_to_r2_at_exactly_twenty_four_hours() -> None:
+    asset = delivery_asset()
+
+    assert resolve_asset_delivery(asset, NOW + timedelta(hours=24)) == {
+        "url": "https://cdn.example.com/assets/result.png",
+        "thumbnail_url": "https://cdn.example.com/assets/result.webp",
+    }
+
+
+def test_failed_delivery_keeps_local_routes_and_serializes_only_safe_status_metadata() -> None:
+    asset = delivery_asset()
+    asset.storage_status = "sync_failed"
+    asset.last_sync_error = "secret-bearing-provider-error"
+
+    delivery = resolve_asset_delivery(asset, NOW + timedelta(days=2))
+    serialized = serialize_asset(asset, now=NOW + timedelta(days=2))
+
+    assert delivery["url"] == "/api/assets/asset-delivery/content"
+    assert serialized.metadata == {"role": "result", "storageStatus": "sync_failed"}
+    serialized_json = serialized.model_dump_json()
+    assert "secret-bearing-provider-error" not in serialized_json
+    assert "r2_object_key" not in serialized_json

@@ -8,7 +8,12 @@ from urllib.parse import urlparse
 from fastapi import HTTPException
 from sqlalchemy.orm import Session, selectinload
 
-from app.asset_storage import DEFAULT_GENERATED_ROOT, DEFAULT_UPLOADED_ROOT, register_asset_storage
+from app.asset_storage import (
+    DEFAULT_GENERATED_ROOT,
+    DEFAULT_UPLOADED_ROOT,
+    register_asset_storage,
+    resolve_asset_delivery,
+)
 from app.config import get_settings
 from app.db_models import Conversation, ConversationMessage, GeneratedAsset, User, utcnow
 from app.schemas import (
@@ -65,18 +70,22 @@ def make_title(value: str, fallback: str = "新的创作") -> str:
     return (normalized[:60] or fallback)
 
 
-def serialize_asset(asset: GeneratedAsset) -> GeneratedAssetOut:
-    url = asset.url
+def serialize_asset(asset: GeneratedAsset, now=None) -> GeneratedAssetOut:
+    delivery = resolve_asset_delivery(asset, now)
+    url = delivery["url"]
     parsed_path = urlparse(asset.url).path.rstrip("/") if asset.url.startswith(("http://", "https://")) else ""
     if asset.asset_type == "video" and parsed_path.endswith("/content"):
         url = f"/api/assets/video-content/{asset.id}"
+    metadata = _json_loads(asset.metadata_json)
+    if asset.storage_status:
+        metadata["storageStatus"] = asset.storage_status
     return GeneratedAssetOut(
         id=asset.id,
         capability=asset.capability,
         assetType=asset.asset_type,
         url=url,
-        thumbnailUrl=asset.thumbnail_url,
-        metadata=_json_loads(asset.metadata_json),
+        thumbnailUrl=delivery["thumbnail_url"],
+        metadata=metadata,
         createdAt=asset.created_at,
     )
 

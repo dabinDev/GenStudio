@@ -197,7 +197,7 @@ from app.reference_assets import (
     indexed_reference_metadata,
     validate_reference_limit,
 )
-from app.asset_storage import backfill_asset_storage
+from app.asset_storage import backfill_asset_storage, resolve_stored_asset_path
 from app.asset_sync import AssetSyncConfig, AssetSyncService
 from app.schemas import (
     AdminBatchCreditAdjustRequest,
@@ -2600,6 +2600,52 @@ async def local_uploaded_asset(file_name: str) -> FileResponse:
     if not file_path.is_file():
         raise HTTPException(status_code=404, detail={"message": "Asset not found."})
     return FileResponse(file_path, media_type=guess_image_media_type(file_name))
+
+
+def authorized_local_asset(
+    asset_id: str,
+    current_user: User,
+    db: Session,
+    settings: Settings,
+) -> GeneratedAsset:
+    asset = db.get(GeneratedAsset, asset_id)
+    if not asset or (asset.user_id != current_user.id and not is_admin_user(current_user, settings)):
+        raise HTTPException(status_code=404, detail={"message": "Asset not found."})
+    return asset
+
+
+@app.api_route("/api/assets/{asset_id}/content", methods=["GET", "HEAD"])
+async def protected_asset_content(
+    asset_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> FileResponse:
+    asset = authorized_local_asset(asset_id, current_user, db, settings)
+    try:
+        file_path = resolve_stored_asset_path(asset.local_path, GENERATED_ASSET_DIR, LOCAL_UPLOAD_DIR)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"message": "Asset not found."}) from exc
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail={"message": "Asset not found."})
+    return FileResponse(file_path, media_type=asset.content_type or guess_image_media_type(file_path.name))
+
+
+@app.api_route("/api/assets/{asset_id}/thumbnail", methods=["GET", "HEAD"])
+async def protected_asset_thumbnail(
+    asset_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> FileResponse:
+    asset = authorized_local_asset(asset_id, current_user, db, settings)
+    try:
+        file_path = resolve_stored_asset_path(asset.local_thumbnail_path, GENERATED_ASSET_DIR, LOCAL_UPLOAD_DIR)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"message": "Asset not found."}) from exc
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail={"message": "Asset not found."})
+    return FileResponse(file_path, media_type="image/webp")
 
 
 @app.post("/api/upload/local")

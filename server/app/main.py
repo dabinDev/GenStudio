@@ -198,6 +198,7 @@ from app.reference_assets import (
     validate_reference_limit,
 )
 from app.asset_storage import backfill_asset_storage
+from app.asset_sync import AssetSyncConfig, AssetSyncService
 from app.schemas import (
     AdminBatchCreditAdjustRequest,
     AdminCreditAdjustRequest,
@@ -225,7 +226,7 @@ from app.schemas import (
     RegisterRequest,
 )
 from app.security import decrypt_secret, hash_password, verify_password
-from app.storage import create_presigned_put_url
+from app.storage import ObjectStorageClient, create_presigned_put_url
 from app.user_maintenance import merge_duplicate_users_by_identity
 
 
@@ -252,6 +253,32 @@ async def asset_cleanup_loop() -> None:
         await asyncio.sleep(ASSET_CLEANUP_LOOP_INTERVAL_SECONDS)
 
 
+def run_asset_sync_once() -> dict[str, int] | None:
+    settings = get_settings()
+    if not settings.object_storage_enabled:
+        return None
+    service = AssetSyncService(
+        SessionLocal,
+        ObjectStorageClient(settings),
+        GENERATED_ASSET_DIR,
+        LOCAL_UPLOAD_DIR,
+        config=AssetSyncConfig(),
+        key_prefix=settings.object_storage_key_prefix,
+    )
+    return service.sync_once()
+
+
+async def asset_sync_loop() -> None:
+    while True:
+        try:
+            await asyncio.to_thread(run_asset_sync_once)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass
+        await asyncio.sleep(AssetSyncConfig().interval_seconds)
+
+
 def backfill_asset_storage_once() -> int:
     db = SessionLocal()
     try:
@@ -273,10 +300,18 @@ async def lifespan(_app: FastAPI):
         init_db()
     await asyncio.to_thread(backfill_asset_storage_once)
     cleanup_task = asyncio.create_task(asset_cleanup_loop())
+    sync_task = asyncio.create_task(asset_sync_loop()) if settings.object_storage_enabled else None
     try:
         yield
     finally:
+        if sync_task:
+            sync_task.cancel()
         cleanup_task.cancel()
+        if sync_task:
+            try:
+                await sync_task
+            except asyncio.CancelledError:
+                pass
         try:
             await cleanup_task
         except asyncio.CancelledError:

@@ -138,7 +138,14 @@ def backfill_asset_storage(
         .all()
     )
     for asset in candidates:
-        register_asset_storage(asset, generated_root, uploaded_root, settings, now)
+        try:
+            register_asset_storage(asset, generated_root, uploaded_root, settings, now)
+        except FileNotFoundError:
+            asset.storage_status = "unmanaged"
+            asset.local_path = ""
+            asset.local_thumbnail_path = ""
+            asset.last_sync_error = "Local asset file not found."
+            asset.storage_updated_at = now or utcnow()
     db.flush()
     return len(candidates)
 

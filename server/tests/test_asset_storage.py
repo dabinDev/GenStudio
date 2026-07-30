@@ -139,6 +139,39 @@ def test_backfill_classifies_local_r2_and_unknown_remote_assets(tmp_path) -> Non
         ) == 0
 
 
+def test_backfill_skips_missing_local_files_and_continues(tmp_path) -> None:
+    generated_root = tmp_path / "generated_assets"
+    uploaded_root = tmp_path / "uploaded_assets"
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with Session(engine) as db:
+        missing = add_test_asset(db, "/api/assets/uploads/missing.png")
+        remote = add_test_asset(db, "https://provider.example.com/result.png")
+
+        assert backfill_asset_storage(
+            db,
+            generated_root,
+            uploaded_root,
+            storage_settings(),
+            missing.created_at,
+            batch_size=10,
+        ) == 2
+
+        assert missing.storage_status == "unmanaged"
+        assert missing.last_sync_error == "Local asset file not found."
+        assert remote.storage_status == "remote_pending"
+
+        assert backfill_asset_storage(
+            db,
+            generated_root,
+            uploaded_root,
+            storage_settings(),
+            missing.created_at,
+            batch_size=10,
+        ) == 0
+
+
 def test_materialize_remote_asset_keeps_original_url_and_creates_local_thumbnail(tmp_path) -> None:
     generated_root = tmp_path / "generated_assets"
     source = tmp_path / "source.png"

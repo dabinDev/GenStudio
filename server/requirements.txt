@@ -8,3 +8,4 @@ cryptography==46.0.3
 pytest==9.0.2
 argon2-cffi==25.1.0
 python-multipart==0.0.20
+Pillow==11.3.0

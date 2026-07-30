@@ -141,7 +141,12 @@ def config_from_asset_sync_settings(settings: dict[str, Any]) -> AssetSyncConfig
 def asset_sync_eligibility(config: AssetSyncConfig, now):
     stale_before = now - config.syncing_timeout
     return or_(
-        GeneratedAsset.storage_status.in_(("local_pending", "remote_pending")),
+        and_(
+            GeneratedAsset.storage_status == "local_pending",
+            GeneratedAsset.local_path.is_not(None),
+            GeneratedAsset.local_path != "",
+        ),
+        GeneratedAsset.storage_status == "remote_pending",
         and_(GeneratedAsset.storage_status == "syncing", GeneratedAsset.storage_updated_at <= stale_before),
         and_(
             GeneratedAsset.storage_status == "sync_failed",

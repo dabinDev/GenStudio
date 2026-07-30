@@ -284,12 +284,14 @@ def run_asset_sync_once(
                 return None
         finally:
             db.close()
+    backfilled = backfill_asset_storage_once()
     if not settings.object_storage_enabled:
         return {
             "claimed": 0,
             "synced": 0,
             "failed": 0,
             "removed": 0,
+            "backfilled": backfilled,
             "skipped": "object_storage_disabled",
         }
     service = AssetSyncService(
@@ -302,6 +304,7 @@ def run_asset_sync_once(
     )
     try:
         result = service.sync_once()
+        result["backfilled"] = backfilled
     except Exception as exc:
         if automatic:
             db = SessionLocal()

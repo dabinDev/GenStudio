@@ -108,6 +108,57 @@ def test_stale_syncing_assets_can_be_reclaimed_after_fifteen_minutes(tmp_path) -
     assert service._claim(asset_id, NOW) is True
 
 
+def test_sync_does_not_claim_unclassified_local_pending_assets(tmp_path) -> None:
+    service, factory, _generated_root, _uploaded_root = make_service(tmp_path)
+    with factory() as db:
+        asset = GeneratedAsset(
+            user_id="user-1",
+            conversation_id="conversation-1",
+            message_id="message-unclassified",
+            capability="image",
+            asset_type="image",
+            url="/api/assets/uploads/missing.png",
+            storage_status="local_pending",
+            local_path="",
+            r2_url="",
+            created_at=NOW,
+            storage_updated_at=NOW,
+        )
+        db.add(asset)
+        db.commit()
+        asset_id = asset.id
+
+    result = service.sync_once(NOW)
+
+    assert result == {"claimed": 0, "synced": 0, "failed": 0, "removed": 0}
+    assert load_asset(factory, asset_id).storage_status == "local_pending"
+
+
+def test_run_asset_sync_backfills_before_claiming(monkeypatch) -> None:
+    from app import main as main_module
+
+    events: list[str] = []
+    settings = SimpleNamespace(object_storage_enabled=True, object_storage_key_prefix="genstudio")
+
+    class FakeService:
+        def __init__(self, *_args, **_kwargs) -> None:
+            events.append("service")
+
+        def sync_once(self):
+            events.append("sync")
+            return {"claimed": 1, "synced": 1, "failed": 0, "removed": 0}
+
+    monkeypatch.setattr(main_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(main_module, "backfill_asset_storage_once", lambda: events.append("backfill") or 100)
+    monkeypatch.setattr(main_module, "ObjectStorageClient", lambda _settings: object())
+    monkeypatch.setattr(main_module, "AssetSyncService", FakeService)
+
+    result = main_module.run_asset_sync_once(config=AssetSyncConfig())
+
+    assert events == ["backfill", "service", "sync"]
+    assert result == {"claimed": 1, "synced": 1, "failed": 0, "removed": 0, "backfilled": 100}
+
+
 def test_retry_delays_are_one_five_then_thirty_minutes() -> None:
     assert retry_delay_for_attempt(1) == timedelta(minutes=1)
     assert retry_delay_for_attempt(2) == timedelta(minutes=5)

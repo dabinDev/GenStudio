@@ -899,6 +899,34 @@ describe("workbench style application", () => {
     expect(finalStyles).toContain("background: var(--surface-soft) !important");
   });
 
+  it("overrides theme-specific settings row shadows with the quiet board treatment", () => {
+    const styles = redesignCss();
+    const markerIndex = styles.indexOf("Conversation alignment and settings polish v2");
+    const finalStyles = styles.slice(markerIndex);
+
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(finalStyles).toContain(
+      '.shell[data-theme="light"] .settings-page .settings-model-row,\n' +
+        '.shell[data-theme="dark"] .settings-page .settings-model-row {',
+    );
+    expect(finalStyles).toContain(
+      '.shell[data-theme="light"] .settings-page .settings-model-row:hover,\n' +
+        '.shell[data-theme="dark"] .settings-page .settings-model-row:hover {',
+    );
+    expect(finalStyles).toContain(
+      '.shell[data-theme="light"] .settings-page .settings-model-row:last-child,\n' +
+        '.shell[data-theme="dark"] .settings-page .settings-model-row:last-child {',
+    );
+    expect(finalStyles).toContain(
+      '.shell[data-theme="light"] .settings-page .settings-model-row-public,\n' +
+        '.shell[data-theme="dark"] .settings-page .settings-model-row-public {',
+    );
+    expect(finalStyles).toContain(
+      '.shell[data-theme="light"] .settings-page .settings-model-row-public:hover,\n' +
+        '.shell[data-theme="dark"] .settings-page .settings-model-row-public:hover {',
+    );
+  });
+
   it("keeps the creator keyboard, text, motion, and phone states usable", () => {
     const styles = redesignCss();
     const markerIndex = styles.indexOf("NewUI creator detail pass v1");

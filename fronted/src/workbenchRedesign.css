@@ -2313,6 +2313,38 @@
   background: color-mix(in srgb, var(--model-accent) 7%, var(--surface-hover)) !important;
 }
 
+.shell[data-theme="light"] .settings-page .settings-model-row,
+.shell[data-theme="dark"] .settings-page .settings-model-row {
+  border: 0 !important;
+  border-bottom: 1px solid var(--line-soft) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.shell[data-theme="light"] .settings-page .settings-model-row:last-child,
+.shell[data-theme="dark"] .settings-page .settings-model-row:last-child {
+  border-bottom: 0 !important;
+}
+
+.shell[data-theme="light"] .settings-page .settings-model-row:hover,
+.shell[data-theme="dark"] .settings-page .settings-model-row:hover {
+  border-bottom-color: var(--line-soft) !important;
+  background: var(--surface-hover) !important;
+  box-shadow: none !important;
+}
+
+.shell[data-theme="light"] .settings-page .settings-model-row-public,
+.shell[data-theme="dark"] .settings-page .settings-model-row-public {
+  background: color-mix(in srgb, var(--model-accent) 4%, transparent) !important;
+  box-shadow: none !important;
+}
+
+.shell[data-theme="light"] .settings-page .settings-model-row-public:hover,
+.shell[data-theme="dark"] .settings-page .settings-model-row-public:hover {
+  background: color-mix(in srgb, var(--model-accent) 7%, var(--surface-hover)) !important;
+}
+
 .shell .settings-primary-model {
   border: 0 !important;
   background: var(--surface-soft) !important;

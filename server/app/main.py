@@ -198,7 +198,16 @@ from app.reference_assets import (
     validate_reference_limit,
 )
 from app.asset_storage import backfill_asset_storage, resolve_stored_asset_path
-from app.asset_sync import AssetSyncConfig, AssetSyncService
+from app.asset_sync import (
+    AssetSyncConfig,
+    AssetSyncService,
+    asset_sync_settings,
+    asset_sync_summary,
+    config_from_asset_sync_settings,
+    record_asset_sync_result,
+    reset_failed_asset_sync,
+    update_asset_sync_settings,
+)
 from app.schemas import (
     AdminBatchCreditAdjustRequest,
     AdminCreditAdjustRequest,
@@ -253,30 +262,78 @@ async def asset_cleanup_loop() -> None:
         await asyncio.sleep(ASSET_CLEANUP_LOOP_INTERVAL_SECONDS)
 
 
-def run_asset_sync_once() -> dict[str, int] | None:
+def current_asset_sync_config() -> AssetSyncConfig:
+    db = SessionLocal()
+    try:
+        return config_from_asset_sync_settings(asset_sync_settings(db))
+    finally:
+        db.close()
+
+
+def run_asset_sync_once(
+    *,
+    automatic: bool = False,
+    config: AssetSyncConfig | None = None,
+) -> dict[str, Any] | None:
     settings = get_settings()
+    resolved_config = config or current_asset_sync_config()
+    if automatic:
+        db = SessionLocal()
+        try:
+            if not asset_sync_settings(db)["enabled"]:
+                return None
+        finally:
+            db.close()
     if not settings.object_storage_enabled:
-        return None
+        return {
+            "claimed": 0,
+            "synced": 0,
+            "failed": 0,
+            "removed": 0,
+            "skipped": "object_storage_disabled",
+        }
     service = AssetSyncService(
         SessionLocal,
         ObjectStorageClient(settings),
         GENERATED_ASSET_DIR,
         LOCAL_UPLOAD_DIR,
-        config=AssetSyncConfig(),
+        config=resolved_config,
         key_prefix=settings.object_storage_key_prefix,
     )
-    return service.sync_once()
+    try:
+        result = service.sync_once()
+    except Exception as exc:
+        if automatic:
+            db = SessionLocal()
+            try:
+                record_asset_sync_result(
+                    db,
+                    {"status": "failed", "message": str(exc)[:300] or exc.__class__.__name__},
+                    automatic=True,
+                )
+            finally:
+                db.close()
+        raise
+    if automatic:
+        db = SessionLocal()
+        try:
+            record_asset_sync_result(db, result, automatic=True)
+        finally:
+            db.close()
+    return result
 
 
 async def asset_sync_loop() -> None:
     while True:
+        interval_seconds = AssetSyncConfig().interval_seconds
         try:
-            await asyncio.to_thread(run_asset_sync_once)
+            await asyncio.to_thread(run_asset_sync_once, automatic=True)
+            interval_seconds = await asyncio.to_thread(lambda: current_asset_sync_config().interval_seconds)
         except asyncio.CancelledError:
             raise
         except Exception:
             pass
-        await asyncio.sleep(AssetSyncConfig().interval_seconds)
+        await asyncio.sleep(interval_seconds)
 
 
 def backfill_asset_storage_once() -> int:
@@ -3448,6 +3505,7 @@ async def admin_asset_cleanup_preview(
     summary = preview_asset_cleanup(
         targets=asset_cleanup_targets(),
         retention_days=int(cleanup_settings["retentionDays"]),
+        db=db,
     )
     if not can(admin, "maintenance:asset_cleanup", settings):
         summary = redact_asset_cleanup_paths(summary)
@@ -3486,6 +3544,107 @@ async def admin_run_asset_cleanup(
         summary=summary,
     )
     return {"settings": asset_cleanup_settings(db), "summary": summary}
+
+
+def asset_sync_payload(db: Session) -> dict[str, Any]:
+    sync_settings = asset_sync_settings(db)
+    config = config_from_asset_sync_settings(sync_settings)
+    return {
+        "settings": sync_settings,
+        "summary": asset_sync_summary(db, config=config),
+    }
+
+
+@app.get("/api/admin/asset-sync/settings")
+async def admin_asset_sync_settings(
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    require_any_admin_permission(admin, ["settings:view", "maintenance:asset_cleanup"], settings)
+    return asset_sync_payload(db)
+
+
+@app.put("/api/admin/asset-sync/settings")
+async def admin_update_asset_sync_settings(
+    payload: dict[str, Any],
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    require_admin_permission(admin, "maintenance:asset_cleanup", settings)
+    updated = update_asset_sync_settings(
+        db,
+        admin=admin,
+        enabled=payload.get("enabled") if "enabled" in payload else None,
+        interval_seconds=payload.get("intervalSeconds") if "intervalSeconds" in payload else None,
+        batch_size=payload.get("batchSize") if "batchSize" in payload else None,
+    )
+    write_admin_log(
+        db,
+        admin,
+        action="update_asset_sync_settings",
+        target_type="maintenance",
+        summary=updated,
+    )
+    return {
+        "settings": updated,
+        "summary": asset_sync_summary(db, config=config_from_asset_sync_settings(updated)),
+    }
+
+
+@app.get("/api/admin/asset-sync/preview")
+async def admin_asset_sync_preview(
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    require_any_admin_permission(admin, ["settings:view", "maintenance:asset_cleanup"], settings)
+    return asset_sync_payload(db)
+
+
+@app.post("/api/admin/asset-sync/run")
+async def admin_run_asset_sync(
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    require_admin_permission(admin, "maintenance:asset_cleanup", settings)
+    sync_settings = asset_sync_settings(db)
+    config = config_from_asset_sync_settings(sync_settings)
+    result = await asyncio.to_thread(run_asset_sync_once, automatic=False, config=config)
+    recorded = record_asset_sync_result(db, result or {}, automatic=False, admin=admin)
+    write_admin_log(
+        db,
+        admin,
+        action="asset_sync_run",
+        target_type="maintenance",
+        summary=recorded,
+    )
+    payload = asset_sync_payload(db)
+    return {**payload, "result": recorded}
+
+
+@app.post("/api/admin/asset-sync/retry-failed")
+async def admin_retry_failed_asset_sync(
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+    settings: Settings = Depends(get_settings),
+    _csrf: None = Depends(require_csrf),
+) -> dict[str, Any]:
+    require_admin_permission(admin, "maintenance:asset_cleanup", settings)
+    result = reset_failed_asset_sync(db)
+    write_admin_log(
+        db,
+        admin,
+        action="asset_sync_retry_failed",
+        target_type="maintenance",
+        summary=result,
+    )
+    payload = asset_sync_payload(db)
+    return {**payload, "result": result}
 
 
 @app.put("/api/admin/models/{model_id}")

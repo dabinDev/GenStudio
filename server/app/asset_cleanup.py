@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.credit_service import json_dumps_safe, parse_json_object
-from app.db_models import SystemSetting, User, utcnow
+from app.db_models import GeneratedAsset, SystemSetting, User, utcnow
 
 
 ASSET_CLEANUP_RETENTION_DAYS_KEY = "asset_cleanup_retention_days"
@@ -136,11 +136,41 @@ def _file_row(path: Path, cutoff_ts: float) -> dict[str, Any]:
     }
 
 
+def _path_key(path: str | Path) -> str:
+    try:
+        return str(Path(path).resolve()).casefold()
+    except OSError:
+        return ""
+
+
+def tracked_unsynced_asset_paths(db: Session) -> set[str]:
+    protected: set[str] = set()
+    assets = db.query(GeneratedAsset).filter(
+        (GeneratedAsset.local_path != "") | (GeneratedAsset.local_thumbnail_path != "")
+    ).all()
+    for asset in assets:
+        has_verified_r2_copy = bool(
+            asset.storage_status == "r2_synced"
+            and asset.r2_object_key
+            and asset.r2_thumbnail_key
+            and asset.r2_url
+            and asset.r2_thumbnail_url
+        )
+        if has_verified_r2_copy:
+            continue
+        for value in (asset.local_path, asset.local_thumbnail_path):
+            key = _path_key(value) if value else ""
+            if key:
+                protected.add(key)
+    return protected
+
+
 def preview_asset_cleanup(
     *,
     targets: list[CleanupTarget],
     retention_days: int,
     now_ts: float | None = None,
+    db: Session | None = None,
 ) -> dict[str, Any]:
     clean_days = normalize_retention_days(retention_days)
     resolved_now = time.time() if now_ts is None else float(now_ts)
@@ -150,6 +180,8 @@ def preview_asset_cleanup(
     expired_files = 0
     total_bytes = 0
     expired_bytes = 0
+    protected_files = 0
+    protected_paths = tracked_unsynced_asset_paths(db) if db is not None else set()
     for target in targets:
         files = []
         for file_path in _safe_files(target.directory):
@@ -160,7 +192,10 @@ def preview_asset_cleanup(
             files.append(row)
             total_files += 1
             total_bytes += int(row["sizeBytes"])
-            if row["expired"]:
+            row["protected"] = _path_key(file_path) in protected_paths
+            if row["protected"]:
+                protected_files += 1
+            if row["expired"] and not row["protected"]:
                 expired_files += 1
                 expired_bytes += int(row["sizeBytes"])
         target_rows.append(
@@ -169,9 +204,14 @@ def preview_asset_cleanup(
                 "label": target.label,
                 "path": str(target.directory),
                 "totalFiles": len(files),
-                "expiredFiles": sum(1 for item in files if item["expired"]),
+                "expiredFiles": sum(1 for item in files if item["expired"] and not item["protected"]),
+                "protectedFiles": sum(1 for item in files if item["protected"]),
                 "totalBytes": sum(int(item["sizeBytes"]) for item in files),
-                "expiredBytes": sum(int(item["sizeBytes"]) for item in files if item["expired"]),
+                "expiredBytes": sum(
+                    int(item["sizeBytes"])
+                    for item in files
+                    if item["expired"] and not item["protected"]
+                ),
             }
         )
     return {
@@ -179,6 +219,7 @@ def preview_asset_cleanup(
         "cutoffTs": cutoff_ts,
         "totalFiles": total_files,
         "expiredFiles": expired_files,
+        "protectedFiles": protected_files,
         "totalBytes": total_bytes,
         "expiredBytes": expired_bytes,
         "targets": target_rows,
@@ -196,7 +237,13 @@ def run_asset_cleanup(
     clean_days = normalize_retention_days(retention_days)
     resolved_now = time.time() if now_ts is None else float(now_ts)
     cutoff_ts = resolved_now - clean_days * 86400
-    preview = preview_asset_cleanup(targets=targets, retention_days=clean_days, now_ts=resolved_now)
+    protected_paths = tracked_unsynced_asset_paths(db)
+    preview = preview_asset_cleanup(
+        targets=targets,
+        retention_days=clean_days,
+        now_ts=resolved_now,
+        db=db,
+    )
     deleted_files = 0
     deleted_bytes = 0
     failed: list[dict[str, Any]] = []
@@ -208,6 +255,8 @@ def run_asset_cleanup(
                 failed.append({"path": str(file_path), "message": str(exc)[:200]})
                 continue
             if stat.st_mtime >= cutoff_ts:
+                continue
+            if _path_key(file_path) in protected_paths:
                 continue
             try:
                 file_path.unlink()

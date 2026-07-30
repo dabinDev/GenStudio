@@ -539,12 +539,14 @@ describe('admin theme presentation', () => {
     expect(styles.indexOf('content: attr(data-scroll-hint)', markerIndex)).toBeGreaterThan(markerIndex);
   });
 
-  it('keeps the asset cleanup card compact and mobile friendly', () => {
+  it('keeps asset synchronization primary and orphan cleanup mobile friendly', () => {
     const system = readFileSync(resolve(process.cwd(), 'src/views/SystemSettingsView.vue'), 'utf8');
     const styles = stylesCss();
     const markerIndex = styles.indexOf('Admin asset cleanup mobile polish v18');
 
-    expect(system).toContain('<strong>图片缓存清理</strong>');
+    expect(system).toContain('<strong>图片存储与同步</strong>');
+    expect(system).toContain('<strong>孤儿缓存清理</strong>');
+    expect(system.indexOf('图片存储与同步')).toBeLessThan(system.indexOf('孤儿缓存清理'));
     expect(system).toContain('默认保留 ${assetCleanupForm.defaultRetentionDays || 7} 天');
     expect(system).toContain('不删除数据库创作记录');
     expect(system).toContain('admin-asset-cleanup-card__safe-actions');

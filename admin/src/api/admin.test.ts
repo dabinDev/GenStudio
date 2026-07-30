@@ -5,9 +5,14 @@ import {
   exportAuditLogs,
   fetchAdminRecordDetail,
   fetchAdminPermissions,
+  fetchAssetSyncSettings,
   fetchCsrfToken,
   fetchCurrentUser,
   logoutAdmin,
+  previewAssetSync,
+  retryFailedAssetSync,
+  runAssetSync,
+  saveAssetSyncSettings,
 } from './admin';
 import {
   AdminApiError,
@@ -147,5 +152,75 @@ describe('admin api client', () => {
       '/api/admin/records/images/export?status=non_success&modelGroupId=mdl_1',
       expect.objectContaining({ method: 'GET', credentials: 'include' }),
     );
+  });
+
+  it('wraps all asset synchronization controls and protects mutations with csrf', async () => {
+    const payload = {
+      settings: {
+        enabled: true,
+        intervalSeconds: 60,
+        batchSize: 8,
+        localTtlHours: 24,
+        localTtlFixed: true,
+        minIntervalSeconds: 15,
+        maxIntervalSeconds: 3600,
+        minBatchSize: 1,
+        maxBatchSize: 100,
+        lastRun: {},
+        lastAutoRun: {},
+      },
+      summary: {
+        totalAssets: 12,
+        totalBytes: 4096,
+        localBytes: 1024,
+        eligibleAssets: 2,
+        statusCounts: { r2_synced: 9, local_pending: 2, sync_failed: 1 },
+        failureCount: 1,
+        failures: [],
+      },
+      result: { reset: 1 },
+    };
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json(payload));
+    vi.stubGlobal('fetch', fetchMock);
+    setAdminCsrfToken('csrf-token');
+
+    await fetchAssetSyncSettings();
+    await saveAssetSyncSettings({ enabled: false, intervalSeconds: 90, batchSize: 4 });
+    await previewAssetSync();
+    await runAssetSync();
+    await retryFailedAssetSync();
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      '/api/admin/asset-sync/settings',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      '/api/admin/asset-sync/settings',
+      expect.objectContaining({
+        method: 'PUT',
+        body: JSON.stringify({ enabled: false, intervalSeconds: 90, batchSize: 4 }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      '/api/admin/asset-sync/preview',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      4,
+      '/api/admin/asset-sync/run',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({}) }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      5,
+      '/api/admin/asset-sync/retry-failed',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({}) }),
+    );
+    for (const call of [fetchMock.mock.calls[1], fetchMock.mock.calls[3], fetchMock.mock.calls[4]]) {
+      const headers = (call[1] as RequestInit).headers as Headers;
+      expect(headers.get('X-CSRF-Token')).toBe('csrf-token');
+    }
   });
 });

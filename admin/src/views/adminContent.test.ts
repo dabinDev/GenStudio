@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 
 import {
   fetchAdminRecords,
@@ -53,6 +54,23 @@ describe('admin content api client', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     setAdminCsrfToken('');
+  });
+
+  it('presents asset synchronization as the primary image-storage workflow', () => {
+    const source = readFileSync(new URL('./SystemSettingsView.vue', import.meta.url), 'utf8');
+
+    expect(source).toContain('图片存储与同步');
+    expect(source).toContain('24 小时');
+    expect(source).toContain('立即同步');
+    expect(source).toContain('重试失败');
+    expect(source).toContain('同步失败明细');
+    expect(source).toContain('孤儿缓存清理');
+    expect(source).toContain('admin-asset-sync-metrics');
+    expect(source).toContain('admin-asset-sync-failures');
+    expect(source).toContain('fetchAssetSyncSettings');
+    expect(source).toContain('previewAssetSync');
+    expect(source).toContain('runAssetSync');
+    expect(source).toContain('retryFailedAssetSync');
   });
 
   it('parses the exported Yuque prompt library from JavaScript module text', async () => {

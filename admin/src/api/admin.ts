@@ -4,6 +4,8 @@ import type {
   AssetCleanupPayload,
   AssetCleanupSettings,
   AssetCleanupSettingsUpdatePayload,
+  AssetSyncPayload,
+  AssetSyncSettingsUpdatePayload,
   AdminDashboardMetrics,
   AdminModel,
   AdminModelCreditPricingUpdate,
@@ -555,6 +557,37 @@ export async function runAssetCleanup(
   return adminRequest<AssetCleanupPayload>('/api/admin/asset-cleanup/run', {
     method: 'POST',
     body: JSON.stringify(body),
+  });
+}
+
+export async function fetchAssetSyncSettings(): Promise<AssetSyncPayload> {
+  return adminRequest<AssetSyncPayload>('/api/admin/asset-sync/settings');
+}
+
+export async function saveAssetSyncSettings(
+  body: AssetSyncSettingsUpdatePayload,
+): Promise<AssetSyncPayload> {
+  return adminRequest<AssetSyncPayload>('/api/admin/asset-sync/settings', {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function previewAssetSync(): Promise<AssetSyncPayload> {
+  return adminRequest<AssetSyncPayload>('/api/admin/asset-sync/preview');
+}
+
+export async function runAssetSync(): Promise<AssetSyncPayload> {
+  return adminRequest<AssetSyncPayload>('/api/admin/asset-sync/run', {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+}
+
+export async function retryFailedAssetSync(): Promise<AssetSyncPayload> {
+  return adminRequest<AssetSyncPayload>('/api/admin/asset-sync/retry-failed', {
+    method: 'POST',
+    body: JSON.stringify({}),
   });
 }
 

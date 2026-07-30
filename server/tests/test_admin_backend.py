@@ -33,6 +33,7 @@ from app.db_models import (
     Conversation,
     ConversationMessage,
     CreditTransaction,
+    GeneratedAsset,
     ModelGroup,
     ModelHealthCheck,
     SessionRecord,
@@ -4385,6 +4386,296 @@ def test_scheduled_asset_cleanup_records_failures_for_future_visibility(monkeypa
     payload = json.loads(marker.value)
     assert payload["status"] == "failed"
     assert "disk not reachable" in payload["message"]
+
+
+def make_asset_sync_admin_client(external_id: str):
+    import app.main as main_module
+    from app.database import Base, get_db
+    from app.main import app
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    testing_session = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
+    seed_db = testing_session()
+    admin = make_user(seed_db, "cage_ben@sina.com", external_id=external_id)
+    seed_db.close()
+
+    def override_db():
+        db = testing_session()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    client = TestClient(app)
+    login = client.post(
+        "/api/auth/dev-login",
+        json={"externalUserId": admin.external_user_id, "email": admin.email, "nickname": "Admin"},
+    )
+    assert login.status_code == 200
+    return main_module, app, testing_session, admin, client
+
+
+def add_asset_sync_row(
+    db: Session,
+    *,
+    status: str,
+    size_bytes: int,
+    local_path: str = "",
+    last_error: str = "",
+    attempts: int = 0,
+) -> GeneratedAsset:
+    asset = GeneratedAsset(
+        user_id="asset-sync-user",
+        conversation_id="asset-sync-conversation",
+        message_id=f"asset-sync-message-{status}-{size_bytes}",
+        capability="image",
+        asset_type="image",
+        url=f"https://assets.example.test/{status}-{size_bytes}.png",
+        storage_status=status,
+        local_path=local_path,
+        size_bytes=size_bytes,
+        last_sync_error=last_error,
+        sync_attempts=attempts,
+        storage_updated_at=utcnow() - timedelta(hours=1),
+    )
+    db.add(asset)
+    db.commit()
+    db.refresh(asset)
+    return asset
+
+
+def test_admin_asset_sync_settings_and_preview_expose_read_only_metrics() -> None:
+    main_module, app, testing_session, _admin, client = make_asset_sync_admin_client("asset-sync-view-admin")
+    seed_db = testing_session()
+    try:
+        add_asset_sync_row(seed_db, status="local_pending", size_bytes=128, local_path="C:/cache/pending.png")
+        add_asset_sync_row(seed_db, status="r2_synced", size_bytes=256)
+        add_asset_sync_row(
+            seed_db,
+            status="sync_failed",
+            size_bytes=512,
+            last_error="upload failed",
+            attempts=3,
+        )
+        setting_count_before = seed_db.query(SystemSetting).count()
+    finally:
+        seed_db.close()
+
+    try:
+        settings_response = client.get("/api/admin/asset-sync/settings")
+        preview_response = client.get("/api/admin/asset-sync/preview")
+
+        assert settings_response.status_code == 200
+        settings = settings_response.json()["settings"]
+        assert settings["enabled"] is True
+        assert settings["intervalSeconds"] == 60
+        assert settings["batchSize"] == 8
+        assert settings["localTtlHours"] == 24
+        assert settings["localTtlFixed"] is True
+        assert settings["lastRun"] == {}
+        assert settings["lastAutoRun"] == {}
+
+        assert preview_response.status_code == 200
+        summary = preview_response.json()["summary"]
+        assert summary["totalAssets"] == 3
+        assert summary["totalBytes"] == 896
+        assert summary["localBytes"] == 128
+        assert summary["statusCounts"] == {
+            "local_pending": 1,
+            "r2_synced": 1,
+            "sync_failed": 1,
+        }
+        assert summary["eligibleAssets"] == 2
+        assert summary["failureCount"] == 1
+        assert summary["failures"][0]["message"] == "upload failed"
+
+        verify_db = testing_session()
+        try:
+            assert verify_db.query(SystemSetting).count() == setting_count_before
+            assert sorted(row.storage_status for row in verify_db.query(GeneratedAsset).all()) == [
+                "local_pending",
+                "r2_synced",
+                "sync_failed",
+            ]
+        finally:
+            verify_db.close()
+    finally:
+        app.dependency_overrides.clear()
+        main_module.rate_limiter.clear()
+
+
+def test_admin_asset_sync_viewer_can_inspect_but_cannot_mutate(monkeypatch) -> None:
+    main_module, app, _testing_session, _admin, client = make_asset_sync_admin_client("asset-sync-viewer")
+
+    def settings_view_only(_user, permission: str, _settings) -> bool:
+        return permission == "settings:view"
+
+    monkeypatch.setattr(main_module, "can", settings_view_only)
+    headers = csrf_headers(client)
+    try:
+        assert client.get("/api/admin/asset-sync/settings").status_code == 200
+        assert client.get("/api/admin/asset-sync/preview").status_code == 200
+        assert client.put(
+            "/api/admin/asset-sync/settings",
+            json={"enabled": False},
+            headers=headers,
+        ).status_code == 403
+        assert client.post("/api/admin/asset-sync/run", json={}, headers=headers).status_code == 403
+        assert client.post("/api/admin/asset-sync/retry-failed", json={}, headers=headers).status_code == 403
+    finally:
+        app.dependency_overrides.clear()
+        main_module.rate_limiter.clear()
+
+
+def test_admin_asset_sync_settings_update_is_validated_and_audited() -> None:
+    main_module, app, testing_session, _admin, client = make_asset_sync_admin_client("asset-sync-settings-admin")
+    try:
+        response = client.put(
+            "/api/admin/asset-sync/settings",
+            json={"enabled": False, "intervalSeconds": 90, "batchSize": 4},
+            headers=csrf_headers(client),
+        )
+
+        assert response.status_code == 200
+        assert response.json()["settings"]["enabled"] is False
+        assert response.json()["settings"]["intervalSeconds"] == 90
+        assert response.json()["settings"]["batchSize"] == 4
+        verify_db = testing_session()
+        try:
+            log = verify_db.query(AdminOperationLog).filter(
+                AdminOperationLog.action == "update_asset_sync_settings"
+            ).one()
+            audit_summary = json.loads(log.summary_json)
+            assert audit_summary["enabled"] is False
+            assert audit_summary["intervalSeconds"] == 90
+            assert audit_summary["batchSize"] == 4
+        finally:
+            verify_db.close()
+
+        invalid = client.put(
+            "/api/admin/asset-sync/settings",
+            json={"intervalSeconds": 0},
+            headers=csrf_headers(client),
+        )
+        assert invalid.status_code == 400
+    finally:
+        app.dependency_overrides.clear()
+        main_module.rate_limiter.clear()
+
+
+def test_admin_asset_sync_run_records_result_and_audit_log(monkeypatch) -> None:
+    main_module, app, testing_session, _admin, client = make_asset_sync_admin_client("asset-sync-run-admin")
+    observed: dict[str, object] = {}
+
+    def fake_run_asset_sync_once(*, automatic=False, config=None):
+        observed["automatic"] = automatic
+        observed["config"] = config
+        return {"claimed": 2, "synced": 1, "failed": 1, "removed": 0}
+
+    monkeypatch.setattr(main_module, "run_asset_sync_once", fake_run_asset_sync_once)
+    try:
+        response = client.post("/api/admin/asset-sync/run", json={}, headers=csrf_headers(client))
+
+        assert response.status_code == 200
+        assert response.json()["result"]["claimed"] == 2
+        assert observed["automatic"] is False
+        assert observed["config"].batch_size == 8
+        assert response.json()["settings"]["lastRun"]["synced"] == 1
+        verify_db = testing_session()
+        try:
+            log = verify_db.query(AdminOperationLog).filter(AdminOperationLog.action == "asset_sync_run").one()
+            assert json.loads(log.summary_json)["failed"] == 1
+        finally:
+            verify_db.close()
+    finally:
+        app.dependency_overrides.clear()
+        main_module.rate_limiter.clear()
+
+
+def test_admin_asset_sync_retry_resets_failed_rows_and_writes_audit_log() -> None:
+    main_module, app, testing_session, _admin, client = make_asset_sync_admin_client("asset-sync-retry-admin")
+    seed_db = testing_session()
+    try:
+        local = add_asset_sync_row(
+            seed_db,
+            status="sync_failed",
+            size_bytes=100,
+            local_path="C:/cache/local.png",
+            last_error="local upload failed",
+            attempts=3,
+        )
+        remote = add_asset_sync_row(
+            seed_db,
+            status="sync_failed",
+            size_bytes=200,
+            last_error="remote download failed",
+            attempts=4,
+        )
+        local_id, remote_id = local.id, remote.id
+    finally:
+        seed_db.close()
+
+    try:
+        response = client.post("/api/admin/asset-sync/retry-failed", json={}, headers=csrf_headers(client))
+
+        assert response.status_code == 200
+        assert response.json()["result"] == {"reset": 2}
+        verify_db = testing_session()
+        try:
+            local = verify_db.get(GeneratedAsset, local_id)
+            remote = verify_db.get(GeneratedAsset, remote_id)
+            assert local.storage_status == "local_pending"
+            assert remote.storage_status == "remote_pending"
+            assert local.sync_attempts == remote.sync_attempts == 0
+            assert local.last_sync_error == remote.last_sync_error == ""
+            log = verify_db.query(AdminOperationLog).filter(
+                AdminOperationLog.action == "asset_sync_retry_failed"
+            ).one()
+            assert json.loads(log.summary_json)["reset"] == 2
+        finally:
+            verify_db.close()
+    finally:
+        app.dependency_overrides.clear()
+        main_module.rate_limiter.clear()
+
+
+def test_asset_cleanup_preserves_tracked_unsynced_files(tmp_path) -> None:
+    from app.asset_cleanup import build_cleanup_targets, run_asset_cleanup
+
+    db = make_db()
+    generated_dir = tmp_path / "generated_assets"
+    uploaded_dir = tmp_path / "uploaded_assets"
+    generated_dir.mkdir()
+    uploaded_dir.mkdir()
+    tracked_file = generated_dir / "tracked-unsynced.png"
+    tracked_file.write_bytes(b"only surviving copy")
+    old_time = (datetime.now() - timedelta(days=8)).timestamp()
+    os.utime(tracked_file, (old_time, old_time))
+    add_asset_sync_row(
+        db,
+        status="sync_failed",
+        size_bytes=tracked_file.stat().st_size,
+        local_path=str(tracked_file),
+        last_error="r2 unavailable",
+        attempts=3,
+    )
+
+    summary = run_asset_cleanup(
+        db,
+        targets=build_cleanup_targets(generated_dir, uploaded_dir),
+        retention_days=7,
+        now_ts=datetime.now().timestamp(),
+    )
+
+    assert tracked_file.exists()
+    assert summary["deletedFiles"] == 0
+    assert summary["protectedFiles"] == 1
 
 
 def test_super_admin_can_update_database_admin_role() -> None:

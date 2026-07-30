@@ -596,6 +596,7 @@ export interface AssetCleanupTargetSummary {
   path: string;
   totalFiles: number;
   expiredFiles: number;
+  protectedFiles?: number;
   totalBytes: number;
   expiredBytes: number;
 }
@@ -605,6 +606,7 @@ export interface AssetCleanupSummary {
   cutoffTs: number;
   totalFiles: number;
   expiredFiles: number;
+  protectedFiles?: number;
   totalBytes: number;
   expiredBytes: number;
   deletedFiles?: number;
@@ -618,4 +620,61 @@ export interface AssetCleanupSummary {
 export interface AssetCleanupPayload {
   settings: AssetCleanupSettings;
   summary: AssetCleanupSummary;
+}
+
+export interface AssetSyncRunResult {
+  claimed?: number;
+  synced?: number;
+  failed?: number;
+  removed?: number;
+  reset?: number;
+  skipped?: string;
+  ranAt?: string;
+  automatic?: boolean;
+  status?: string;
+  message?: string;
+}
+
+export interface AssetSyncSettings {
+  enabled: boolean;
+  intervalSeconds: number;
+  batchSize: number;
+  localTtlHours: 24;
+  localTtlFixed: true;
+  minIntervalSeconds: number;
+  maxIntervalSeconds: number;
+  minBatchSize: number;
+  maxBatchSize: number;
+  lastRun: AssetSyncRunResult & Record<string, unknown>;
+  lastAutoRun: AssetSyncRunResult & Record<string, unknown>;
+}
+
+export interface AssetSyncSettingsUpdatePayload {
+  enabled?: boolean;
+  intervalSeconds?: number;
+  batchSize?: number;
+}
+
+export interface AssetSyncFailure {
+  assetId: string;
+  message: string;
+  attempts: number;
+  sizeBytes: number;
+  updatedAt: string;
+}
+
+export interface AssetSyncSummary {
+  totalAssets: number;
+  totalBytes: number;
+  localBytes: number;
+  eligibleAssets: number;
+  statusCounts: Record<string, number>;
+  failureCount: number;
+  failures: AssetSyncFailure[];
+}
+
+export interface AssetSyncPayload {
+  settings: AssetSyncSettings;
+  summary: AssetSyncSummary;
+  result?: AssetSyncRunResult;
 }

@@ -246,6 +246,7 @@ export interface UploadedAsset {
   publicUrl: string;
   contentType: string;
   localPreviewUrl: string;
+  thumbnailUrl?: string;
 }
 
 export interface ConversationAsset {

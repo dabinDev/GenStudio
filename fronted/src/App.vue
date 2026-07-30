@@ -31,9 +31,13 @@ import {
 } from "./api";
 import { useAuthStore } from "./stores/auth";
 import { useWorkbenchStore } from "./stores/workbench";
+import ReferenceMentionMenu from "./components/ReferenceMentionMenu.vue";
 import {
+  mentionQueryAtCursor,
   normalizeReferenceMentions,
   referencesForPrompt,
+  replaceMentionQuery,
+  rewriteMentionsAfterRemoval,
 } from "./referenceMentions";
 import type {
   Adapter,
@@ -352,6 +356,16 @@ const referenceDropState = reactive({
   image: false,
   video: false,
 });
+
+type MentionCapability = "image" | "video";
+
+const mentionMenuState = reactive({
+  capability: null as MentionCapability | null,
+  query: "",
+  activeIndex: 0,
+});
+const imagePromptInput = ref<HTMLTextAreaElement | null>(null);
+const videoPromptInput = ref<HTMLTextAreaElement | null>(null);
 
 let textPollTimer: number | null = null;
 let textPollTaskId = "";
@@ -1469,6 +1483,10 @@ function videoModeLabel(mode: VideoMode): string {
 }
 
 function removeImageReference(assetId: string) {
+  const removedIndex = imageState.references.findIndex((asset) => asset.id === assetId) + 1;
+  if (removedIndex > 0) {
+    imageState.prompt = rewriteMentionsAfterRemoval(imageState.prompt, removedIndex);
+  }
   imageState.references = imageState.references.filter((asset) => asset.id !== assetId);
   if (!imageState.references.length) {
     imageState.promptRecommendations = [];
@@ -1478,11 +1496,100 @@ function removeImageReference(assetId: string) {
 }
 
 function removeUnifiedVideoReference(assetId: string) {
+  const removedIndex = videoState.unifiedImages.findIndex((asset) => asset.id === assetId) + 1;
+  if (removedIndex > 0) {
+    videoState.prompt = rewriteMentionsAfterRemoval(videoState.prompt, removedIndex);
+  }
   videoState.unifiedImages = videoState.unifiedImages.filter((asset) => asset.id !== assetId);
 }
 
 function removeSeedanceReference(assetId: string) {
+  const removedIndex = videoState.seedanceReferences.findIndex((asset) => asset.id === assetId) + 1;
+  if (removedIndex > 0) {
+    videoState.prompt = rewriteMentionsAfterRemoval(videoState.prompt, removedIndex);
+  }
   videoState.seedanceReferences = videoState.seedanceReferences.filter((asset) => asset.id !== assetId);
+}
+
+function removeSeedanceFrame(role: "first" | "last") {
+  const removedIndex = role === "first" ? 1 : videoState.seedanceFirst ? 2 : 1;
+  videoState.prompt = rewriteMentionsAfterRemoval(videoState.prompt, removedIndex);
+  if (role === "first") videoState.seedanceFirst = null;
+  else videoState.seedanceLast = null;
+}
+
+function mentionAssetsForCapability(capability: MentionCapability): UploadedAsset[] {
+  if (capability === "image") return imageState.references;
+  if (supportsUnifiedAdapter(activeModel.value?.adapter)) return videoState.unifiedImages;
+  if (videoState.mode === "reference") return videoState.seedanceReferences;
+  return [videoState.seedanceFirst, videoState.seedanceLast].filter(
+    (asset): asset is UploadedAsset => Boolean(asset),
+  );
+}
+
+function mentionCandidateIndexes(capability: MentionCapability): number[] {
+  const query = mentionMenuState.query.trim().toLowerCase();
+  return mentionAssetsForCapability(capability)
+    .map((asset, index) => ({ asset, index: index + 1 }))
+    .filter(({ asset, index }) => {
+      if (!query) return true;
+      return String(index).startsWith(query) || asset.fileName.toLowerCase().includes(query);
+    })
+    .map((item) => item.index);
+}
+
+function closeMentionMenu() {
+  mentionMenuState.capability = null;
+  mentionMenuState.query = "";
+  mentionMenuState.activeIndex = 0;
+}
+
+function updateMentionMenu(capability: MentionCapability, event: Event) {
+  const input = event.target as HTMLTextAreaElement;
+  const assets = mentionAssetsForCapability(capability);
+  const query = mentionQueryAtCursor(input.value, input.selectionStart ?? input.value.length);
+  if (!query || !assets.length) {
+    closeMentionMenu();
+    return;
+  }
+  mentionMenuState.capability = capability;
+  mentionMenuState.query = query.query;
+  mentionMenuState.activeIndex = 0;
+}
+
+async function selectReferenceMention(capability: MentionCapability, index: number) {
+  const input = capability === "image" ? imagePromptInput.value : videoPromptInput.value;
+  const prompt = capability === "image" ? imageState.prompt : videoState.prompt;
+  const cursor = input?.selectionStart ?? prompt.length;
+  const replaced = replaceMentionQuery(prompt, cursor, index);
+  if (capability === "image") imageState.prompt = replaced.value;
+  else videoState.prompt = replaced.value;
+  closeMentionMenu();
+  await nextTick();
+  input?.focus();
+  input?.setSelectionRange(replaced.cursor, replaced.cursor);
+}
+
+function handleMentionMenuKeydown(capability: MentionCapability, event: KeyboardEvent) {
+  if (mentionMenuState.capability !== capability) return;
+  const indexes = mentionCandidateIndexes(capability);
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeMentionMenu();
+    return;
+  }
+  if (!indexes.length) return;
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    const direction = event.key === "ArrowDown" ? 1 : -1;
+    mentionMenuState.activeIndex =
+      (mentionMenuState.activeIndex + direction + indexes.length) % indexes.length;
+    return;
+  }
+  if (event.key === "Enter" || event.key === "Tab") {
+    event.preventDefault();
+    void selectReferenceMention(capability, indexes[mentionMenuState.activeIndex]);
+  }
 }
 
 async function toggleHistoryDrawer() {
@@ -4431,17 +4538,35 @@ async function removeUnavailableModels() {
                 <input hidden type="file" accept="image/png,image/jpeg,image/jpg,image/webp" multiple @change="handleImageUpload" />
               </label>
               <div class="prompt-input-wrap">
-                <textarea v-model="imageState.prompt" class="composer-input" :placeholder="imageComposerPlaceholder" />
+                <textarea
+                  ref="imagePromptInput"
+                  v-model="imageState.prompt"
+                  class="composer-input"
+                  :placeholder="imageComposerPlaceholder"
+                  @input="updateMentionMenu('image', $event)"
+                  @click="updateMentionMenu('image', $event)"
+                  @keyup="updateMentionMenu('image', $event)"
+                  @keydown="handleMentionMenuKeydown('image', $event)"
+                />
                 <button class="prompt-ai-button" :disabled="imageState.loading || imageState.optimizing || !imageState.prompt.trim()" title="优化提示词（Ctrl+I）" @click="handlePromptOptimize('image')">
                   {{ imageState.optimizing ? "..." : "AI" }}
                 </button>
+                <ReferenceMentionMenu
+                  v-if="mentionMenuState.capability === 'image'"
+                  :assets="mentionAssetsForCapability('image')"
+                  :query="mentionMenuState.query"
+                  :active-index="mentionMenuState.activeIndex"
+                  @select="selectReferenceMention('image', $event)"
+                  @close="closeMentionMenu"
+                />
               </div>
             </div>
             <div v-if="imageState.references.length" class="reference-strip">
-              <article v-for="asset in imageState.references" :key="asset.id" class="reference-thumb">
+              <article v-for="(asset, imageIndex) in imageState.references" :key="asset.id" class="reference-thumb">
                 <button type="button" class="reference-preview-button" title="查看参考图" @click="openUploadedMediaPreview(asset)">
                   <img :src="asset.localPreviewUrl" :alt="asset.fileName" />
                 </button>
+                <span class="reference-index-badge">{{ imageIndex + 1 }}</span>
                 <button type="button" class="reference-remove-button" title="移除参考图" @click.stop="removeImageReference(asset.id)">×</button>
               </article>
             </div>
@@ -4610,37 +4735,58 @@ async function removeUnavailableModels() {
                 <label class="button-secondary composer-attach-button">尾帧<input hidden type="file" accept="image/png,image/jpeg,image/jpg,image/webp" @change="(event) => uploadVideoFiles(event, 'last')" /></label>
               </div>
               <div class="prompt-input-wrap">
-                <textarea v-model="videoState.prompt" class="composer-input" :placeholder="videoComposerPlaceholder" />
+                <textarea
+                  ref="videoPromptInput"
+                  v-model="videoState.prompt"
+                  class="composer-input"
+                  :placeholder="videoComposerPlaceholder"
+                  @input="updateMentionMenu('video', $event)"
+                  @click="updateMentionMenu('video', $event)"
+                  @keyup="updateMentionMenu('video', $event)"
+                  @keydown="handleMentionMenuKeydown('video', $event)"
+                />
                 <button class="prompt-ai-button" :disabled="videoState.loading || videoState.optimizing || !videoState.prompt.trim()" title="优化提示词（Ctrl+I）" @click="handlePromptOptimize('video')">
                   {{ videoState.optimizing ? "..." : "AI" }}
                 </button>
+                <ReferenceMentionMenu
+                  v-if="mentionMenuState.capability === 'video'"
+                  :assets="mentionAssetsForCapability('video')"
+                  :query="mentionMenuState.query"
+                  :active-index="mentionMenuState.activeIndex"
+                  @select="selectReferenceMention('video', $event)"
+                  @close="closeMentionMenu"
+                />
               </div>
             </div>
             <div v-if="videoState.unifiedImages.length || videoState.seedanceFirst || videoState.seedanceLast || videoState.seedanceReferences.length" class="reference-strip">
-              <article v-for="asset in videoState.unifiedImages" :key="asset.id" class="reference-thumb">
+              <article v-for="(asset, unifiedIndex) in videoState.unifiedImages" :key="asset.id" class="reference-thumb">
                 <button type="button" class="reference-preview-button" title="查看参考图" @click="openUploadedMediaPreview(asset)">
                   <img :src="asset.localPreviewUrl" :alt="asset.fileName" />
                 </button>
+                <span class="reference-index-badge">{{ unifiedIndex + 1 }}</span>
                 <button type="button" class="reference-remove-button" title="移除参考图" @click.stop="removeUnifiedVideoReference(asset.id)">×</button>
               </article>
               <article v-if="videoState.seedanceFirst" class="reference-thumb">
                 <button type="button" class="reference-preview-button" title="查看首帧" @click="openUploadedMediaPreview(videoState.seedanceFirst, 'first_frame', '首帧')">
                   <img :src="videoState.seedanceFirst.localPreviewUrl" :alt="videoState.seedanceFirst.fileName" />
                 </button>
+                <span class="reference-index-badge">1</span>
                 <span>首帧</span>
-                <button type="button" class="reference-remove-button" title="移除首帧" @click.stop="videoState.seedanceFirst = null">×</button>
+                <button type="button" class="reference-remove-button" title="移除首帧" @click.stop="removeSeedanceFrame('first')">×</button>
               </article>
               <article v-if="videoState.seedanceLast" class="reference-thumb">
                 <button type="button" class="reference-preview-button" title="查看尾帧" @click="openUploadedMediaPreview(videoState.seedanceLast, 'last_frame', '尾帧')">
                   <img :src="videoState.seedanceLast.localPreviewUrl" :alt="videoState.seedanceLast.fileName" />
                 </button>
+                <span class="reference-index-badge">{{ videoState.seedanceFirst ? 2 : 1 }}</span>
                 <span>尾帧</span>
-                <button type="button" class="reference-remove-button" title="移除尾帧" @click.stop="videoState.seedanceLast = null">×</button>
+                <button type="button" class="reference-remove-button" title="移除尾帧" @click.stop="removeSeedanceFrame('last')">×</button>
               </article>
-              <article v-for="asset in videoState.seedanceReferences" :key="asset.id" class="reference-thumb">
+              <article v-for="(asset, seedanceIndex) in videoState.seedanceReferences" :key="asset.id" class="reference-thumb">
                 <button type="button" class="reference-preview-button" title="查看参考图" @click="openUploadedMediaPreview(asset)">
                   <img :src="asset.localPreviewUrl" :alt="asset.fileName" />
                 </button>
+                <span class="reference-index-badge">{{ seedanceIndex + 1 }}</span>
                 <button type="button" class="reference-remove-button" title="移除参考图" @click.stop="removeSeedanceReference(asset.id)">×</button>
               </article>
             </div>

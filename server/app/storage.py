@@ -4,12 +4,61 @@ import hashlib
 import hmac
 import re
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
 from urllib.parse import quote, urlparse
 from uuid import uuid4
 
+import boto3
+from botocore.config import Config
 from fastapi import HTTPException
 
 from app.config import Settings
+
+
+class ObjectStorageClient:
+    def __init__(self, settings: Settings, client: Any | None = None) -> None:
+        self._bucket = settings.object_storage_bucket.strip()
+        self._public_base_url = settings.object_storage_public_base_url.rstrip("/")
+        self._endpoint_url = settings.object_storage_endpoint_url.rstrip("/")
+        if not self._bucket or not self._public_base_url or not self._endpoint_url:
+            raise ValueError("Object storage is not configured.")
+        self._client = client or boto3.client(
+            "s3",
+            endpoint_url=self._endpoint_url,
+            region_name=settings.object_storage_region.strip() or "auto",
+            aws_access_key_id=settings.object_storage_access_key_id.strip(),
+            aws_secret_access_key=settings.object_storage_secret_access_key.strip(),
+            config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
+        )
+
+    def __repr__(self) -> str:
+        return f"ObjectStorageClient(bucket={self._bucket!r}, endpoint={self._endpoint_url!r})"
+
+    def put_file(self, source: str | Path, key: str, content_type: str) -> None:
+        self._client.upload_file(
+            Filename=str(source),
+            Bucket=self._bucket,
+            Key=key,
+            ExtraArgs={"ContentType": content_type},
+        )
+
+    def head(self, key: str) -> dict[str, Any]:
+        response = self._client.head_object(Bucket=self._bucket, Key=key)
+        if int(response.get("ContentLength") or 0) <= 0:
+            raise ValueError(f"Object is missing or empty: {key}")
+        return response
+
+    def delete(self, key: str) -> None:
+        self._client.delete_object(Bucket=self._bucket, Key=key)
+
+    def download_file(self, key: str, destination: str | Path) -> None:
+        destination_path = Path(destination)
+        destination_path.parent.mkdir(parents=True, exist_ok=True)
+        self._client.download_file(Bucket=self._bucket, Key=key, Filename=str(destination_path))
+
+    def public_url(self, key: str) -> str:
+        return f"{self._public_base_url}/{quote(key, safe='/-_.~')}"
 
 
 def _sign(key: bytes, value: str) -> bytes:

@@ -2,6 +2,19 @@ set -euo pipefail
 
 release=/tmp/genstudio-brand-release
 ts=$(date +%Y%m%d%H%M%S)
+image_archive=${GENSTUDIO_IMAGE_ARCHIVE:-}
+image_tag=${GENSTUDIO_IMAGE_TAG:-}
+
+if [ -n "$image_archive" ] || [ -n "$image_tag" ]; then
+  if [ -z "$image_archive" ] || [ -z "$image_tag" ]; then
+    echo "GENSTUDIO_IMAGE_ARCHIVE and GENSTUDIO_IMAGE_TAG must be provided together." >&2
+    exit 1
+  fi
+  if [ ! -f "$image_archive" ]; then
+    echo "Prebuilt image archive not found: $image_archive" >&2
+    exit 1
+  fi
+fi
 
 rm -rf "$release"
 mkdir -p "$release"
@@ -88,8 +101,18 @@ for key, value in updates.items():
 p.write_text('\n'.join(next_lines) + '\n')
 PY
 
-docker compose build genstudio-api
-docker compose up -d genstudio-api
+if [ -n "$image_archive" ]; then
+  docker load --input "$image_archive"
+  docker image inspect "$image_tag" >/dev/null
+  if docker image inspect genstudio-api:latest >/dev/null 2>&1; then
+    docker tag genstudio-api:latest "genstudio-api:backup-$ts"
+  fi
+  docker tag "$image_tag" genstudio-api:latest
+  docker compose up -d --no-build genstudio-api
+else
+  docker compose build genstudio-api
+  docker compose up -d genstudio-api
+fi
 sleep 5
 
 if ! docker exec nginx sh -c 'paths=""; for d in /etc/nginx/conf.d /etc/nginx/sites-enabled; do [ -d "$d" ] && paths="$paths $d"; done; [ -n "$paths" ] && grep -R "location /admin/" $paths >/dev/null 2>&1'; then

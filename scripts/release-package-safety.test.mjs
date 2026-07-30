@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dockerignore = fs.readFileSync(path.join(repoRoot, '.dockerignore'), 'utf8');
 const operations = fs.readFileSync(path.join(repoRoot, 'docs', 'OPERATIONS.md'), 'utf8');
+const remoteDeploy = fs.readFileSync(path.join(repoRoot, 'deploy', 'remote-brand-deploy.sh'), 'utf8');
 
 test('docker build context excludes environment files at every depth', () => {
   const patterns = dockerignore
@@ -26,4 +27,15 @@ test('release runbook stages tracked backend source with git archive', () => {
 
 test('release runbook does not copy the raw server working directory', () => {
   assert.doesNotMatch(operations, /Copy-Item -LiteralPath 'server'/);
+});
+
+test('remote deploy helper can load a verified image without building on the server', () => {
+  assert.match(remoteDeploy, /GENSTUDIO_IMAGE_ARCHIVE/);
+  assert.match(remoteDeploy, /GENSTUDIO_IMAGE_TAG/);
+  assert.match(remoteDeploy, /docker load --input "\$image_archive"/);
+  assert.match(remoteDeploy, /docker compose up -d --no-build genstudio-api/);
+});
+
+test('remote deploy helper uses Unix line endings', () => {
+  assert.equal(remoteDeploy.includes('\r'), false);
 });

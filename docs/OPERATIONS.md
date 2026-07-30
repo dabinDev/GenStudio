@@ -322,9 +322,15 @@ tar -czf $pkg -C $stageRoot .
 Upload and execute the deployment:
 
 ```powershell
+$commitSha = (git rev-parse --short=12 HEAD).Trim()
+$imageTag = "genstudio-api:newui-$commitSha"
+$imageArchive = ".deploy-stage\genstudio-api-newui-$commitSha.tar"
+docker build -f server/Dockerfile -t $imageTag .
+docker save -o $imageArchive $imageTag
 scp -F NUL -i G:/my-linux/guangzhou.pem .deploy-stage/genstudio-brand-release.tar.gz root@175.178.189.234:/tmp/genstudio-brand-release.tar.gz
+scp -F NUL -i G:/my-linux/guangzhou.pem $imageArchive root@175.178.189.234:/tmp/genstudio-api-image.tar
 scp -F NUL -i G:/my-linux/guangzhou.pem deploy/remote-brand-deploy.sh root@175.178.189.234:/tmp/genstudio-remote-deploy.sh
-ssh -F NUL -i G:/my-linux/guangzhou.pem root@175.178.189.234 "bash /tmp/genstudio-remote-deploy.sh"
+ssh -F NUL -i G:/my-linux/guangzhou.pem root@175.178.189.234 "GENSTUDIO_IMAGE_ARCHIVE=/tmp/genstudio-api-image.tar GENSTUDIO_IMAGE_TAG=$imageTag bash /tmp/genstudio-remote-deploy.sh"
 ```
 
 The remote deploy helper should:

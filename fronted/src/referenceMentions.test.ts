@@ -1,8 +1,11 @@
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
 import {
   MAX_REFERENCE_ASSETS,
   mentionQueryAtCursor,
+  normalizeReferenceMentions,
   parseReferenceMentions,
   referencesForPrompt,
   replaceMentionQuery,
@@ -60,7 +63,28 @@ describe("reference mentions", () => {
     expect(replaceMentionQuery("没有查询", 4, 2)).toEqual({ value: "没有查询", cursor: 4 });
   });
 
+  it("normalizes numbered mentions for upstream model text", () => {
+    expect(normalizeReferenceMentions("让 @1 参考 @10 的光线")).toBe(
+      "让 参考图1 参考 参考图10 的光线",
+    );
+  });
+
   it("defines the product hard limit", () => {
     expect(MAX_REFERENCE_ASSETS).toBe(10);
+  });
+});
+
+describe("reference mention integration", () => {
+  const appSource = readFileSync(new URL("./App.vue", import.meta.url), "utf8");
+
+  it("selects references for both image and video prompts", () => {
+    expect(appSource).toContain("referencesForPrompt(finalPrompt, imageState.references)");
+    expect(appSource).toContain("referencesForPrompt(finalPrompt, videoState.unifiedImages)");
+    expect(appSource).toContain("referencesForPrompt(finalPrompt, videoState.seedanceReferences)");
+  });
+
+  it("blocks invalid references before a generation request", () => {
+    expect(appSource).toContain("invalidReferenceMessage(referenceSelection.invalid)");
+    expect(appSource).toContain("normalizeReferenceMentions(finalPrompt)");
   });
 });

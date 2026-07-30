@@ -31,6 +31,10 @@ import {
 } from "./api";
 import { useAuthStore } from "./stores/auth";
 import { useWorkbenchStore } from "./stores/workbench";
+import {
+  normalizeReferenceMentions,
+  referencesForPrompt,
+} from "./referenceMentions";
 import type {
   Adapter,
   Capability,
@@ -52,7 +56,7 @@ import {
   buildVideoMediaFields,
   capabilityFilterForView,
   catalogDefaultValue,
-  catalogMaxCount,
+  catalogReferenceLimit,
   catalogOptionItems,
   catalogParameterSignature,
   catalogRequestKey,
@@ -601,7 +605,7 @@ const draftSaveDisabledTitle = computed(() =>
 const imageSizeOptions = computed(() => catalogOptionItems(activeModel.value, "size", IMAGE_SIZE_OPTIONS));
 const imageQualityOptions = computed(() => catalogOptionItems(activeModel.value, "quality", ["auto", "standard", "hd"]));
 const imageQuantityOptions = computed(() => catalogOptionItems(activeModel.value, "quantity", ["1", "2", "3", "4"]));
-const imageReferenceLimit = computed(() => catalogMaxCount(activeModel.value, ["images", "image"], 14));
+const imageReferenceLimit = computed(() => catalogReferenceLimit(activeModel.value, ["images", "image"], 10));
 const imageHasCatalogParameters = computed(() => hasCatalogParameters(activeModel.value));
 const imageUsesSizeControls = computed(() => hasCatalogParameter(activeModel.value, "size"));
 const imageUsesRatioControls = computed(() => !imageUsesSizeControls.value && supportsCatalogParameter(activeModel.value, "ratio", "aspect_ratio"));
@@ -1372,11 +1376,16 @@ function addPayloadField(
   }
 }
 
-function buildImageRequestBody(model: ModelDefinition, finalPrompt: string, extra: Record<string, unknown>) {
+function buildImageRequestBody(
+  model: ModelDefinition,
+  finalPrompt: string,
+  references: UploadedAsset[],
+  extra: Record<string, unknown>,
+) {
   return buildImageGenerationRequestBody(
     model,
     {
-      references: imageState.references.map((item) => item.publicUrl),
+      references: references.map((item) => item.publicUrl),
       count: imageState.count,
       size: imageState.size,
       ratio: imageState.ratio,
@@ -1612,21 +1621,29 @@ function uploadedAssetsAsConversationAssets(assets: UploadedAsset[], role = "ref
   return assets.map((asset) => uploadedAssetAsConversationAsset(asset, role, label));
 }
 
-function currentImageReferenceAssets(): ConversationAsset[] {
-  return uploadedAssetsAsConversationAssets(imageState.references, "reference", "参考图");
+function currentImageReferenceAssets(assets: UploadedAsset[] = imageState.references): ConversationAsset[] {
+  return uploadedAssetsAsConversationAssets(assets, "reference", "参考图");
 }
 
-function currentVideoReferenceAssets(): ConversationAsset[] {
+function currentVideoReferenceAssets(
+  unifiedImages: UploadedAsset[] = videoState.unifiedImages,
+  seedanceReferences: UploadedAsset[] = videoState.seedanceReferences,
+): ConversationAsset[] {
   const assets: ConversationAsset[] = [];
   if (supportsUnifiedAdapter(activeModel.value?.adapter)) {
-    assets.push(...uploadedAssetsAsConversationAssets(videoState.unifiedImages, "reference", "参考图"));
+    assets.push(...uploadedAssetsAsConversationAssets(unifiedImages, "reference", "参考图"));
   }
   if (activeModel.value?.adapter === "video-seedance") {
-    assets.push(...uploadedAssetsAsConversationAssets(videoState.seedanceReferences, "reference", "参考图"));
+    assets.push(...uploadedAssetsAsConversationAssets(seedanceReferences, "reference", "参考图"));
     if (videoState.seedanceFirst) assets.push(uploadedAssetAsConversationAsset(videoState.seedanceFirst, "first_frame", "首帧"));
     if (videoState.seedanceLast) assets.push(uploadedAssetAsConversationAsset(videoState.seedanceLast, "last_frame", "尾帧"));
   }
   return assets;
+}
+
+function invalidReferenceMessage(invalid: number[]): string {
+  if (!invalid.length) return "";
+  return `提示词包含无效图片引用：${invalid.map((index) => `@${index}`).join("、")}。请删除或重新选择。`;
 }
 
 function imageQueryAssetsFromResult(result: ImageResult, taskId: string): ConversationAsset[] {
@@ -2718,6 +2735,12 @@ async function handleImageSubmit() {
     imageState.error = "请先输入图片需求。";
     return;
   }
+  const referenceSelection = referencesForPrompt(finalPrompt, imageState.references);
+  const referenceError = invalidReferenceMessage(referenceSelection.invalid);
+  if (referenceError) {
+    imageState.error = referenceError;
+    return;
+  }
   const readyError = getModelReadyError(model, setting);
   if (readyError) {
     imageState.error = readyError;
@@ -2733,7 +2756,7 @@ async function handleImageSubmit() {
     modelGroupId: model.id,
     subModelId: model.primarySubModelId || null,
     messages: [
-      { role: "user", content: finalPrompt, assets: currentImageReferenceAssets() },
+      { role: "user", content: finalPrompt, assets: currentImageReferenceAssets(referenceSelection.assets) },
       { role: "assistant", content: "", status: "processing" },
     ],
   });
@@ -2745,7 +2768,12 @@ async function handleImageSubmit() {
     imageState.result = await postProxyWithSignal<ImageResult>("/api/proxy/image", buildModelProxyPayload(model, setting, {
       conversationId: persistedConversationIdFor("image"),
       enable4k: imageSupports4k.value && imageState.enable4k,
-      requestBody: buildImageRequestBody(model, finalPrompt, extra),
+      requestBody: buildImageRequestBody(
+        model,
+        normalizeReferenceMentions(finalPrompt),
+        referenceSelection.assets,
+        extra,
+      ),
     }), controller.signal);
     applyCreditsFromResponse(imageState.result);
     if (imageState.result.conversation) {
@@ -3009,8 +3037,44 @@ async function handleVideoDrop(event: DragEvent) {
   await uploadVideoReferenceFiles(filesFromDropEvent(event), target);
 }
 
-function buildVideoRequestBody(model: ModelDefinition, modelName: string, finalPrompt: string, extra: Record<string, unknown>) {
-  const mediaImages = videoState.mode === "text" ? [] : videoState.unifiedImages.map((item) => item.publicUrl);
+interface VideoReferenceSelection {
+  unifiedImages: UploadedAsset[];
+  seedanceReferences: UploadedAsset[];
+  invalid: number[];
+}
+
+function selectVideoReferences(finalPrompt: string, model: ModelDefinition): VideoReferenceSelection {
+  if (supportsUnifiedAdapter(model.adapter)) {
+    const selection = referencesForPrompt(finalPrompt, videoState.unifiedImages);
+    return {
+      unifiedImages: videoState.mode === "reference" ? selection.assets : videoState.unifiedImages,
+      seedanceReferences: [],
+      invalid: selection.invalid,
+    };
+  }
+  if (model.adapter === "video-seedance" && videoState.mode === "reference") {
+    const selection = referencesForPrompt(finalPrompt, videoState.seedanceReferences);
+    return {
+      unifiedImages: [],
+      seedanceReferences: selection.assets,
+      invalid: selection.invalid,
+    };
+  }
+  const fixedFrames = [videoState.seedanceFirst, videoState.seedanceLast].filter(
+    (asset): asset is UploadedAsset => Boolean(asset),
+  );
+  const selection = referencesForPrompt(finalPrompt, fixedFrames);
+  return { unifiedImages: [], seedanceReferences: [], invalid: selection.invalid };
+}
+
+function buildVideoRequestBody(
+  model: ModelDefinition,
+  modelName: string,
+  finalPrompt: string,
+  references: VideoReferenceSelection,
+  extra: Record<string, unknown>,
+) {
+  const mediaImages = videoState.mode === "text" ? [] : references.unifiedImages.map((item) => item.publicUrl);
   const mediaFields = buildVideoMediaFields(model, videoState.mode, mediaImages);
   const addVideoParameter = (
     payload: Record<string, unknown>,
@@ -3066,7 +3130,7 @@ function buildVideoRequestBody(model: ModelDefinition, modelName: string, finalP
   if (model.adapter === "video-seedance") {
     const content: Array<Record<string, unknown>> = [{ type: "text", text: finalPrompt }];
     if (videoState.mode === "reference") {
-      videoState.seedanceReferences.forEach((asset) => {
+      references.seedanceReferences.forEach((asset) => {
         content.push({ type: "image_url", image_url: { url: asset.publicUrl }, role: "reference_image" });
       });
     }
@@ -3119,6 +3183,12 @@ async function handleVideoCreate() {
     videoState.error = "请先输入视频需求。";
     return;
   }
+  const referenceSelection = selectVideoReferences(finalPrompt, model);
+  const referenceError = invalidReferenceMessage(referenceSelection.invalid);
+  if (referenceError) {
+    videoState.error = referenceError;
+    return;
+  }
   const readyError = getModelReadyError(model, setting);
   if (readyError) {
     videoState.error = readyError;
@@ -3151,7 +3221,14 @@ async function handleVideoCreate() {
     modelGroupId: model.id,
     subModelId: model.primarySubModelId || null,
     messages: [
-      { role: "user", content: finalPrompt },
+      {
+        role: "user",
+        content: finalPrompt,
+        assets: currentVideoReferenceAssets(
+          referenceSelection.unifiedImages,
+          referenceSelection.seedanceReferences,
+        ),
+      },
       { role: "assistant", content: "", status: "processing" },
     ],
   });
@@ -3160,7 +3237,13 @@ async function handleVideoCreate() {
   const controller = createRequestController();
   try {
     const extra = parseJsonInput(videoState.extraJson);
-    const requestBody = buildVideoRequestBody(model, resolveModelName(model, setting), finalPrompt, extra);
+    const requestBody = buildVideoRequestBody(
+      model,
+      resolveModelName(model, setting),
+      normalizeReferenceMentions(finalPrompt),
+      referenceSelection,
+      extra,
+    );
     videoState.createResult = await postProxyWithSignal<VideoCreateResult>("/api/proxy/video/create", buildModelProxyPayload(model, setting, {
       adapter: model.adapter,
       conversationId: persistedConversationIdFor("video"),

@@ -11,6 +11,7 @@ import {
   updateLocalConversationTaskMessage,
   markConversationMessageFailed,
   catalogOptionMaxCount,
+  catalogReferenceLimit,
   composerShortcutFromKeyboardEvent,
   conversationDisplayTitle,
   generatedAssetReferenceFileName,
@@ -91,6 +92,61 @@ const textModel: ModelDefinition = {
   builtin: false,
 };
 
+function modelWithParameterMax(
+  capability: "image" | "video",
+  paramKey: string,
+  maxCount: number,
+): ModelDefinition {
+  return {
+    ...textModel,
+    id: `${capability}-${paramKey}-${maxCount}`,
+    capability,
+    adapter: capability === "image" ? "image-openai" : "video-unified-generic",
+    catalog: {
+      id: "catalog-test",
+      displayName: "Catalog Test",
+      modelName: "catalog-test",
+      modelType: 0,
+      capability,
+      icon: "",
+      description: "",
+      inputHint: "",
+      successRate: "",
+      source: "test",
+      channelGroups: [],
+      parameters: [
+        {
+          id: `parameter-${paramKey}`,
+          displayName: paramKey,
+          paramKey,
+          description: "",
+          widgetType: 0,
+          isRequired: false,
+          defaultValue: "reference",
+          functionTag: "",
+          maxCount,
+          sortOrder: 0,
+          options:
+            paramKey === "video_mode"
+              ? [
+                  {
+                    id: "reference",
+                    optionName: "reference",
+                    optionValue: "reference",
+                    description: "",
+                    maxCount,
+                    isDefault: true,
+                    sortOrder: 0,
+                    priceFactor: "1",
+                  },
+                ]
+              : [],
+        },
+      ],
+    },
+  };
+}
+
 describe("reference upload helpers", () => {
   it("keeps only supported image files for reference uploads", () => {
     const files = [
@@ -102,6 +158,19 @@ describe("reference upload helpers", () => {
     ];
 
     expect(filterReferenceImageFiles(files).map((file) => file.name)).toEqual(["scene.png", "car.JPG", "texture.webp"]);
+  });
+
+  it("caps image and video reference limits at ten", () => {
+    expect(
+      catalogReferenceLimit(modelWithParameterMax("image", "images", 14), ["images"], 14),
+    ).toBe(10);
+    expect(videoModeUploadLimit(modelWithParameterMax("video", "video_mode", 14), "reference")).toBe(10);
+  });
+
+  it("keeps a lower provider reference limit", () => {
+    expect(
+      catalogReferenceLimit(modelWithParameterMax("image", "images", 4), ["images"], 10),
+    ).toBe(4);
   });
 });
 

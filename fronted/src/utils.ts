@@ -8,6 +8,7 @@ import type {
   ModelDefinition,
   ModelSetting,
 } from "./types";
+import { MAX_REFERENCE_ASSETS } from "./referenceMentions";
 
 export function createLocalId(prefix: string): string {
   return `${prefix}-${crypto.randomUUID()}`;
@@ -456,6 +457,14 @@ export function catalogMaxCount(model: ModelDefinition | null | undefined, key: 
   return catalogParameter(model, key)?.maxCount || fallback;
 }
 
+export function catalogReferenceLimit(
+  model: ModelDefinition | null | undefined,
+  key: CatalogParameterKeyInput,
+  fallback: number,
+): number {
+  return Math.min(MAX_REFERENCE_ASSETS, Math.max(0, catalogMaxCount(model, key, fallback)));
+}
+
 export function catalogRequestKey(model: ModelDefinition | null | undefined, key: CatalogParameterKeyInput, fallback: string): string {
   return catalogParameter(model, key)?.paramKey || fallback;
 }
@@ -568,7 +577,10 @@ export function videoModeRequiredUploadCount(mode: VideoModeValue): number {
 export function videoModeUploadLimit(model: ModelDefinition | null | undefined, mode: VideoModeValue): number {
   const fallback = videoModeRequiredUploadCount(mode);
   if (mode === "text") return 0;
-  return catalogOptionMaxCount(model, "video_mode", videoModeParamValue(mode), fallback) || fallback;
+  return Math.min(
+    MAX_REFERENCE_ASSETS,
+    catalogOptionMaxCount(model, "video_mode", videoModeParamValue(mode), fallback) || fallback,
+  );
 }
 
 export function isVeoVideoModel(model: ModelDefinition | null | undefined): boolean {

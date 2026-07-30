@@ -55,6 +55,10 @@ export function rewriteMentionsAfterRemoval(prompt: string, removedIndex: number
   });
 }
 
+export function normalizeReferenceMentions(prompt: string): string {
+  return prompt.replace(/@(\d{1,2})(?!\d)/g, "参考图$1");
+}
+
 export function mentionQueryAtCursor(value: string, cursor: number): MentionQuery | null {
   const safeCursor = Math.max(0, Math.min(cursor, value.length));
   const beforeCursor = value.slice(0, safeCursor);

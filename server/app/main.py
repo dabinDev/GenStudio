@@ -192,6 +192,11 @@ from app.proxy_utils import (
     forward_multipart,
 )
 from app.rate_limit import InMemoryRateLimiter, check_rate_limit
+from app.reference_assets import (
+    collect_reference_image_assets,
+    indexed_reference_metadata,
+    validate_reference_limit,
+)
 from app.schemas import (
     AdminBatchCreditAdjustRequest,
     AdminCreditAdjustRequest,
@@ -404,86 +409,6 @@ def generation_public_error_message(raw: Any, status_code: int = 500) -> str:
     return GENERATION_FAILED_MESSAGE
 
 
-def _reference_role_from_key(key: str, fallback: str = "reference") -> str:
-    normalized = key.strip().lower()
-    if normalized in {"first_frame", "first-frame", "start_image", "start_frame"}:
-        return "first_frame"
-    if normalized in {"last_frame", "last-frame", "end_image", "end_frame"}:
-        return "last_frame"
-    if normalized in {"mask"}:
-        return "mask"
-    return fallback
-
-
-def _reference_label(role: str) -> str:
-    return {
-        "first_frame": "首帧",
-        "last_frame": "尾帧",
-        "mask": "蒙版",
-    }.get(role, "参考图")
-
-
-def _is_storable_reference_url(value: str) -> bool:
-    clean = value.strip()
-    return clean.startswith("/api/assets/") or clean.startswith("http://") or clean.startswith("https://")
-
-
-def collect_reference_image_assets(value: Any) -> list[dict[str, str]]:
-    references: list[dict[str, str]] = []
-    seen: set[str] = set()
-    reference_keys = {
-        "image",
-        "images",
-        "image_url",
-        "img_url",
-        "reference_image",
-        "reference_images",
-        "first_frame",
-        "last_frame",
-        "start_image",
-        "end_image",
-        "mask",
-    }
-
-    def add(url: str, role: str) -> None:
-        clean = url.strip()
-        if not clean or clean in seen or not _is_storable_reference_url(clean):
-            return
-        seen.add(clean)
-        references.append({"url": clean, "role": role, "label": _reference_label(role)})
-
-    def collect(item: Any, role: str = "reference", active: bool = False) -> None:
-        if isinstance(item, str):
-            if active:
-                add(item, role)
-            return
-        if isinstance(item, list):
-            for child in item:
-                collect(child, role, active)
-            return
-        if not isinstance(item, dict):
-            return
-
-        item_role = str(item.get("role") or role or "reference")
-        if isinstance(item.get("image_url"), dict):
-            url = item["image_url"].get("url")
-            if isinstance(url, str):
-                add(url, _reference_role_from_key(item_role, item_role))
-        if isinstance(item.get("url"), str) and active:
-            add(item["url"], _reference_role_from_key(item_role, item_role))
-
-        for key, child in item.items():
-            lower_key = key.lower()
-            if lower_key in reference_keys:
-                next_role = _reference_role_from_key(lower_key, item_role)
-                collect(child, next_role, True)
-            elif lower_key in {"content", "input", "metadata"} or isinstance(child, (dict, list)):
-                collect(child, item_role, False)
-
-    collect(value)
-    return references
-
-
 def add_reference_assets(
     db: Session,
     message: ConversationMessage,
@@ -500,12 +425,11 @@ def add_reference_assets(
             capability=capability,
             asset_type="image",
             url=reference["url"],
-            metadata={
-                "role": reference.get("role") or "reference",
-                "label": reference.get("label") or "参考图",
-                "source": "input",
-                "index": index,
-            },
+            metadata=indexed_reference_metadata(
+                index,
+                reference.get("role") or "reference",
+                reference.get("label") or "参考图",
+            ),
         )
 
 
@@ -5186,6 +5110,7 @@ async def proxy_image(
     request_body = copy.deepcopy(payload.get("requestBody") or {})
     body = {"model": model, **request_body}
     body = normalize_image_reference_fields_for_adapter(body, adapter)
+    validate_reference_limit(body)
     body, is_4k_image, image_4k_target_size = normalize_image_4k_request(
         body,
         adapter=adapter,
@@ -5634,6 +5559,7 @@ async def proxy_image_query(
     settings: Settings = Depends(get_settings),
     _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
+    validate_reference_limit(payload.get("requestBody") or {})
     check_rate_limit(
         limiter=rate_limiter,
         request=request,
@@ -5927,6 +5853,7 @@ async def proxy_video_create(
         raise HTTPException(status_code=400, detail={"message": "缺少视频适配器。"})
 
     request_body = payload.get("requestBody") or {}
+    validate_reference_limit(request_body)
     reference_assets = collect_reference_image_assets(request_body if isinstance(request_body, dict) else {})
     kkyi_video = is_kkyi_video_model(sub_model, base_url)
     if isinstance(request_body, dict):
@@ -6103,6 +6030,7 @@ async def proxy_video_query(
     settings: Settings = Depends(get_settings),
     _csrf: None = Depends(require_csrf),
 ) -> dict[str, Any]:
+    validate_reference_limit(payload.get("requestBody") or {})
     check_rate_limit(
         limiter=rate_limiter,
         request=request,

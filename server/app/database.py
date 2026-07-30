@@ -333,6 +333,34 @@ def init_db() -> None:
         if inspector.has_table("sessions"):
             columns = {column["name"] for column in inspector.get_columns("sessions")}
             _add_column_if_missing(connection, "sessions", columns, "client_ip", "VARCHAR(64) NOT NULL DEFAULT ''")
+        if inspector.has_table("generated_assets"):
+            columns = {column["name"] for column in inspector.get_columns("generated_assets")}
+            asset_storage_columns = {
+                "storage_status": "VARCHAR(32) NOT NULL DEFAULT 'local_pending'",
+                "local_path": "TEXT",
+                "local_thumbnail_path": "TEXT",
+                "r2_object_key": "TEXT",
+                "r2_thumbnail_key": "TEXT",
+                "r2_url": "TEXT",
+                "r2_thumbnail_url": "TEXT",
+                "content_type": "VARCHAR(128) NOT NULL DEFAULT ''",
+                "size_bytes": "BIGINT NOT NULL DEFAULT 0",
+                "sha256": "VARCHAR(64) NOT NULL DEFAULT ''",
+                "local_expires_at": "DATETIME",
+                "sync_attempts": "INTEGER NOT NULL DEFAULT 0",
+                "last_sync_error": "TEXT",
+                "synced_at": "DATETIME",
+                "storage_updated_at": "DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
+            }
+            for column_name, ddl in asset_storage_columns.items():
+                _add_column_if_missing(connection, "generated_assets", columns, column_name, ddl)
+            for column_name in ("storage_status", "local_expires_at", "storage_updated_at"):
+                _create_index_if_missing(
+                    connection,
+                    f"ix_generated_assets_{column_name}",
+                    "generated_assets",
+                    column_name,
+                )
     with SessionLocal() as db:
         from app.credit_service import ensure_default_pricing_rules
 

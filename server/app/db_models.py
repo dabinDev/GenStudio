@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -538,6 +538,21 @@ class GeneratedAsset(Base):
     url: Mapped[str] = mapped_column(Text)
     thumbnail_url: Mapped[str] = mapped_column(Text, default="")
     metadata_json: Mapped[str] = mapped_column(Text, default="")
+    storage_status: Mapped[str] = mapped_column(String(32), default="local_pending", index=True)
+    local_path: Mapped[str] = mapped_column(Text, default="")
+    local_thumbnail_path: Mapped[str] = mapped_column(Text, default="")
+    r2_object_key: Mapped[str] = mapped_column(Text, default="")
+    r2_thumbnail_key: Mapped[str] = mapped_column(Text, default="")
+    r2_url: Mapped[str] = mapped_column(Text, default="")
+    r2_thumbnail_url: Mapped[str] = mapped_column(Text, default="")
+    content_type: Mapped[str] = mapped_column(String(128), default="")
+    size_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    sha256: Mapped[str] = mapped_column(String(64), default="")
+    local_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    sync_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_sync_error: Mapped[str] = mapped_column(Text, default="")
+    synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    storage_updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
 
     message: Mapped[ConversationMessage] = relationship(back_populates="assets")

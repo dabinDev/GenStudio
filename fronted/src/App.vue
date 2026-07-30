@@ -27,7 +27,7 @@ import {
   syncServerModel,
   updateConversationTitle,
   updateServerModel,
-  uploadAsset,
+  uploadReferenceBatch,
 } from "./api";
 import { useAuthStore } from "./stores/auth";
 import { useWorkbenchStore } from "./stores/workbench";
@@ -2799,10 +2799,12 @@ async function uploadImageReferenceFiles(files: File[]) {
   imageState.uploading = true;
   imageState.error = "";
   try {
-    const uploaded = await Promise.all(
-      selectedFiles.map((file) => uploadAsset(file, buildUploadConfig(model, setting))),
-    );
+    const result = await uploadReferenceBatch(selectedFiles, buildUploadConfig(model, setting));
+    const uploaded = result.uploaded;
     imageState.references = [...imageState.references, ...uploaded].slice(0, imageReferenceLimit.value);
+    if (result.failed.length) {
+      imageState.error = `以下文件上传失败：${result.failed.map((item) => item.fileName).join("、")}`;
+    }
     notifyTrimmedReferenceUploads(files.length, selectedFiles.length);
     const latestAsset = uploaded.at(-1);
     if (latestAsset) {
@@ -3105,9 +3107,8 @@ async function uploadVideoReferenceFiles(files: File[], target: VideoUploadTarge
   videoState.uploading = true;
   videoState.error = "";
   try {
-    const uploaded = await Promise.all(
-      selectedFiles.map((file) => uploadAsset(file, buildUploadConfig(model, setting))),
-    );
+    const result = await uploadReferenceBatch(selectedFiles, buildUploadConfig(model, setting));
+    const uploaded = result.uploaded;
     if (target === "unified") {
       videoState.unifiedImages = [...videoState.unifiedImages, ...uploaded].slice(0, unifiedVideoImageLimit.value);
     }
@@ -3117,6 +3118,9 @@ async function uploadVideoReferenceFiles(files: File[], target: VideoUploadTarge
       videoState.seedanceReferences = [...videoState.seedanceReferences, ...uploaded].slice(0, seedanceReferenceLimit());
     }
     if (target === "startEnd") assignStartEndFrames(uploaded);
+    if (result.failed.length) {
+      videoState.error = `以下文件上传失败：${result.failed.map((item) => item.fileName).join("、")}`;
+    }
     notifyTrimmedReferenceUploads(files.length, selectedFiles.length);
   } catch (error) {
     videoState.error = error instanceof Error ? error.message : "素材上传失败。";

@@ -390,7 +390,7 @@ export function shouldFallbackToLocalReference(
 
 export async function uploadAsset(
   file: File,
-  config: { baseUrl?: string; apiKey?: string; subModelId?: string },
+  config: UploadConfig,
 ): Promise<UploadedAsset> {
   try {
     const presign = await postProxy<{
@@ -399,6 +399,8 @@ export async function uploadAsset(
       publicUrl: string;
       objectKey: string;
       contentType: string;
+      thumbnailUrl?: string;
+      thumbnailObjectKey?: string;
     }>("/api/proxy/upload/presign", {
       ...(config.subModelId ? { subModelId: config.subModelId } : { config }),
       fileName: file.name,
@@ -421,6 +423,9 @@ export async function uploadAsset(
       publicUrl: presign.publicUrl,
       contentType: file.type || presign.contentType,
       localPreviewUrl: URL.createObjectURL(file),
+      objectKey: presign.objectKey,
+      thumbnailUrl: presign.thumbnailUrl,
+      thumbnailObjectKey: presign.thumbnailObjectKey,
     };
   } catch (error) {
     if (!shouldFallbackToLocalReference(error)) {
@@ -442,6 +447,9 @@ export async function uploadAsset(
           publicUrl: payload.publicUrl,
           contentType: payload.contentType || file.type || "application/octet-stream",
           localPreviewUrl: payload.localPreviewUrl || payload.publicUrl,
+          objectKey: payload.objectKey,
+          thumbnailUrl: payload.thumbnailUrl,
+          thumbnailObjectKey: payload.thumbnailObjectKey,
         };
       }
     } catch {
@@ -456,4 +464,39 @@ export async function uploadAsset(
       localPreviewUrl: dataUrl,
     };
   }
+}
+
+export interface UploadConfig {
+  baseUrl?: string;
+  apiKey?: string;
+  subModelId?: string;
+}
+
+export interface UploadBatchResult {
+  uploaded: UploadedAsset[];
+  failed: Array<{ fileName: string; message: string }>;
+}
+
+type AssetUploader = (file: File, config: UploadConfig) => Promise<UploadedAsset>;
+
+export async function uploadReferenceBatch(
+  files: File[],
+  config: UploadConfig,
+  uploader: AssetUploader = uploadAsset,
+): Promise<UploadBatchResult> {
+  const settled = await Promise.allSettled(files.map((file) => uploader(file, config)));
+  return settled.reduce<UploadBatchResult>(
+    (result, item, index) => {
+      if (item.status === "fulfilled") {
+        result.uploaded.push(item.value);
+      } else {
+        result.failed.push({
+          fileName: files[index].name,
+          message: item.reason instanceof Error ? item.reason.message : "上传失败",
+        });
+      }
+      return result;
+    },
+    { uploaded: [], failed: [] },
+  );
 }

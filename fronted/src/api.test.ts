@@ -11,9 +11,14 @@ import {
   setCsrfToken,
   shouldFallbackToLocalReference,
   uploadAsset,
+  uploadReferenceBatch,
 } from "./api";
 
 describe("upload helpers", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("falls back to local references when upstream presign support is unavailable", () => {
     expect(shouldFallbackToLocalReference(new ApiRequestError("Invalid URL (POST /api/upload/presign)", 500))).toBe(true);
     expect(shouldFallbackToLocalReference(new ApiRequestError("not found", 404))).toBe(true);
@@ -78,6 +83,66 @@ describe("upload helpers", () => {
         body: expect.any(FormData),
       }),
     );
+  });
+
+  it("preserves object and thumbnail metadata from a successful presigned upload", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            uploadUrl: "https://uploads.example.com/reference.png",
+            method: "PUT",
+            publicUrl: "https://cdn.example.com/reference.png",
+            objectKey: "references/reference.png",
+            contentType: "image/png",
+            thumbnailUrl: "https://cdn.example.com/reference.webp",
+            thumbnailObjectKey: "references/reference.webp",
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("crypto", { randomUUID: () => "asset-id" });
+    vi.stubGlobal("URL", { createObjectURL: () => "blob:reference-preview" });
+
+    const result = await uploadAsset(new File(["fake"], "reference.png", { type: "image/png" }), {
+      subModelId: "sub-model-1",
+    });
+
+    expect(result).toMatchObject({
+      objectKey: "references/reference.png",
+      thumbnailUrl: "https://cdn.example.com/reference.webp",
+      thumbnailObjectKey: "references/reference.webp",
+    });
+  });
+
+  it("keeps successful uploads when another file in the batch fails", async () => {
+    const files = [
+      new File(["one"], "one.png", { type: "image/png" }),
+      new File(["two"], "two.png", { type: "image/png" }),
+      new File(["three"], "three.png", { type: "image/png" }),
+    ];
+    const uploader = vi.fn(async (file: File) => {
+      if (file.name === "two.png") throw new Error("network interrupted");
+      return {
+        id: file.name,
+        fileName: file.name,
+        publicUrl: `https://cdn.example.com/${file.name}`,
+        contentType: file.type,
+        localPreviewUrl: `blob:${file.name}`,
+        objectKey: `references/${file.name}`,
+        thumbnailUrl: `https://cdn.example.com/${file.name}.webp`,
+        thumbnailObjectKey: `references/${file.name}.webp`,
+      };
+    });
+
+    const result = await uploadReferenceBatch(files, { subModelId: "sub-model-1" }, uploader);
+
+    expect(result.uploaded.map((asset) => asset.fileName)).toEqual(["one.png", "three.png"]);
+    expect(result.failed).toEqual([{ fileName: "two.png", message: "network interrupted" }]);
+    expect(uploader).toHaveBeenCalledTimes(3);
   });
 });
 

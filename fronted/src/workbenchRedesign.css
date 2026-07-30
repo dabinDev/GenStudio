@@ -1894,7 +1894,7 @@
   white-space: nowrap;
 }
 
-@media (max-width: 720px) {
+@media screen and (max-width: 720px) {
   .reference-mention-menu {
     right: 0;
     width: 100%;

@@ -109,43 +109,29 @@ describe('admin theme presentation', () => {
     }
   });
 
-  it('renders a theme-specific GSAP ambient layer behind the admin console', () => {
+  it('keeps the admin console static and free of decorative ambient effects', () => {
     const layout = layoutVue();
     const styles = stylesCss();
     const manifest = packageJson();
-    const markerIndex = styles.indexOf('Admin console theme ambient background v2');
+    const markerIndex = styles.indexOf('Admin NewUI detail pass v1');
 
-    expect(manifest).toContain('"gsap"');
-    expect(layout).toContain("import { gsap } from 'gsap'");
+    expect(manifest).not.toContain('"gsap"');
+    expect(layout).not.toContain("import { gsap } from 'gsap'");
     expect(layout).toContain('safeIdentityLabel');
     expect(layout).toContain("auth.user?.email || '管理员'");
     expect(layout).not.toContain("auth.user?.displayName || auth.user?.nickname || auth.user?.email || '管理员'");
-    expect(layout).toContain('setupAdminAmbientAnimation');
-    expect(layout).toContain('teardownAdminAmbientAnimation');
-    expect(layout).toContain('onUnmounted(() =>');
-    expect(layout).toContain('teardownAdminAmbientAnimation();');
-    expect(layout).toContain('watch(() => theme.theme, () => setupAdminAmbientAnimation());');
-    expect(layout).toContain('admin-ambient');
-    expect(layout).toContain('admin-ambient-drift');
-    expect(layout).toContain('admin-ambient-line');
+    expect(layout).not.toContain('setupAdminAmbientAnimation');
+    expect(layout).not.toContain('teardownAdminAmbientAnimation');
+    expect(layout).not.toContain('admin-ambient');
+    expect(layout).not.toContain('admin-ambient-drift');
+    expect(layout).not.toContain('admin-ambient-line');
 
     expect(markerIndex).toBeGreaterThan(-1);
-    expect(styles.indexOf('.admin-layout::before', markerIndex)).toBeGreaterThan(markerIndex);
-    expect(styles.indexOf('animation: none', markerIndex)).toBeGreaterThan(markerIndex);
-    expect(styles.indexOf('pointer-events: none', styles.indexOf('.admin-ambient', markerIndex))).toBeGreaterThan(markerIndex);
-    expect(styles.indexOf('z-index: 0', styles.indexOf('.admin-ambient', markerIndex))).toBeGreaterThan(markerIndex);
-    expect(styles.indexOf('.admin-sidebar,\n.admin-main', markerIndex)).toBeGreaterThan(markerIndex);
-    expect(styles.indexOf('z-index: 1', styles.indexOf('.admin-sidebar,\n.admin-main', markerIndex))).toBeGreaterThan(markerIndex);
-    expect(styles.indexOf('[data-theme=\'light\'] .admin-ambient', markerIndex)).toBeGreaterThan(markerIndex);
-    expect(styles.indexOf('[data-theme=\'dark\'] .admin-ambient', markerIndex)).toBeGreaterThan(markerIndex);
-    expect(styles.indexOf('#f7fafc', markerIndex)).toBeGreaterThan(markerIndex);
-    expect(styles.indexOf('#0d1624', markerIndex)).toBeGreaterThan(markerIndex);
-
-    const lightThemeIndex = styles.indexOf("[data-theme='light'] {", markerIndex);
-    const darkThemeIndex = styles.indexOf("[data-theme='dark'] {", markerIndex);
-    const lightAmbientBlock = styles.slice(lightThemeIndex, darkThemeIndex);
-    expect(lightAmbientBlock).not.toContain('46px 46px');
-    expect(lightAmbientBlock).not.toContain('#101827');
+    const finalStyles = styles.slice(markerIndex);
+    expect(finalStyles).toContain('.admin-layout {');
+    expect(finalStyles).toContain('background: var(--admin-color-bg) !important');
+    expect(finalStyles).not.toContain('.admin-ambient');
+    expect(finalStyles).not.toContain('radial-gradient');
   });
 
   it('keeps Element Plus controls readable in both admin themes', () => {
@@ -609,5 +595,42 @@ describe('admin theme presentation', () => {
     expect(sceneLibrary).toContain('admin-prompt-scene-library__table-wrap');
     expect(sceneLibrary).toContain('grid-template-columns: repeat(2, minmax(0, 1fr))');
     expect(sceneLibrary).toContain('overflow-x: auto');
+  });
+
+  it('stabilizes admin headers, filters, tables, media, and overlays in the final cascade', () => {
+    const styles = stylesCss();
+    const markerIndex = styles.indexOf('Admin NewUI detail pass v1');
+    const finalStyles = styles.slice(markerIndex);
+
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(finalStyles).toContain('.admin-content {');
+    expect(finalStyles).toContain('padding: clamp(16px, 2vw, 28px) !important');
+    expect(finalStyles).toContain('.admin-content-page__header,');
+    expect(finalStyles).toContain('min-height: 72px !important');
+    expect(finalStyles).toContain('.admin-content-page__filters,');
+    expect(finalStyles).toContain('min-height: 52px !important');
+    expect(finalStyles).toContain('.admin-content-page__table > .el-table,');
+    expect(finalStyles).toContain('min-width: 760px !important');
+    expect(finalStyles).toContain('.el-table .el-table__row > td.el-table__cell');
+    expect(finalStyles).toContain('height: 56px !important');
+    expect(finalStyles).toContain('.admin-content-page__record-media-strip img,');
+    expect(finalStyles).toContain('aspect-ratio: 1 !important');
+    expect(finalStyles).toContain('.el-dialog__footer,');
+    expect(finalStyles).toContain('justify-content: flex-end !important');
+    expect(finalStyles).toContain('overflow-wrap: anywhere !important');
+  });
+
+  it('keeps admin focus, motion, safe areas, and narrow data views usable', () => {
+    const styles = stylesCss();
+    const markerIndex = styles.indexOf('Admin NewUI detail pass v1');
+    const finalStyles = styles.slice(markerIndex);
+
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(finalStyles).toContain(':where(button, a, input, textarea, select):focus-visible');
+    expect(finalStyles).toContain('@media (prefers-reduced-motion: reduce)');
+    expect(finalStyles).toContain('@media screen and (max-width: 900px)');
+    expect(finalStyles).toContain('overflow-x: auto !important');
+    expect(finalStyles).toContain('padding-bottom: max(16px, env(safe-area-inset-bottom, 0px)) !important');
+    expect(finalStyles).not.toMatch(/letter-spacing:\s*-/);
   });
 });

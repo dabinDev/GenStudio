@@ -1,13 +1,5 @@
 <template>
   <div class="admin-layout" :class="{ 'admin-layout--collapsed': collapsed }">
-    <div class="admin-ambient" aria-hidden="true">
-      <span class="admin-ambient-drift admin-ambient-glow admin-ambient-glow-primary"></span>
-      <span class="admin-ambient-drift admin-ambient-glow admin-ambient-glow-secondary"></span>
-      <span class="admin-ambient-line admin-ambient-line-a"></span>
-      <span class="admin-ambient-line admin-ambient-line-b"></span>
-      <span class="admin-ambient-drift admin-ambient-dot admin-ambient-dot-a"></span>
-      <span class="admin-ambient-drift admin-ambient-dot admin-ambient-dot-b"></span>
-    </div>
     <aside class="admin-sidebar">
       <div class="admin-brand">
         <div class="admin-brand__title">
@@ -86,8 +78,7 @@ import {
   User,
   MagicStick,
 } from '@element-plus/icons-vue';
-import { gsap } from 'gsap';
-import { computed, nextTick, onMounted, onUnmounted, ref, watch, type Component } from 'vue';
+import { computed, nextTick, onMounted, ref, watch, type Component } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 
 import { visibleAdminMenuItems } from '@/adminNavigation';
@@ -133,54 +124,6 @@ const logoutRedirect =
   (import.meta.env as Record<string, string | undefined>).VITE_ADMIN_LOGOUT_REDIRECT ||
   '/#/auth?redirect=%2Fadmin%2F';
 
-let adminAmbientAnimations: gsap.core.Animation[] = [];
-
-function teardownAdminAmbientAnimation() {
-  adminAmbientAnimations.forEach((animation) => animation.kill());
-  adminAmbientAnimations = [];
-}
-
-function setupAdminAmbientAnimation() {
-  void nextTick(() => {
-    teardownAdminAmbientAnimation();
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-
-    const driftNodes = Array.from(document.querySelectorAll<HTMLElement>('.admin-ambient-drift'));
-    const lines = Array.from(document.querySelectorAll<HTMLElement>('.admin-ambient-line'));
-
-    driftNodes.forEach((node, index) => {
-      adminAmbientAnimations.push(
-        gsap.to(node, {
-          x: index % 2 === 0 ? 18 : -20,
-          y: index % 2 === 0 ? -14 : 16,
-          scale: 1.04,
-          duration: 12 + index * 2,
-          ease: 'sine.inOut',
-          repeat: -1,
-          yoyo: true,
-        }),
-      );
-    });
-
-    lines.forEach((line, index) => {
-      adminAmbientAnimations.push(
-        gsap.fromTo(
-          line,
-          { xPercent: index % 2 === 0 ? -14 : 14, autoAlpha: 0.18 },
-          {
-            xPercent: index % 2 === 0 ? 16 : -16,
-            autoAlpha: 0.52,
-            duration: 7 + index * 1.5,
-            ease: 'sine.inOut',
-            repeat: -1,
-            yoyo: true,
-          },
-        ),
-      );
-    });
-  });
-}
-
 function scrollActiveMobileNavIntoView() {
   const alignActiveMobileNav = () => {
     const track = mobileNavTrackRef.value;
@@ -215,15 +158,8 @@ function safeIdentityLabel(value: string | null | undefined, fallback: string) {
 
 onMounted(() => {
   theme.init();
-  setupAdminAmbientAnimation();
   scrollActiveMobileNavIntoView();
 });
-
-onUnmounted(() => {
-  teardownAdminAmbientAnimation();
-});
-
-watch(() => theme.theme, () => setupAdminAmbientAnimation());
 watch(activePath, () => scrollActiveMobileNavIntoView(), { flush: 'post' });
 watch(() => menuItems.value.length, () => scrollActiveMobileNavIntoView(), { flush: 'post' });
 

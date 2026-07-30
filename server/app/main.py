@@ -197,6 +197,7 @@ from app.reference_assets import (
     indexed_reference_metadata,
     validate_reference_limit,
 )
+from app.asset_storage import backfill_asset_storage
 from app.schemas import (
     AdminBatchCreditAdjustRequest,
     AdminCreditAdjustRequest,
@@ -251,12 +252,26 @@ async def asset_cleanup_loop() -> None:
         await asyncio.sleep(ASSET_CLEANUP_LOOP_INTERVAL_SECONDS)
 
 
+def backfill_asset_storage_once() -> int:
+    db = SessionLocal()
+    try:
+        count = backfill_asset_storage(db, GENERATED_ASSET_DIR, LOCAL_UPLOAD_DIR, get_settings(), batch_size=100)
+        db.commit()
+        return count
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     settings = get_settings()
     settings.validate_startup()
     if settings.auto_create_tables:
         init_db()
+    await asyncio.to_thread(backfill_asset_storage_once)
     cleanup_task = asyncio.create_task(asset_cleanup_loop())
     try:
         yield

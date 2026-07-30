@@ -8,6 +8,8 @@ from urllib.parse import urlparse
 from fastapi import HTTPException
 from sqlalchemy.orm import Session, selectinload
 
+from app.asset_storage import DEFAULT_GENERATED_ROOT, DEFAULT_UPLOADED_ROOT, register_asset_storage
+from app.config import get_settings
 from app.db_models import Conversation, ConversationMessage, GeneratedAsset, User, utcnow
 from app.schemas import (
     ConversationCreate,
@@ -248,4 +250,11 @@ def add_asset(
     )
     db.add(asset)
     db.flush()
+    register_asset_storage(
+        asset,
+        DEFAULT_GENERATED_ROOT,
+        DEFAULT_UPLOADED_ROOT,
+        get_settings(),
+        asset.created_at,
+    )
     return asset

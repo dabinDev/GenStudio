@@ -1983,6 +1983,12 @@
   border-radius: 8px !important;
 }
 
+.shell .composer-surface:has(.reference-mention-menu) {
+  z-index: 90 !important;
+  isolation: auto !important;
+  overflow: visible !important;
+}
+
 .shell .composer-footer-bar {
   min-width: 0 !important;
   align-items: center !important;

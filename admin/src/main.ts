@@ -6,6 +6,7 @@ import { ElButton } from 'element-plus/es/components/button/index.mjs';
 import { ElIcon } from 'element-plus/es/components/icon/index.mjs';
 import { ElLoading } from 'element-plus/es/components/loading/index.mjs';
 import { ElMenu, ElMenuItem } from 'element-plus/es/components/menu/index.mjs';
+import { ElPagination } from 'element-plus/es/components/pagination/index.mjs';
 import { provideGlobalConfig } from 'element-plus/es/components/config-provider/index.mjs';
 import zhCn from 'element-plus/es/locale/lang/zh-cn';
 import { createPinia } from 'pinia';
@@ -27,6 +28,7 @@ const app = createApp(App);
 layoutElementPlusComponents.forEach((component) => {
   app.use(component);
 });
+app.use(ElPagination);
 
 const asyncElementPlusComponents: Record<string, () => Promise<Component>> = {
   ElAlert: () => import('element-plus/es/components/alert/index.mjs').then((module) => module.ElAlert),

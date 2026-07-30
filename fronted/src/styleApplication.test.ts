@@ -842,6 +842,11 @@ describe("workbench style application", () => {
     expect(finalStyles).toContain("overflow-x: auto !important");
     expect(finalStyles).toContain(".shell .reference-mention-menu {");
     expect(finalStyles).toContain("width: min(360px, calc(100vw - 24px)) !important");
+    const mentionSurfaceIndex = finalStyles.indexOf(".shell .composer-surface:has(.reference-mention-menu) {");
+    const mentionSurfaceRule = finalStyles.slice(mentionSurfaceIndex, finalStyles.indexOf("}", mentionSurfaceIndex));
+    expect(mentionSurfaceIndex).toBeGreaterThan(-1);
+    expect(mentionSurfaceRule).toContain("z-index: 90 !important");
+    expect(mentionSurfaceRule).toContain("overflow: visible !important");
     expect(finalStyles).toContain(".shell .composer-pill,");
     expect(finalStyles).toContain("min-height: 40px !important");
     expect(finalStyles).toContain(".shell .settings-model-row {");

@@ -563,12 +563,16 @@ describe('admin theme presentation', () => {
     expect(dashboard).not.toContain("import * as echarts from 'echarts'");
     expect(dashboard).toContain("import('echarts/core')");
     expect(dashboard).toContain("import('echarts/lib/chart/bar')");
+    expect(dashboard).toContain("import('echarts/lib/component/legend')");
+    expect(dashboard).toContain("import('echarts/lib/component/dataZoom')");
     expect(dashboard).not.toContain("import('echarts/charts')");
     expect(config).toContain('manualChunks');
     expect(config).toContain("'admin-ui'");
     expect(config).toContain("'admin-charts'");
     expect(main).not.toContain("import ElementPlus from 'element-plus'");
     expect(main).toContain("element-plus/es/components/button/index.mjs");
+    expect(main).toContain("element-plus/es/components/pagination/index.mjs");
+    expect(main).toContain('app.use(ElPagination)');
   });
 
   it('shows prompt starter examples as examples instead of mixing them into template counts', () => {

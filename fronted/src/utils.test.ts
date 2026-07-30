@@ -167,6 +167,19 @@ describe("reference upload helpers", () => {
     expect(videoModeUploadLimit(modelWithParameterMax("video", "video_mode", 14), "reference")).toBe(10);
   });
 
+  it("allows ten reference images for uncataloged video models", () => {
+    const model: ModelDefinition = {
+      ...textModel,
+      id: "seedance-without-catalog",
+      capability: "video",
+      adapter: "video-seedance",
+    };
+
+    expect(videoModeUploadLimit(model, "reference")).toBe(10);
+    expect(videoModeUploadLimit(model, "first-frame")).toBe(1);
+    expect(videoModeUploadLimit(model, "start-end")).toBe(2);
+  });
+
   it("keeps a lower provider reference limit", () => {
     expect(
       catalogReferenceLimit(modelWithParameterMax("image", "images", 4), ["images"], 10),

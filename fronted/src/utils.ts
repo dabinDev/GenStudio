@@ -575,8 +575,8 @@ export function videoModeRequiredUploadCount(mode: VideoModeValue): number {
 }
 
 export function videoModeUploadLimit(model: ModelDefinition | null | undefined, mode: VideoModeValue): number {
-  const fallback = videoModeRequiredUploadCount(mode);
   if (mode === "text") return 0;
+  const fallback = mode === "reference" ? MAX_REFERENCE_ASSETS : videoModeRequiredUploadCount(mode);
   return Math.min(
     MAX_REFERENCE_ASSETS,
     catalogOptionMaxCount(model, "video_mode", videoModeParamValue(mode), fallback) || fallback,

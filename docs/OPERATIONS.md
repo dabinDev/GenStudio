@@ -252,6 +252,24 @@ npm run build
 cd ..
 ```
 
+### NewUI browser smoke
+
+Run this only against an isolated non-production database. The smoke setup uses development login and creates or reuses three deterministic models named `NewUI Text Smoke`, `NewUI Image Smoke`, and `Seedance 2.0`.
+
+Start the API, creator frontend, and admin frontend, then run from the project root:
+
+```powershell
+node --test scripts/newui-browser-smoke.test.mjs
+$env:FRONT_URL = 'http://127.0.0.1:5175'
+$env:ADMIN_URL = 'http://127.0.0.1:5174/admin'
+$env:API_URL = 'http://127.0.0.1:8000'
+node scripts/newui-browser-smoke.mjs
+```
+
+The browser smoke covers all five creator routes and all eight admin routes at `1440x900`, `1024x768`, and `390x844`, in light and dark themes. It checks semantic landmarks, headings, theme application, page overflow, critical-region overlap, console/page errors, and unexpected 5xx responses. It also uploads ten deterministic PNG references in both image and video flows, checks rendered thumbnails and badges `1` through `10`, inserts `@10`, verifies mention rewriting after removal, and confirms invalid references cannot submit generation requests.
+
+Artifacts are written to the ignored directory `output/newui-smoke/<timestamp>/`. Review `summary.json` and representative creator/admin desktop and mobile screenshots before release. On loopback URLs only, the known `/api/proxy/upload/presign` 5xx used to trigger the development local-upload fallback is ignored; successful fallback thumbnails are still required. This exception is never enabled for production URLs. If bundled Playwright Chromium is absent, the script falls back to installed Chrome and then Edge.
+
 Optional local static preview after both builds:
 
 ```powershell

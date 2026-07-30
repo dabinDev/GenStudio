@@ -227,8 +227,10 @@ async function loadEChartsCore(): Promise<EChartsCore> {
       import('echarts/lib/chart/line'),
       import('echarts/lib/component/grid'),
       import('echarts/lib/component/tooltip'),
+      import('echarts/lib/component/legend'),
+      import('echarts/lib/component/dataZoom'),
       import('echarts/lib/renderer/installCanvasRenderer.js'),
-    ]).then(([core, _bar, _line, _grid, _tooltip, canvasRenderer]) => {
+    ]).then(([core, _bar, _line, _grid, _tooltip, _legend, _dataZoom, canvasRenderer]) => {
       core.use([canvasRenderer.install]);
       return core;
     });

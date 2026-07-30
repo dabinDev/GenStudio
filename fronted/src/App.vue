@@ -828,8 +828,7 @@ function canSubmitActivePrompt(capability: Capability): boolean {
 }
 
 // 返回当前能力提交按钮的禁用原因（空串表示可提交）。
-// 仅覆盖“无模型 / 空需求 / 模型未就绪”这三项通用前置条件，
-// 与 handleTextSubmit / handleImageSubmit / handleVideoCreate 的前置校验保持一致；
+// 与各提交处理函数共享无需异步请求即可判断的前置条件。
 // 视频参考图数量、积分不足等专项校验仍在点击后提示，避免误禁用。
 function composerSubmitBlockReason(capability: Capability): string {
   const model = activeModel.value;
@@ -837,10 +836,18 @@ function composerSubmitBlockReason(capability: Capability): string {
   if (!model || !setting) return getMissingModelMessage(capability);
   const keywords = capability === "text" ? textState.keywords : capability === "image" ? imageState.keywords : videoState.keywords;
   const prompt = capability === "text" ? textState.prompt : capability === "image" ? imageState.prompt : videoState.prompt;
-  if (!combinePrompt(keywords, prompt).trim()) {
+  const combinedPrompt = combinePrompt(keywords, prompt);
+  if (!combinedPrompt.trim()) {
     if (capability === "text") return "请先输入文案需求。";
     if (capability === "image") return "请先输入图片需求。";
     return "请先输入视频需求。";
+  }
+  if (capability !== "text") {
+    const referenceSelection = capability === "image"
+      ? referencesForPrompt(combinedPrompt, imageState.references)
+      : selectVideoReferences(combinedPrompt, model);
+    const referenceError = invalidReferenceMessage(referenceSelection.invalid);
+    if (referenceError) return referenceError;
   }
   return getModelReadyError(model, setting);
 }

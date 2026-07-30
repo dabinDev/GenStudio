@@ -87,4 +87,15 @@ describe("reference mention integration", () => {
     expect(appSource).toContain("invalidReferenceMessage(referenceSelection.invalid)");
     expect(appSource).toContain("normalizeReferenceMentions(finalPrompt)");
   });
+
+  it("disables image and video submit actions while references are invalid", () => {
+    const start = appSource.indexOf("function composerSubmitBlockReason");
+    const end = appSource.indexOf("const textSubmitBlockReason", start);
+    const submitBlockReason = appSource.slice(start, end);
+
+    expect(start).toBeGreaterThan(-1);
+    expect(submitBlockReason).toContain("referencesForPrompt(combinedPrompt, imageState.references)");
+    expect(submitBlockReason).toContain("selectVideoReferences(combinedPrompt, model)");
+    expect(submitBlockReason).toContain("invalidReferenceMessage(referenceSelection.invalid)");
+  });
 });

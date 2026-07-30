@@ -1,4 +1,5 @@
 .git
+**/.env*
 .next
 .pytest_cache
 .deploy-stage

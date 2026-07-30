@@ -302,12 +302,13 @@ Package the release from the project root after `fronted/dist` and `admin/dist` 
 $stageRoot = Join-Path (Resolve-Path '.deploy-stage').Path 'genstudio-release'
 $pkg = Join-Path (Resolve-Path '.deploy-stage').Path 'genstudio-brand-release.tar.gz'
 $resolvedDeploy = (Resolve-Path '.deploy-stage').Path
+$trackedArchive = Join-Path $resolvedDeploy 'genstudio-tracked-source.tar'
 if ($stageRoot -notlike "$resolvedDeploy*") { throw "Unexpected stage path: $stageRoot" }
 if (Test-Path -LiteralPath $stageRoot) { Remove-Item -LiteralPath $stageRoot -Recurse -Force }
 New-Item -ItemType Directory -Path $stageRoot | Out-Null
-Copy-Item -LiteralPath 'server' -Destination (Join-Path $stageRoot 'server') -Recurse
-Copy-Item -LiteralPath 'docs' -Destination (Join-Path $stageRoot 'docs') -Recurse
-Copy-Item -LiteralPath '.dockerignore' -Destination (Join-Path $stageRoot '.dockerignore')
+git archive --format=tar HEAD --output=$trackedArchive -- server docs .dockerignore
+tar -xf $trackedArchive -C $stageRoot
+Remove-Item -LiteralPath $trackedArchive -Force
 New-Item -ItemType Directory -Path (Join-Path $stageRoot 'fronted') | Out-Null
 Copy-Item -LiteralPath 'fronted\dist' -Destination (Join-Path $stageRoot 'fronted\dist') -Recurse
 New-Item -ItemType Directory -Path (Join-Path $stageRoot 'admin') | Out-Null

@@ -6,7 +6,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, unquote, urlparse
 from uuid import uuid4
 
 import boto3
@@ -56,6 +56,52 @@ class ObjectStorageClient:
         destination_path = Path(destination)
         destination_path.parent.mkdir(parents=True, exist_ok=True)
         self._client.download_file(Bucket=self._bucket, Key=key, Filename=str(destination_path))
+
+    def object_key_from_public_url(self, value: str) -> str | None:
+        public_base = urlparse(self._public_base_url)
+        candidate = urlparse(value.strip())
+        if (
+            candidate.scheme.lower() != public_base.scheme.lower()
+            or candidate.netloc.lower() != public_base.netloc.lower()
+        ):
+            return None
+        base_path = public_base.path.rstrip("/")
+        prefix = f"{base_path}/" if base_path else "/"
+        if not candidate.path.startswith(prefix):
+            return None
+        object_key = unquote(candidate.path[len(prefix) :])
+        return object_key if object_key else None
+
+    def read_image(self, key: str, *, max_bytes: int) -> dict[str, Any]:
+        if max_bytes <= 0:
+            raise ValueError("Image size limit must be positive.")
+        response = self._client.get_object(Bucket=self._bucket, Key=key)
+        content_length = int(response.get("ContentLength") or 0)
+        if content_length <= 0:
+            raise ValueError("Object is empty.")
+        if content_length > max_bytes:
+            raise ValueError("Object is too large.")
+        content_type = str(response.get("ContentType") or "").split(";", 1)[0].strip().lower()
+        if not content_type.startswith("image/"):
+            raise ValueError("Object is not an image.")
+        body = response.get("Body")
+        if body is None or not callable(getattr(body, "read", None)):
+            raise ValueError("Object is empty.")
+        try:
+            content = body.read(max_bytes + 1)
+        finally:
+            close = getattr(body, "close", None)
+            if callable(close):
+                close()
+        if not content:
+            raise ValueError("Object is empty.")
+        if len(content) > max_bytes:
+            raise ValueError("Object is too large.")
+        return {
+            "content": content,
+            "content_type": content_type,
+            "filename": key.rstrip("/").rsplit("/", 1)[-1] or "reference.png",
+        }
 
     def public_url(self, key: str) -> str:
         return f"{self._public_base_url}/{quote(key, safe='/-_.~')}"

@@ -859,6 +859,46 @@ describe("workbench style application", () => {
     expect(finalStyles).toContain("max-width: min(420px, calc(100vw - 24px)) !important");
   });
 
+  it("aligns conversation messages to both workspace edges and keeps media rows horizontal", () => {
+    const source = appVue();
+    const styles = redesignCss();
+    const markerIndex = styles.indexOf("Conversation alignment and settings polish v2");
+    const finalStyles = styles.slice(markerIndex);
+
+    expect(source).toContain("message-has-multiple-assets");
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(finalStyles).toContain(".shell .conversation-timeline {");
+    expect(finalStyles).toContain("width: 100% !important");
+    expect(finalStyles).toContain(".shell .message-user {");
+    expect(finalStyles).toContain("grid-template-columns: minmax(0, 1fr) 32px !important");
+    expect(finalStyles).toContain(".shell .message-user .message-avatar {");
+    expect(finalStyles).toContain("grid-column: 2 !important");
+    expect(finalStyles).toContain(".shell .message-assets-multiple {");
+    expect(finalStyles).toContain("grid-auto-flow: column !important");
+    expect(finalStyles).toContain("overflow-x: auto !important");
+    expect(finalStyles).toContain(".shell .message-assets:not(.message-assets-multiple) {");
+    expect(finalStyles).toContain("width: min(100%, 520px) !important");
+  });
+
+  it("flattens settings model rows into one quiet board surface", () => {
+    const styles = redesignCss();
+    const markerIndex = styles.indexOf("Conversation alignment and settings polish v2");
+    const finalStyles = styles.slice(markerIndex);
+
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(finalStyles).toContain(".shell .settings-model-board {");
+    expect(finalStyles).toContain("border: 1px solid var(--line-soft) !important");
+    expect(finalStyles).toContain(".shell .settings-model-row {");
+    expect(finalStyles).toContain("border: 0 !important");
+    expect(finalStyles).toContain("border-bottom: 1px solid var(--line-soft) !important");
+    expect(finalStyles).toContain(".shell .settings-model-row:hover {");
+    expect(finalStyles).toContain("box-shadow: none !important");
+    expect(finalStyles).toContain(".shell .settings-model-row-public {");
+    expect(finalStyles).toContain("box-shadow: none !important");
+    expect(finalStyles).toContain(".shell .settings-primary-model {");
+    expect(finalStyles).toContain("background: var(--surface-soft) !important");
+  });
+
   it("keeps the creator keyboard, text, motion, and phone states usable", () => {
     const styles = redesignCss();
     const markerIndex = styles.indexOf("NewUI creator detail pass v1");

@@ -802,6 +802,158 @@ def test_catalog_image_model_accepts_catalog_images_parameter(monkeypatch) -> No
     }
 
 
+def test_catalog_image_model_sends_r2_references_as_multipart_edits(monkeypatch) -> None:
+    with SessionLocal() as db:
+        upsert_catalog_model_detail(db, kkyi_image_detail())
+        db.commit()
+
+    reference_url = "https://cdn.example.com/genstudio/uploads/reference.png"
+    captured: dict[str, object] = {}
+
+    class FakeObjectStorage:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def object_key_from_public_url(self, value: str) -> str | None:
+            return "genstudio/uploads/reference.png" if value == reference_url else None
+
+        def read_image(self, key: str, *, max_bytes: int) -> dict[str, object]:
+            captured.update({"objectKey": key, "maxBytes": max_bytes})
+            return {
+                "filename": "reference.png",
+                "content": b"\x89PNG\r\n\x1a\n",
+                "content_type": "image/png",
+            }
+
+    async def fail_forward_json(method, url, api_key, body=None):
+        raise AssertionError("configured R2 image-openai references should use image edits")
+
+    async def fake_forward_multipart(url, api_key, *, data=None, files=None):
+        captured.update({"url": url, "data": data, "files": files})
+        raw = {"data": [{"url": "https://cdn.example.com/image.png"}]}
+        return httpx.Response(200, json=raw), raw
+
+    settings = main_module.get_settings()
+    monkeypatch.setattr(settings, "object_storage_enabled", True)
+    monkeypatch.setattr(settings, "object_storage_public_base_url", "https://cdn.example.com/genstudio")
+    monkeypatch.setattr(main_module, "ObjectStorageClient", FakeObjectStorage)
+    monkeypatch.setattr(main_module, "forward_json", fail_forward_json)
+    monkeypatch.setattr(main_module, "forward_multipart", fake_forward_multipart)
+    client = TestClient(app)
+    client.post("/api/auth/dev-login", json={"externalUserId": "official-1"})
+    created = client.post(
+        "/api/models",
+        headers=csrf_headers(client),
+        json={
+            "name": "GPT Image R2",
+            "vendor": "KKYi",
+            "capability": "image",
+            "adapter": "image-openai",
+            "baseUrl": "https://ai-api.kkidc.com",
+            "apiKey": "sk-test",
+            "primaryModelName": "gpt-image-2",
+            "catalogModelId": "10029",
+        },
+    )
+    sub_model_id = created.json()["model"]["primarySubModelId"]
+
+    response = client.post(
+        "/api/proxy/image",
+        headers=csrf_headers(client),
+        json={
+            "subModelId": sub_model_id,
+            "referenceAssets": [
+                {
+                    "url": reference_url,
+                    "thumbnailUrl": "",
+                    "objectKey": "genstudio/uploads/reference.png",
+                    "thumbnailObjectKey": "",
+                    "index": 1,
+                    "role": "reference",
+                    "label": "reference",
+                }
+            ],
+            "requestBody": {
+                "prompt": "use the reference",
+                "images": [reference_url],
+                "response_format": "url",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["url"] == "https://ai-api.kkidc.com/v1/images/edits"
+    assert captured["objectKey"] == "genstudio/uploads/reference.png"
+    assert captured["files"] == [
+        ("image", ("reference.png", b"\x89PNG\r\n\x1a\n", "image/png"))
+    ]
+
+
+def test_catalog_image_model_rejects_unreadable_configured_r2_reference(monkeypatch) -> None:
+    with SessionLocal() as db:
+        upsert_catalog_model_detail(db, kkyi_image_detail())
+        db.commit()
+
+    reference_url = "https://cdn.example.com/genstudio/uploads/missing.png"
+    forwarded = False
+
+    class FailingObjectStorage:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def object_key_from_public_url(self, value: str) -> str | None:
+            return "genstudio/uploads/missing.png" if value == reference_url else None
+
+        def read_image(self, key: str, *, max_bytes: int) -> dict[str, object]:
+            raise ValueError("Object is empty.")
+
+    async def fail_forward(*args, **kwargs):
+        nonlocal forwarded
+        forwarded = True
+        raise AssertionError("an unreadable configured reference must not reach upstream")
+
+    settings = main_module.get_settings()
+    monkeypatch.setattr(settings, "object_storage_enabled", True)
+    monkeypatch.setattr(settings, "object_storage_public_base_url", "https://cdn.example.com/genstudio")
+    monkeypatch.setattr(main_module, "ObjectStorageClient", FailingObjectStorage)
+    monkeypatch.setattr(main_module, "forward_json", fail_forward)
+    monkeypatch.setattr(main_module, "forward_multipart", fail_forward)
+    client = TestClient(app)
+    client.post("/api/auth/dev-login", json={"externalUserId": "official-1"})
+    created = client.post(
+        "/api/models",
+        headers=csrf_headers(client),
+        json={
+            "name": "GPT Image Missing R2",
+            "vendor": "KKYi",
+            "capability": "image",
+            "adapter": "image-openai",
+            "baseUrl": "https://ai-api.kkidc.com",
+            "apiKey": "sk-test",
+            "primaryModelName": "gpt-image-2",
+            "catalogModelId": "10029",
+        },
+    )
+    sub_model_id = created.json()["model"]["primarySubModelId"]
+
+    response = client.post(
+        "/api/proxy/image",
+        headers=csrf_headers(client),
+        json={
+            "subModelId": sub_model_id,
+            "requestBody": {
+                "prompt": "use the missing reference",
+                "images": [reference_url],
+                "response_format": "url",
+            },
+        },
+    )
+
+    assert response.status_code == 400
+    assert "参考图" in response.json()["detail"]["message"]
+    assert forwarded is False
+
+
 def test_catalog_image_model_expands_local_references_from_images_parameter(monkeypatch) -> None:
     with SessionLocal() as db:
         upsert_catalog_model_detail(db, kkyi_image_detail())

@@ -2049,7 +2049,27 @@ def data_url_file_reference(value: str, index: int) -> dict[str, Any] | None:
     }
 
 
-def collect_image_edit_references(body: dict[str, Any]) -> list[dict[str, Any]]:
+def public_object_storage_reference(value: str, public_base_url: str) -> bool:
+    if not public_base_url:
+        return False
+    public_base = urlparse(public_base_url.rstrip("/"))
+    candidate = urlparse(value.strip())
+    if (
+        candidate.scheme.lower() != public_base.scheme.lower()
+        or candidate.netloc.lower() != public_base.netloc.lower()
+    ):
+        return False
+    base_path = public_base.path.rstrip("/")
+    prefix = f"{base_path}/" if base_path else "/"
+    return candidate.path.startswith(prefix)
+
+
+async def collect_request_image_edit_references(
+    body: dict[str, Any],
+    *,
+    adapter: str,
+    settings: Settings,
+) -> list[dict[str, Any]]:
     references = body.get("image")
     if isinstance(references, str):
         items = [references]
@@ -2057,7 +2077,9 @@ def collect_image_edit_references(body: dict[str, Any]) -> list[dict[str, Any]]:
         items = [item for item in references if isinstance(item, str)]
     else:
         return []
+
     collected: list[dict[str, Any]] = []
+    storage: ObjectStorageClient | None = None
     for index, item in enumerate(items):
         local_reference = local_asset_file_reference(item)
         if local_reference:
@@ -2066,6 +2088,32 @@ def collect_image_edit_references(body: dict[str, Any]) -> list[dict[str, Any]]:
         data_reference = data_url_file_reference(item, index)
         if data_reference:
             collected.append(data_reference)
+            continue
+        if (
+            adapter != "image-openai"
+            or not settings.object_storage_enabled
+            or not public_object_storage_reference(
+                item,
+                settings.object_storage_public_base_url,
+            )
+        ):
+            continue
+        try:
+            storage = storage or ObjectStorageClient(settings)
+            object_key = storage.object_key_from_public_url(item)
+            if not object_key:
+                raise ValueError("Object key is missing.")
+            reference = await asyncio.to_thread(
+                storage.read_image,
+                object_key,
+                max_bytes=MAX_INLINE_REFERENCE_LENGTH,
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={"message": "参考图读取失败，请重新上传后再试。"},
+            ) from exc
+        collected.append(reference)
     return collected
 
 
@@ -5391,7 +5439,11 @@ async def proxy_image(
     )
     image_count = requested_image_count(body)
     reference_assets = validate_reference_asset_metadata(payload.get("referenceAssets"), body)
-    edit_references = collect_image_edit_references(body)
+    edit_references = await collect_request_image_edit_references(
+        body,
+        adapter=adapter,
+        settings=settings,
+    )
     target_url = resolve_url(base_url, "/v1/images/edits" if edit_references else "/v1/images/generations")
     if not edit_references:
         body = expand_local_image_references(body)

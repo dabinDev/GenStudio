@@ -994,20 +994,25 @@ export function mergeImageQueryAssets(input: {
   now?: string;
 }): Array<Partial<ConversationAsset> & { assetType: string; url: string }> {
   const seen = new Set<string>();
-  const merged: Array<Partial<ConversationAsset> & { assetType: string; url: string }> = [];
+  const slots = new Map<number, Partial<ConversationAsset> & { assetType: string; url: string }>();
   const createdAt = input.now || new Date().toISOString();
   const assistantAssets = input.assistantAssets || [];
   const hasTaskScopedAssistantAssets = assistantAssets.some(
     (asset) => String(asset.metadata?.taskId || "") === input.taskId,
   );
+  let fallbackPosition = 0;
 
   for (const asset of assistantAssets) {
     if (asset.assetType !== "image" || !asset.url || seen.has(asset.url)) continue;
     const assetTaskId = String(asset.metadata?.taskId || "");
     if (input.taskId && assetTaskId && assetTaskId !== input.taskId) continue;
     if (input.taskId && !assetTaskId && hasTaskScopedAssistantAssets) continue;
+    const batchIndex = Number(asset.metadata?.batchIndex);
+    let position = Number.isInteger(batchIndex) && batchIndex > 0 ? batchIndex - 1 : fallbackPosition;
+    while (slots.has(position)) position += 1;
+    fallbackPosition = Math.max(fallbackPosition, position + 1);
     seen.add(asset.url);
-    merged.push({
+    slots.set(position, {
       ...asset,
       assetType: "image",
       url: asset.url,
@@ -1022,21 +1027,23 @@ export function mergeImageQueryAssets(input: {
     });
   }
 
-  for (const asset of conversationAssetsFromImageQueryResult({
+  conversationAssetsFromImageQueryResult({
     taskId: input.taskId,
     status: input.status,
     progress: input.progress,
     images: input.images || [],
-  })) {
-    if (!asset.url || seen.has(asset.url)) continue;
+  }).forEach((asset, position) => {
+    if (!asset.url || slots.has(position) || seen.has(asset.url)) return;
     seen.add(asset.url);
-    merged.push({
+    slots.set(position, {
       ...asset,
       createdAt,
     });
-  }
+  });
 
-  return merged;
+  return [...slots.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([, asset]) => asset);
 }
 
 export function shouldResetConversationForModelSwitch(

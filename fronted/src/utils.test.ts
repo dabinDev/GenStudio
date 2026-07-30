@@ -2210,6 +2210,83 @@ describe("conversation helpers", () => {
     });
   });
 
+  it("prefers the persisted asset for the same logical image output", () => {
+    const merged = mergeImageQueryAssets({
+      taskId: "local-image-task-one",
+      status: "completed",
+      progress: "1/1",
+      images: [{ src: "https://upstream.example.com/generated.png" }],
+      assistantAssets: [
+        {
+          id: "server-asset-one",
+          capability: "image",
+          assetType: "image",
+          url: "https://r2.example.com/genstudio/generated.png",
+          thumbnailUrl: "https://r2.example.com/genstudio/generated-thumb.webp",
+          metadata: { taskId: "local-image-task-one", batchIndex: 1 },
+          createdAt: "2026-06-14T01:00:00.000Z",
+        },
+      ],
+      now: "2026-06-14T01:00:01.000Z",
+    });
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]).toMatchObject({
+      id: "server-asset-one",
+      url: "https://r2.example.com/genstudio/generated.png",
+      thumbnailUrl: "https://r2.example.com/genstudio/generated-thumb.webp",
+      metadata: { batchIndex: 1 },
+    });
+  });
+
+  it("fills only missing batch positions from image query results", () => {
+    const merged = mergeImageQueryAssets({
+      taskId: "local-image-task-partial",
+      status: "completed",
+      progress: "4/4",
+      images: [
+        { src: "https://upstream.example.com/one.png" },
+        { src: "https://upstream.example.com/two.png" },
+        { src: "https://upstream.example.com/three.png" },
+        { src: "https://upstream.example.com/four.png" },
+      ],
+      assistantAssets: [
+        {
+          id: "server-asset-one",
+          capability: "image",
+          assetType: "image",
+          url: "https://r2.example.com/one.png",
+          thumbnailUrl: "https://r2.example.com/one-thumb.webp",
+          metadata: { taskId: "local-image-task-partial", batchIndex: 1 },
+          createdAt: "2026-06-14T01:00:00.000Z",
+        },
+        {
+          id: "server-asset-three",
+          capability: "image",
+          assetType: "image",
+          url: "https://r2.example.com/three.png",
+          thumbnailUrl: "https://r2.example.com/three-thumb.webp",
+          metadata: { taskId: "local-image-task-partial", batchIndex: 3 },
+          createdAt: "2026-06-14T01:00:02.000Z",
+        },
+      ],
+      now: "2026-06-14T01:00:04.000Z",
+    });
+
+    expect(merged.map((asset) => asset.url)).toEqual([
+      "https://r2.example.com/one.png",
+      "https://upstream.example.com/two.png",
+      "https://r2.example.com/three.png",
+      "https://upstream.example.com/four.png",
+    ]);
+    expect(merged.map((asset) => asset.id || null)).toEqual([
+      "server-asset-one",
+      null,
+      "server-asset-three",
+      null,
+    ]);
+  });
+
   it("keeps image query assets scoped to the current task id", () => {
     const merged = mergeImageQueryAssets({
       taskId: "local-image-task-second",

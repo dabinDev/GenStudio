@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,7 +15,10 @@ class FakeS3Client:
         self.heads: list[dict] = []
         self.deletes: list[dict] = []
         self.downloads: list[dict] = []
+        self.gets: list[dict] = []
         self.content_length = 123
+        self.content_type = "image/png"
+        self.content = b"image-content"
 
     def upload_file(self, **kwargs) -> None:
         self.uploads.append(kwargs)
@@ -28,6 +32,14 @@ class FakeS3Client:
 
     def download_file(self, **kwargs) -> None:
         self.downloads.append(kwargs)
+
+    def get_object(self, **kwargs) -> dict:
+        self.gets.append(kwargs)
+        return {
+            "ContentLength": self.content_length,
+            "ContentType": self.content_type,
+            "Body": io.BytesIO(self.content),
+        }
 
 
 def storage_settings():
@@ -89,6 +101,51 @@ def test_public_url_encodes_path_components_but_preserves_slashes() -> None:
     assert client.public_url("folder/space name/图.png") == (
         "https://cdn.example.com/assets/folder/space%20name/%E5%9B%BE.png"
     )
+
+
+def test_object_key_from_public_url_accepts_only_the_configured_public_path() -> None:
+    client = ObjectStorageClient(storage_settings(), client=FakeS3Client())
+
+    assert client.object_key_from_public_url(
+        "https://cdn.example.com/assets/folder/space%20name/reference.png?cache=1"
+    ) == "folder/space name/reference.png"
+    assert client.object_key_from_public_url("https://cdn.example.com/assets") is None
+    assert client.object_key_from_public_url("https://cdn.example.com/assets-evil/reference.png") is None
+    assert client.object_key_from_public_url("https://other.example.com/assets/reference.png") is None
+
+
+def test_read_image_returns_bounded_image_content() -> None:
+    fake = FakeS3Client()
+    fake.content_length = len(fake.content)
+    client = ObjectStorageClient(storage_settings(), client=fake)
+
+    result = client.read_image("uploads/reference.png", max_bytes=1024)
+
+    assert result == {
+        "content": b"image-content",
+        "content_type": "image/png",
+        "filename": "reference.png",
+    }
+    assert fake.gets == [{"Bucket": "genstudio-assets", "Key": "uploads/reference.png"}]
+
+
+@pytest.mark.parametrize(
+    ("content", "content_length", "content_type", "message"),
+    [
+        (b"", 0, "image/png", "empty"),
+        (b"not-an-image", 12, "text/plain", "image"),
+        (b"too-large", 2048, "image/png", "large"),
+    ],
+)
+def test_read_image_rejects_invalid_objects(content, content_length, content_type, message) -> None:
+    fake = FakeS3Client()
+    fake.content = content
+    fake.content_length = content_length
+    fake.content_type = content_type
+    client = ObjectStorageClient(storage_settings(), client=fake)
+
+    with pytest.raises(ValueError, match=message):
+        client.read_image("uploads/reference.png", max_bytes=1024)
 
 
 def test_repr_does_not_expose_credentials() -> None:

@@ -4439,7 +4439,12 @@ async function removeUnavailableModels() {
             <article
               v-for="message in currentMessages"
               :key="message.id"
-              :class="['message-card', `message-${message.role}`, `message-status-${message.status}`]"
+              :class="[
+                'message-card',
+                `message-${message.role}`,
+                `message-status-${message.status}`,
+                message.assets.length > 1 ? 'message-has-multiple-assets' : '',
+              ]"
             >
               <div
                 :class="[

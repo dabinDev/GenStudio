@@ -13,6 +13,7 @@ const modelCenterVue = () => readFileSync(resolve(process.cwd(), 'src/views/Mode
 const auditLogsVue = () => readFileSync(resolve(process.cwd(), 'src/views/AuditLogsView.vue'), 'utf8');
 const viteConfig = () => readFileSync(resolve(process.cwd(), 'vite.config.ts'), 'utf8');
 const mainTs = () => readFileSync(resolve(process.cwd(), 'src/main.ts'), 'utf8');
+const echartsDeclarations = () => readFileSync(resolve(process.cwd(), 'src/types/echarts-lite.d.ts'), 'utf8');
 const stylesCss = () => readFileSync(resolve(process.cwd(), 'src/styles/global.css'), 'utf8').replace(/\r\n/g, '\n');
 const packageJson = () => readFileSync(resolve(process.cwd(), 'package.json'), 'utf8');
 
@@ -559,12 +560,15 @@ describe('admin theme presentation', () => {
     const dashboard = readFileSync(resolve(process.cwd(), 'src/views/DashboardView.vue'), 'utf8');
     const config = viteConfig();
     const main = mainTs();
+    const declarations = echartsDeclarations();
 
     expect(dashboard).not.toContain("import * as echarts from 'echarts'");
     expect(dashboard).toContain("import('echarts/core')");
     expect(dashboard).toContain("import('echarts/lib/chart/bar')");
     expect(dashboard).toContain("import('echarts/lib/component/legend')");
     expect(dashboard).toContain("import('echarts/lib/component/dataZoom')");
+    expect(declarations).toContain("declare module 'echarts/lib/component/legend'");
+    expect(declarations).toContain("declare module 'echarts/lib/component/dataZoom'");
     expect(dashboard).not.toContain("import('echarts/charts')");
     expect(config).toContain('manualChunks');
     expect(config).toContain("'admin-ui'");

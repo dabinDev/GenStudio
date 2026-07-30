@@ -18,6 +18,16 @@ declare module 'echarts/lib/component/tooltip' {
   export default value;
 }
 
+declare module 'echarts/lib/component/legend' {
+  const value: unknown;
+  export default value;
+}
+
+declare module 'echarts/lib/component/dataZoom' {
+  const value: unknown;
+  export default value;
+}
+
 declare module 'echarts/lib/renderer/installCanvasRenderer.js' {
   export function install(registers: unknown): void;
 }

@@ -107,5 +107,10 @@ def test_seedance_video_expands_local_frame_references_before_forwarding(monkeyp
     conversation = response.json()["conversation"]
     user_message = conversation["messages"][0]
     assert user_message["role"] == "user"
-    assert user_message["assets"][0]["url"] == f"/api/assets/uploads/{upload_name}"
+    asset_url = user_message["assets"][0]["url"]
+    assert asset_url.startswith("/api/assets/")
+    assert asset_url.endswith("/content")
+    stored_frame = client.get(asset_url)
+    assert stored_frame.status_code == 200
+    assert stored_frame.content == b"fake-video-frame"
     assert user_message["assets"][0]["metadata"]["role"] == "first_frame"

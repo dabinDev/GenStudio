@@ -36,7 +36,7 @@
       <header class="admin-topbar">
         <div>
           <p class="admin-topbar-label">后台控制台</p>
-          <h1>{{ route.meta.title || '仪表盘' }}</h1>
+          <h1 id="admin-route-heading">{{ route.meta.title || '仪表盘' }}</h1>
         </div>
         <div class="admin-actions">
           <el-button circle :title="theme.isDark ? '切换到白天模式' : '切换到夜间模式'" @click="theme.toggle">
@@ -63,7 +63,11 @@
           </RouterLink>
         </div>
       </nav>
-      <main class="admin-content">
+      <main
+        class="admin-content"
+        :data-testid="route.meta.testId || 'admin-view'"
+        aria-labelledby="admin-route-heading"
+      >
         <router-view />
       </main>
     </section>

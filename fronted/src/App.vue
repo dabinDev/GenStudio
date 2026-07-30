@@ -153,6 +153,45 @@ import {
 import { shouldShowDevAuth } from "./env";
 
 type ViewName = "auth" | "auth-error" | "text" | "images" | "videos" | "settings" | "profile";
+type ViewPresentationState = "loading" | "empty" | "error" | "ready";
+
+const VIEW_PRESENTATION: Record<ViewName, { testId: string; headingId: string; heading: string }> = {
+  auth: {
+    testId: "auth-view",
+    headingId: "auth-view-heading",
+    heading: "登录 创意工坊",
+  },
+  "auth-error": {
+    testId: "auth-error-view",
+    headingId: "auth-error-view-heading",
+    heading: "授权失败",
+  },
+  text: {
+    testId: "text-view",
+    headingId: "text-view-heading",
+    heading: "文案创作",
+  },
+  images: {
+    testId: "images-view",
+    headingId: "images-view-heading",
+    heading: "图片创作",
+  },
+  videos: {
+    testId: "videos-view",
+    headingId: "videos-view-heading",
+    heading: "视频创作",
+  },
+  settings: {
+    testId: "settings-view",
+    headingId: "settings-view-heading",
+    heading: "模型配置",
+  },
+  profile: {
+    testId: "profile-view",
+    headingId: "profile-view-heading",
+    heading: "个人信息",
+  },
+};
 type SidebarFilter = Capability | "all";
 type VideoMode = VideoModeValue;
 type VideoUploadTarget = "unified" | "first" | "last" | "seedanceRef" | "startEnd";
@@ -453,6 +492,44 @@ const activeCapability = computed<Capability | null>(() => {
   if (view.value === "text") return "text";
   return null;
 });
+const viewPresentation = computed(() => VIEW_PRESENTATION[view.value]);
+const viewPresentationState = computed<ViewPresentationState>(() => {
+  const isLoading = view.value === "auth"
+    ? auth.state.loading
+    : view.value === "text"
+      ? textState.loading || conversationState.loading
+      : view.value === "images"
+        ? imageState.loading || imageState.uploading || conversationState.loading
+        : view.value === "videos"
+          ? videoState.loading || videoState.uploading || videoState.querying || conversationState.loading
+          : view.value === "profile"
+            ? auth.state.loading
+            : false;
+  if (isLoading) return "loading";
+
+  const hasError = view.value === "auth-error"
+    || (view.value === "auth" && Boolean(authForm.error || auth.state.error))
+    || (view.value === "text" && Boolean(textState.error || conversationState.error))
+    || (view.value === "images" && Boolean(imageState.error || conversationState.error))
+    || (view.value === "videos" && Boolean(videoState.error || conversationState.error))
+    || (view.value === "profile" && Boolean(profileForm.error || passwordForm.error));
+  if (hasError) return "error";
+
+  const isEmpty = (view.value === "text" || view.value === "images" || view.value === "videos")
+    ? currentMessages.value.length === 0
+    : view.value === "settings"
+      ? store.models.value.length === 0
+      : view.value === "profile"
+        ? !auth.state.user
+        : false;
+  return isEmpty ? "empty" : "ready";
+});
+const viewPresentationStatus = computed(() => ({
+  loading: `${viewPresentation.value.heading}正在处理`,
+  empty: `${viewPresentation.value.heading}暂无内容`,
+  error: `${viewPresentation.value.heading}发生错误`,
+  ready: `${viewPresentation.value.heading}已就绪`,
+})[viewPresentationState.value]);
 const primaryNavSection = computed<"models" | "account">(() =>
   view.value === "settings" || view.value === "profile" || view.value === "auth" || view.value === "auth-error"
     ? "account"
@@ -4235,7 +4312,20 @@ async function removeUnavailableModels() {
       </div>
     </aside>
 
-    <main class="main">
+    <main
+      class="main"
+      :data-testid="viewPresentation.testId"
+      :aria-labelledby="viewPresentation.headingId"
+    >
+      <h1 :id="viewPresentation.headingId" class="visually-hidden">{{ viewPresentation.heading }}</h1>
+      <div
+        class="visually-hidden"
+        data-testid="view-state"
+        aria-live="polite"
+        :data-state="viewPresentationState"
+      >
+        {{ viewPresentationStatus }}
+      </div>
       <div class="workspace-topbar">
         <div class="workspace-topbar-actions">
           <button @click="startNewConversation()">+ 新建对话</button>
@@ -4440,7 +4530,7 @@ async function removeUnavailableModels() {
             </article>
           </div>
 
-          <div v-else-if="!activeModel" class="empty-canvas empty-canvas-workbench">
+          <div v-else-if="!activeModel" class="empty-canvas empty-canvas-workbench" data-testid="creator-empty-state">
             <div class="empty-canvas-card">
               <div class="empty-canvas-copy">
                 <h3>{{ activeModel ? `使用 ${modelDisplayName(activeModel)} 开始创作` : "选择创作模型" }}</h3>
@@ -4563,7 +4653,7 @@ async function removeUnavailableModels() {
                 <label><span>温度</span><input v-model="textState.temperature" /></label>
                 <label><span>最大 Token</span><input v-model="textState.maxTokens" /></label>
               </div>
-              <button class="composer-submit-button" :disabled="textState.loading || Boolean(textSubmitBlockReason)" :title="textSubmitBlockReason || '发送（Ctrl+Enter）'" @click="handleTextSubmit">发送</button>
+              <button data-testid="text-primary-action" class="composer-submit-button" :disabled="textState.loading || Boolean(textSubmitBlockReason)" :title="textSubmitBlockReason || '发送（Ctrl+Enter）'" @click="handleTextSubmit">发送</button>
             </div>
             <details class="composer-details">
               <summary>系统提示词与高级 JSON</summary>
@@ -4751,7 +4841,7 @@ async function removeUnavailableModels() {
                 </div>
               </div>
               <div class="composer-action-group">
-                <button class="composer-submit-button" :disabled="imageState.loading || Boolean(imageSubmitBlockReason)" :title="imageSubmitBlockReason || '生成（Ctrl+Enter）'" @click="handleImageSubmit">生成</button>
+                <button data-testid="images-primary-action" class="composer-submit-button" :disabled="imageState.loading || Boolean(imageSubmitBlockReason)" :title="imageSubmitBlockReason || '生成（Ctrl+Enter）'" @click="handleImageSubmit">生成</button>
                 <button class="button-secondary composer-query-button" :disabled="imageState.loading || !imageTaskIdFromConversation()" @click="() => handleImageQuery()">查询</button>
               </div>
             </div>
@@ -4944,7 +5034,7 @@ async function removeUnavailableModels() {
                 </div>
               </div>
               <div class="composer-video-actions composer-action-group">
-                <button class="composer-submit-button" :disabled="videoState.loading || Boolean(videoSubmitBlockReason)" :title="videoSubmitBlockReason || '创建（Ctrl+Enter）'" @click="handleVideoCreate">创建</button>
+                <button data-testid="videos-primary-action" class="composer-submit-button" :disabled="videoState.loading || Boolean(videoSubmitBlockReason)" :title="videoSubmitBlockReason || '创建（Ctrl+Enter）'" @click="handleVideoCreate">创建</button>
                 <button class="button-secondary composer-query-button" :disabled="videoState.querying || !videoState.createResult?.taskId" @click="() => handleVideoQuery()">查询</button>
               </div>
             </div>
@@ -4982,7 +5072,7 @@ async function removeUnavailableModels() {
                 <span>密码</span>
                 <input v-model="authForm.password" autocomplete="current-password" type="password" placeholder="至少 8 位" />
               </label>
-              <button :disabled="auth.state.loading || !authForm.identifier || !authForm.password" type="submit">
+              <button data-testid="auth-primary-action" :disabled="auth.state.loading || !authForm.identifier || !authForm.password" type="submit">
                 {{ auth.state.loading ? "登录中..." : "登录" }}
               </button>
             </form>
@@ -5004,7 +5094,7 @@ async function removeUnavailableModels() {
                 <span>密码</span>
                 <input v-model="authForm.registerPassword" autocomplete="new-password" type="password" placeholder="至少 8 位，包含字母和数字" />
               </label>
-              <button :disabled="auth.state.loading || (!authForm.email && !authForm.phone) || !authForm.registerPassword" type="submit">
+              <button data-testid="auth-primary-action" :disabled="auth.state.loading || (!authForm.email && !authForm.phone) || !authForm.registerPassword" type="submit">
                 {{ auth.state.loading ? "注册中..." : "注册并登录" }}
               </button>
             </form>
@@ -5120,7 +5210,7 @@ async function removeUnavailableModels() {
             <div v-if="profileForm.success" class="inline-message inline-success">{{ profileForm.success }}</div>
             <div class="profile-account-panel-actions">
               <span>保存后将同步到当前登录账号。</span>
-              <button :disabled="!auth.state.user || auth.state.loading" @click="handleProfileSave">
+              <button data-testid="profile-primary-action" :disabled="!auth.state.user || auth.state.loading" @click="handleProfileSave">
                 {{ auth.state.loading ? "保存中..." : "保存资料" }}
               </button>
             </div>
@@ -5240,7 +5330,7 @@ async function removeUnavailableModels() {
                 移除不可用 {{ unavailableEditableSettingsModels.length ? unavailableEditableSettingsModels.length : "" }}
               </button>
               <button class="button-danger" :disabled="!selectedEditableSettingsModels.length" @click="batchDelete">批量删除</button>
-              <button @click="openCreateDialog">+ 添加模型</button>
+              <button data-testid="settings-primary-action" @click="openCreateDialog">+ 添加模型</button>
             </div>
           </div>
 

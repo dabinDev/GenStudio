@@ -388,6 +388,37 @@ export function shouldFallbackToLocalReference(
   return message.includes("invalid url") || message.includes("presign") || message.includes("上传地址");
 }
 
+export async function createReferenceThumbnail(
+  file: File,
+  maxSide = 640,
+  quality = 0.78,
+): Promise<Blob> {
+  const bitmap = await createImageBitmap(file);
+  try {
+    const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("无法创建图片缩略图。");
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    return await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(
+        (blob) => blob ? resolve(blob) : reject(new Error("无法创建图片缩略图。")),
+        "image/webp",
+        quality,
+      );
+    });
+  } finally {
+    bitmap.close();
+  }
+}
+
+function thumbnailFileName(fileName: string): string {
+  const stem = fileName.replace(/\.[^.]+$/, "").trim() || "reference";
+  return `${stem}.webp`;
+}
+
 export async function uploadAsset(
   file: File,
   config: UploadConfig,
@@ -417,6 +448,27 @@ export async function uploadAsset(
       throw new Error("文件上传到预签名地址失败。");
     }
 
+    const thumbnail = await createReferenceThumbnail(file);
+    const thumbnailPresign = await postProxy<{
+      uploadUrl: string;
+      method: string;
+      publicUrl: string;
+      objectKey: string;
+      contentType: string;
+    }>("/api/proxy/upload/presign", {
+      ...(config.subModelId ? { subModelId: config.subModelId } : { config }),
+      fileName: thumbnailFileName(file.name),
+      contentType: "image/webp",
+    });
+    const thumbnailResponse = await fetch(thumbnailPresign.uploadUrl, {
+      method: thumbnailPresign.method || "PUT",
+      headers: { "Content-Type": "image/webp" },
+      body: thumbnail,
+    });
+    if (!thumbnailResponse.ok) {
+      throw new Error("缩略图上传失败。");
+    }
+
     return {
       id: crypto.randomUUID(),
       fileName: file.name,
@@ -424,8 +476,8 @@ export async function uploadAsset(
       contentType: file.type || presign.contentType,
       localPreviewUrl: URL.createObjectURL(file),
       objectKey: presign.objectKey,
-      thumbnailUrl: presign.thumbnailUrl,
-      thumbnailObjectKey: presign.thumbnailObjectKey,
+      thumbnailUrl: thumbnailPresign.publicUrl,
+      thumbnailObjectKey: thumbnailPresign.objectKey,
     };
   } catch (error) {
     if (!shouldFallbackToLocalReference(error)) {

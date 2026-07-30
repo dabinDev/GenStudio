@@ -193,8 +193,8 @@ from app.proxy_utils import (
 )
 from app.rate_limit import InMemoryRateLimiter, check_rate_limit
 from app.reference_assets import (
-    collect_reference_image_assets,
     indexed_reference_metadata,
+    validate_reference_asset_metadata,
     validate_reference_limit,
 )
 from app.asset_storage import backfill_asset_storage, resolve_stored_asset_path
@@ -465,22 +465,37 @@ def add_reference_assets(
     user: User,
     *,
     capability: str,
-    references: list[dict[str, str]],
+    references: list[dict[str, Any]],
 ) -> None:
     for index, reference in enumerate(references):
-        add_asset(
+        metadata = indexed_reference_metadata(
+            index,
+            reference.get("role") or "reference",
+            reference.get("label") or "参考图",
+        )
+        metadata["index"] = reference.get("index") or index + 1
+        for key in ("objectKey", "thumbnailObjectKey"):
+            if reference.get(key):
+                metadata[key] = reference[key]
+        asset = add_asset(
             db,
             message,
             user,
             capability=capability,
             asset_type="image",
             url=reference["url"],
-            metadata=indexed_reference_metadata(
-                index,
-                reference.get("role") or "reference",
-                reference.get("label") or "参考图",
-            ),
+            thumbnail_url=str(reference.get("thumbnailUrl") or ""),
+            metadata=metadata,
         )
+        object_key = str(reference.get("objectKey") or "")
+        thumbnail_key = str(reference.get("thumbnailObjectKey") or "")
+        if object_key and thumbnail_key and asset.thumbnail_url:
+            asset.r2_object_key = object_key
+            asset.r2_thumbnail_key = thumbnail_key
+            asset.r2_url = asset.url
+            asset.r2_thumbnail_url = asset.thumbnail_url
+            asset.storage_status = "r2_synced"
+            asset.synced_at = asset.synced_at or utcnow()
 
 
 def safe_frontend_hash_path(value: str, fallback: str = "#/settings") -> str:
@@ -5213,7 +5228,7 @@ async def proxy_image(
         enable_4k=payload.get("enable4k") is True,
     )
     image_count = requested_image_count(body)
-    reference_assets = collect_reference_image_assets(body)
+    reference_assets = validate_reference_asset_metadata(payload.get("referenceAssets"), body)
     edit_references = collect_image_edit_references(body)
     target_url = resolve_url(base_url, "/v1/images/edits" if edit_references else "/v1/images/generations")
     if not edit_references:
@@ -5950,7 +5965,10 @@ async def proxy_video_create(
 
     request_body = payload.get("requestBody") or {}
     validate_reference_limit(request_body)
-    reference_assets = collect_reference_image_assets(request_body if isinstance(request_body, dict) else {})
+    reference_assets = validate_reference_asset_metadata(
+        payload.get("referenceAssets"),
+        request_body if isinstance(request_body, dict) else {},
+    )
     kkyi_video = is_kkyi_video_model(sub_model, base_url)
     if isinstance(request_body, dict):
         if kkyi_video:

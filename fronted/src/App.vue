@@ -1732,6 +1732,53 @@ function currentImageReferenceAssets(assets: UploadedAsset[] = imageState.refere
   return uploadedAssetsAsConversationAssets(assets, "reference", "参考图");
 }
 
+interface ReferenceAssetPayload {
+  url: string;
+  thumbnailUrl: string;
+  objectKey: string;
+  thumbnailObjectKey: string;
+  index: number;
+  role: string;
+  label: string;
+}
+
+function referenceAssetPayload(
+  entries: Array<{ asset: UploadedAsset; role?: string; label?: string }>,
+): ReferenceAssetPayload[] {
+  return entries.map(({ asset, role = "reference", label = "参考图" }, index) => ({
+    url: asset.publicUrl,
+    thumbnailUrl: asset.thumbnailUrl || "",
+    objectKey: asset.objectKey || "",
+    thumbnailObjectKey: asset.thumbnailObjectKey || "",
+    index: index + 1,
+    role,
+    label,
+  }));
+}
+
+function imageReferenceAssetPayload(assets: UploadedAsset[]): ReferenceAssetPayload[] {
+  return referenceAssetPayload(assets.map((asset) => ({ asset })));
+}
+
+function videoReferenceAssetPayload(
+  model: ModelDefinition,
+  references: VideoReferenceSelection,
+): ReferenceAssetPayload[] {
+  if (supportsUnifiedAdapter(model.adapter)) {
+    return referenceAssetPayload(references.unifiedImages.map((asset) => ({ asset })));
+  }
+  if (model.adapter !== "video-seedance") return [];
+  if (videoState.mode === "reference") {
+    return referenceAssetPayload(references.seedanceReferences.map((asset) => ({ asset })));
+  }
+  const entries: Array<{ asset: UploadedAsset; role: string; label: string }> = [];
+  if (videoState.seedanceFirst) entries.push({ asset: videoState.seedanceFirst, role: "first_frame", label: "首帧" });
+  if (videoState.mode === "start-end" && videoState.seedanceLast) {
+    entries.push({ asset: videoState.seedanceLast, role: "last_frame", label: "尾帧" });
+  }
+  return referenceAssetPayload(entries);
+}
+
 function currentVideoReferenceAssets(
   unifiedImages: UploadedAsset[] = videoState.unifiedImages,
   seedanceReferences: UploadedAsset[] = videoState.seedanceReferences,
@@ -2877,6 +2924,7 @@ async function handleImageSubmit() {
     imageState.result = await postProxyWithSignal<ImageResult>("/api/proxy/image", buildModelProxyPayload(model, setting, {
       conversationId: persistedConversationIdFor("image"),
       enable4k: imageSupports4k.value && imageState.enable4k,
+      referenceAssets: imageReferenceAssetPayload(referenceSelection.assets),
       requestBody: buildImageRequestBody(
         model,
         normalizeReferenceMentions(finalPrompt),
@@ -3358,6 +3406,7 @@ async function handleVideoCreate() {
     videoState.createResult = await postProxyWithSignal<VideoCreateResult>("/api/proxy/video/create", buildModelProxyPayload(model, setting, {
       adapter: model.adapter,
       conversationId: persistedConversationIdFor("video"),
+      referenceAssets: videoReferenceAssetPayload(model, referenceSelection),
       requestBody,
     }), controller.signal);
     applyCreditsFromResponse(videoState.createResult);

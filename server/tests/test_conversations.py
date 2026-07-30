@@ -1408,6 +1408,57 @@ def test_image_proxy_records_reference_assets_on_user_message(monkeypatch) -> No
     assert user_message["assets"][0]["metadata"]["source"] == "input"
 
 
+def test_reference_asset_metadata_is_persisted_but_not_forwarded_upstream(monkeypatch) -> None:
+    forwarded_bodies = []
+    monkeypatch.setattr(main_module.get_settings(), "object_storage_public_base_url", "https://cdn.example.com")
+
+    async def fake_forward_json(method, url, api_key, body=None):
+        forwarded_bodies.append(body)
+        return httpx.Response(200, json={"data": [{"url": "https://provider.example.com/result.png"}]}), {
+            "data": [{"url": "https://provider.example.com/result.png"}]
+        }
+
+    monkeypatch.setattr(main_module, "forward_json", fake_forward_json)
+    client = TestClient(app)
+    login(client, "alice")
+    sub_model_id = create_model(client, "image", "image-openai", "gpt-image-2")
+    reference_url = "https://cdn.example.com/references/reference.png"
+
+    response = client.post(
+        "/api/proxy/image",
+        headers=csrf_headers(client),
+        json={
+            "subModelId": sub_model_id,
+            "referenceAssets": [
+                {
+                    "url": reference_url,
+                    "thumbnailUrl": "https://cdn.example.com/references/reference.webp",
+                    "objectKey": "references/reference.png",
+                    "thumbnailObjectKey": "references/reference.webp",
+                    "index": 1,
+                    "role": "reference",
+                    "label": "参考图",
+                }
+            ],
+            "requestBody": {"prompt": "use reference", "images": [reference_url]},
+        },
+    )
+
+    assert response.status_code == 200
+    assert all("referenceAssets" not in (body or {}) for body in forwarded_bodies)
+    user_asset = response.json()["conversation"]["messages"][0]["assets"][0]
+    assert user_asset["thumbnailUrl"] == "https://cdn.example.com/references/reference.webp"
+    assert user_asset["metadata"] == {
+        "role": "reference",
+        "label": "参考图",
+        "source": "input",
+        "index": 1,
+        "objectKey": "references/reference.png",
+        "thumbnailObjectKey": "references/reference.webp",
+        "storageStatus": "r2_synced",
+    }
+
+
 def test_image_proxy_returns_policy_specific_user_message(monkeypatch) -> None:
     raw = {"error": {"message": "Your request was rejected because it violated our relevant policies."}}
 

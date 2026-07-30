@@ -105,3 +105,48 @@ def indexed_reference_metadata(index: int, role: str, label: str) -> dict[str, A
         "source": "input",
         "index": index + 1,
     }
+
+
+def validate_reference_asset_metadata(
+    value: Any,
+    request_body: Any,
+    maximum: int = 10,
+) -> list[dict[str, Any]]:
+    collected = collect_reference_image_assets(request_body)
+    if value in (None, []):
+        return collected
+    if not isinstance(value, list) or len(value) > maximum:
+        raise HTTPException(status_code=400, detail={"message": f"参考图片元数据最多支持 {maximum} 项。"})
+
+    request_urls = {reference["url"] for reference in collected}
+    normalized: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for position, item in enumerate(value, start=1):
+        if not isinstance(item, dict):
+            raise HTTPException(status_code=400, detail={"message": "参考图片元数据格式无效。"})
+        url = str(item.get("url") or "").strip()
+        if not url or url not in request_urls or url in seen:
+            raise HTTPException(status_code=400, detail={"message": "参考图片元数据与请求图片不匹配。"})
+        try:
+            index = int(item.get("index"))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail={"message": "参考图片序号无效。"}) from exc
+        if index != position:
+            raise HTTPException(status_code=400, detail={"message": "参考图片序号必须从 1 连续排列。"})
+        role = reference_role_from_key(str(item.get("role") or "reference"), "reference")
+        thumbnail_url = str(item.get("thumbnailUrl") or "").strip()
+        if thumbnail_url and not is_storable_reference_url(thumbnail_url):
+            raise HTTPException(status_code=400, detail={"message": "参考图片缩略图地址无效。"})
+        seen.add(url)
+        normalized.append(
+            {
+                "url": url,
+                "thumbnailUrl": thumbnail_url,
+                "objectKey": str(item.get("objectKey") or "").strip()[:1024],
+                "thumbnailObjectKey": str(item.get("thumbnailObjectKey") or "").strip()[:1024],
+                "index": index,
+                "role": role,
+                "label": str(item.get("label") or reference_label(role)).strip()[:64] or reference_label(role),
+            }
+        )
+    return normalized

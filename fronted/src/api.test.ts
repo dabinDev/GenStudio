@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   ApiRequestError,
+  createReferenceThumbnail,
   dismissCreditGrantNotice,
   fetchCsrfToken,
   fetchMyCredits,
@@ -85,7 +86,20 @@ describe("upload helpers", () => {
     );
   });
 
-  it("preserves object and thumbnail metadata from a successful presigned upload", async () => {
+  it("uploads a bounded webp thumbnail and preserves both object keys", async () => {
+    const canvas = {
+      width: 0,
+      height: 0,
+      getContext: vi.fn(() => ({ drawImage: vi.fn() })),
+      toBlob: vi.fn((callback: BlobCallback, type?: string, quality?: number) => {
+        expect(type).toBe("image/webp");
+        expect(quality).toBe(0.78);
+        callback(new Blob(["thumbnail"], { type: "image/webp" }));
+      }),
+    };
+    const bitmap = { width: 1600, height: 800, close: vi.fn() };
+    vi.stubGlobal("document", { createElement: vi.fn(() => canvas) });
+    vi.stubGlobal("createImageBitmap", vi.fn(async () => bitmap));
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
@@ -96,8 +110,19 @@ describe("upload helpers", () => {
             publicUrl: "https://cdn.example.com/reference.png",
             objectKey: "references/reference.png",
             contentType: "image/png",
-            thumbnailUrl: "https://cdn.example.com/reference.webp",
-            thumbnailObjectKey: "references/reference.webp",
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            uploadUrl: "https://uploads.example.com/reference.webp",
+            method: "PUT",
+            publicUrl: "https://cdn.example.com/reference.webp",
+            objectKey: "references/reference.webp",
+            contentType: "image/webp",
           }),
           { status: 200 },
         ),
@@ -116,6 +141,30 @@ describe("upload helpers", () => {
       thumbnailUrl: "https://cdn.example.com/reference.webp",
       thumbnailObjectKey: "references/reference.webp",
     });
+    expect(canvas.width).toBe(640);
+    expect(canvas.height).toBe(320);
+    expect(bitmap.close).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(JSON.parse(String(fetchMock.mock.calls[2][1]?.body))).toMatchObject({
+      fileName: "reference.webp",
+      contentType: "image/webp",
+    });
+  });
+
+  it("creates a reference thumbnail without upscaling", async () => {
+    const canvas = {
+      width: 0,
+      height: 0,
+      getContext: vi.fn(() => ({ drawImage: vi.fn() })),
+      toBlob: vi.fn((callback: BlobCallback) => callback(new Blob(["thumbnail"], { type: "image/webp" }))),
+    };
+    vi.stubGlobal("document", { createElement: vi.fn(() => canvas) });
+    vi.stubGlobal("createImageBitmap", vi.fn(async () => ({ width: 320, height: 200, close: vi.fn() })));
+
+    await createReferenceThumbnail(new File(["fake"], "small.png", { type: "image/png" }));
+
+    expect(canvas.width).toBe(320);
+    expect(canvas.height).toBe(200);
   });
 
   it("keeps successful uploads when another file in the batch fails", async () => {

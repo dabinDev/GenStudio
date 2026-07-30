@@ -824,4 +824,49 @@ describe("workbench style application", () => {
     expect(compactStyles).toContain(".shell .profile-account-metrics");
     expect(compactStyles).toContain("grid-template-columns: repeat(2, minmax(0, 1fr)) !important");
   });
+
+  it("stabilizes every creator detail surface in the final cascade", () => {
+    const styles = redesignCss();
+    const markerIndex = styles.indexOf("NewUI creator detail pass v1");
+    const finalStyles = styles.slice(markerIndex);
+
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(finalStyles).toContain(".shell .sidebar {");
+    expect(finalStyles).toContain("width: clamp(232px, 18vw, 284px) !important");
+    expect(finalStyles).toContain(".shell .message-assets {");
+    expect(finalStyles).toContain("grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)) !important");
+    expect(finalStyles).toContain(".shell .asset-preview-trigger,");
+    expect(finalStyles).toContain("aspect-ratio: 4 / 3 !important");
+    expect(finalStyles).toContain(".shell .reference-strip {");
+    expect(finalStyles).toContain("min-height: 70px !important");
+    expect(finalStyles).toContain("overflow-x: auto !important");
+    expect(finalStyles).toContain(".shell .reference-mention-menu {");
+    expect(finalStyles).toContain("width: min(360px, calc(100vw - 24px)) !important");
+    expect(finalStyles).toContain(".shell .composer-pill,");
+    expect(finalStyles).toContain("min-height: 40px !important");
+    expect(finalStyles).toContain(".shell .settings-model-row {");
+    expect(finalStyles).toContain("min-height: 72px !important");
+    expect(finalStyles).toContain(".shell .profile-account-details-grid input,");
+    expect(finalStyles).toContain("min-height: 42px !important");
+    expect(finalStyles).toContain(".shell .settings-dialog {");
+    expect(finalStyles).toContain("max-height: min(760px, calc(100dvh - 32px)) !important");
+    expect(finalStyles).toContain(".shell .app-toast {");
+    expect(finalStyles).toContain("max-width: min(420px, calc(100vw - 24px)) !important");
+  });
+
+  it("keeps the creator keyboard, text, motion, and phone states usable", () => {
+    const styles = redesignCss();
+    const markerIndex = styles.indexOf("NewUI creator detail pass v1");
+    const finalStyles = styles.slice(markerIndex);
+
+    expect(markerIndex).toBeGreaterThan(-1);
+    expect(finalStyles).toContain("overflow-wrap: anywhere !important");
+    expect(finalStyles).toContain(".shell :where(button, input, textarea, select, a):focus-visible");
+    expect(finalStyles).toContain("@media (prefers-reduced-motion: reduce)");
+    expect(finalStyles).toContain("@media (max-width: 480px)");
+    expect(finalStyles).toContain("padding-bottom: max(10px, env(safe-area-inset-bottom, 0px)) !important");
+    expect(finalStyles).toContain("grid-template-columns: minmax(0, 1fr) !important");
+    expect(finalStyles).not.toMatch(/\.(?:newui|creator)[^{,]*orb/);
+    expect(finalStyles).not.toMatch(/letter-spacing:\s*-/);
+  });
 });

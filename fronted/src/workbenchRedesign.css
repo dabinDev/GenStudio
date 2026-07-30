@@ -1907,3 +1907,263 @@
     height: 52px;
   }
 }
+
+/* NewUI creator detail pass v1 */
+.shell .sidebar {
+  flex: 0 0 clamp(232px, 18vw, 284px) !important;
+  width: clamp(232px, 18vw, 284px) !important;
+  min-width: 232px !important;
+  max-width: 284px !important;
+}
+
+.shell .message-assets {
+  display: grid !important;
+  width: min(100%, 960px) !important;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)) !important;
+  gap: 10px !important;
+}
+
+.shell .message-asset-card {
+  min-width: 0 !important;
+  overflow: hidden !important;
+  border-radius: 8px !important;
+}
+
+.shell .asset-preview-trigger,
+.shell .message-asset-card > video {
+  display: block !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  aspect-ratio: 4 / 3 !important;
+  overflow: hidden !important;
+  background: var(--surface-muted) !important;
+}
+
+.shell .asset-preview-trigger img,
+.shell .message-asset-card > video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain !important;
+}
+
+.shell .reference-strip {
+  display: flex !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  min-height: 70px !important;
+  padding: 5px !important;
+  gap: 7px !important;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  overscroll-behavior-inline: contain !important;
+  scrollbar-gutter: stable !important;
+}
+
+.shell .reference-thumb {
+  flex: 0 0 60px !important;
+  width: 60px !important;
+  height: 60px !important;
+  min-width: 60px !important;
+  aspect-ratio: 1 !important;
+  overflow: hidden !important;
+  border-radius: 6px !important;
+  scroll-snap-align: start !important;
+}
+
+.shell .reference-thumb img {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+}
+
+.shell .reference-mention-menu {
+  width: min(360px, calc(100vw - 24px)) !important;
+  max-height: min(312px, 46vh) !important;
+  overscroll-behavior: contain !important;
+  border-radius: 8px !important;
+}
+
+.shell .composer-footer-bar {
+  min-width: 0 !important;
+  align-items: center !important;
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  gap: 8px !important;
+}
+
+.shell .composer-pill,
+.shell .composer-submit-button,
+.shell .composer-query-button,
+.shell .composer-attach-button {
+  min-height: 40px !important;
+  border-radius: 7px !important;
+  white-space: nowrap !important;
+}
+
+.shell .composer-input {
+  min-height: 64px !important;
+  max-height: min(220px, 32vh) !important;
+  overflow-y: auto !important;
+  resize: vertical !important;
+}
+
+.shell .composer-surface,
+.shell .composer-card-expanded {
+  border-radius: 8px !important;
+}
+
+.shell .settings-model-row {
+  min-width: 0 !important;
+  min-height: 72px !important;
+  border-radius: 7px !important;
+}
+
+.shell .settings-model-main,
+.shell .settings-primary-model,
+.shell .settings-row-actions-primary {
+  min-width: 0 !important;
+}
+
+.shell .settings-model-main strong,
+.shell .settings-primary-model strong,
+.shell .settings-model-main span,
+.shell .settings-primary-model span {
+  max-width: 100% !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+.shell .profile-account-details-grid input,
+.shell .profile-account-security-fields input,
+.shell .profile-account-callback input {
+  width: 100% !important;
+  min-width: 0 !important;
+  min-height: 42px !important;
+}
+
+.shell .settings-dialog-backdrop {
+  padding: max(16px, env(safe-area-inset-top, 0px)) 16px max(16px, env(safe-area-inset-bottom, 0px)) !important;
+  overflow: auto !important;
+}
+
+.shell .settings-dialog {
+  width: min(980px, 100%) !important;
+  max-height: min(760px, calc(100dvh - 32px)) !important;
+  overflow: hidden !important;
+  border-radius: 8px !important;
+}
+
+.shell .settings-dialog-workspace {
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain !important;
+}
+
+.shell .app-toast {
+  right: max(12px, env(safe-area-inset-right, 0px)) !important;
+  bottom: max(12px, env(safe-area-inset-bottom, 0px)) !important;
+  max-width: min(420px, calc(100vw - 24px)) !important;
+  overflow-wrap: anywhere !important;
+  border-radius: 8px !important;
+}
+
+.shell .message-content,
+.shell .inline-message,
+.shell .empty-canvas-copy,
+.shell .profile-account-panel,
+.shell .settings-dialog,
+.shell .topbar-conversation-title {
+  min-width: 0 !important;
+  overflow-wrap: anywhere !important;
+}
+
+.shell :where(button, input, textarea, select, a):focus-visible {
+  outline: 2px solid var(--model-accent, var(--accent)) !important;
+  outline-offset: 2px !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shell *,
+  .shell *::before,
+  .shell *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media screen and (max-width: 720px) {
+  .shell .sidebar {
+    flex: 0 0 auto !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100vw !important;
+  }
+
+  .shell .composer-card {
+    padding-bottom: max(10px, env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  .shell .settings-dialog-backdrop {
+    align-items: flex-end !important;
+    padding: 10px 10px max(10px, env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  .shell .settings-dialog {
+    max-height: min(88dvh, 760px) !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .shell .composer-footer-bar {
+    align-items: stretch !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .shell .composer-action-group,
+  .shell .composer-video-actions {
+    display: grid !important;
+    width: 100% !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 7px !important;
+  }
+
+  .shell .composer-action-group:has(> :only-child) {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .shell .composer-action-group button,
+  .shell .composer-video-actions button {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .shell .media-composer-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .shell .media-composer-upload,
+  .shell .composer-attach-button {
+    width: 100% !important;
+  }
+
+  .shell .reference-mention-menu {
+    right: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+  }
+
+  .shell .settings-bulk-actions,
+  .shell .profile-account-callback-actions {
+    display: grid !important;
+    width: 100% !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .shell .settings-bulk-actions > *,
+  .shell .profile-account-callback-actions > * {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+}
